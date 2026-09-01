@@ -86,6 +86,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS email_logs(id INTEGER PRIMARY KEY, report_type TEXT, period TEXT, recipients TEXT, status TEXT, error_message TEXT, sent_at TEXT, created_at TEXT);
     CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, value TEXT);
     CREATE TABLE IF NOT EXISTS delivery_exceptions(id INTEGER PRIMARY KEY, service_date TEXT, branch_id INTEGER, exception_type TEXT, reason TEXT, created_by INTEGER, created_at TEXT, UNIQUE(service_date,branch_id));
+    CREATE TABLE IF NOT EXISTS global_closures(id INTEGER PRIMARY KEY, service_date TEXT UNIQUE, reason TEXT, created_by INTEGER, created_at TEXT);
     ''')
     if not c.execute('SELECT 1 FROM users').fetchone():
         admin_password=initial_secret('ADMIN_INITIAL_PASSWORD','85017306')
@@ -156,6 +157,8 @@ def is_report_locked(c, service_date=None):
     return bool(r and r['status']=='LOCKED')
 
 def branch_expected_on(c,b,service_date):
+    if c.execute('SELECT 1 FROM global_closures WHERE service_date=?',(service_date,)).fetchone():
+        return False
     ex=c.execute('SELECT exception_type FROM delivery_exceptions WHERE service_date=? AND branch_id=?',(service_date,b['id'])).fetchone()
     if ex:
         return ex['exception_type']=='ADD'
@@ -194,7 +197,8 @@ def audit(c, actor_type, actor_id, role, action, etype, eid, before=None, after=
     c.execute('INSERT INTO audit_logs(actor_type,actor_id,role,action,entity_type,entity_id,before_json,after_json,reason,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)',(actor_type,str(actor_id or ''),role,action,etype,str(eid),json.dumps(before,ensure_ascii=False) if before is not None else None,json.dumps(after,ensure_ascii=False) if after is not None else None,reason,now()))
 
 def current_user(req):
-    tok=req.cookies.get('session')
+    auth=req.headers.get('Authorization','')
+    tok=auth[7:] if auth.startswith('Bearer ') else req.cookies.get('session')
     if not tok: return None
     c=db(); r=c.execute('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?',(thash(tok),now())).fetchone(); c.close(); return dict(r) if r else None
 
@@ -230,10 +234,10 @@ async def login(req:Request):
     p=await req.json(); c=db(); u=c.execute('SELECT * FROM users WHERE username=? AND is_active=1',(p.get('username',''),)).fetchone()
     if not u or not verify_secret(p.get('password',''),u['password_hash']): c.close(); raise HTTPException(401,'帳號或密碼錯誤')
     tok=secrets.token_urlsafe(32); c.execute('INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)',(thash(tok),u['id'],(datetime.now()+timedelta(hours=12)).isoformat())); audit(c,'USER',u['id'],u['role'],'LOGIN','USER',u['id']); c.commit(); c.close()
-    r=JSONResponse({'ok':True,'role':u['role']}); r.set_cookie('session',tok,httponly=True,samesite='lax',secure=(APP_ENV=='production'),max_age=43200); return r
+    r=JSONResponse({'ok':True,'role':u['role'],'token':tok}); r.set_cookie('session',tok,httponly=True,samesite='lax',secure=(APP_ENV=='production'),max_age=43200); return r
 @app.post('/api/auth/logout')
 def logout(req:Request):
-    tok=req.cookies.get('session'); c=db();
+    auth=req.headers.get('Authorization',''); tok=auth[7:] if auth.startswith('Bearer ') else req.cookies.get('session'); c=db();
     if tok:c.execute('DELETE FROM sessions WHERE token_hash=?',(thash(tok),));c.commit()
     c.close(); r=JSONResponse({'ok':True});r.delete_cookie('session');return r
 @app.get('/api/auth/me')
@@ -452,36 +456,84 @@ async def zero_all(req:Request):
     audit(c,'USER',u['id'],u['role'],'ZERO_ALL_DOCUMENTS','DAY',today(),after={'changed':changed})
     c.commit(); c.close(); await publish({'type':'dashboard.refresh'}); return {'ok':True,'changed':changed}
 
+@app.post('/api/secretary/documents/batch')
+async def batch_documents(req:Request):
+    u=require_user(req,['SECRETARY']); p=await req.json(); items=p.get('items') or []
+    if not isinstance(items,list) or not items: raise HTTPException(400,'沒有可存檔的公文數量')
+    c=db()
+    if is_report_locked(c): c.close(); raise HTTPException(409,'今日日報已鎖定')
+    prepared=[]
+    for item in items:
+        try: did=int(item.get('id')); qty=int(item.get('qty'))
+        except: c.close(); raise HTTPException(400,'公文數量格式錯誤')
+        if qty<0: c.close(); raise HTTPException(400,'公文數量需為0以上整數')
+        x=c.execute('SELECT * FROM deliveries WHERE id=? AND service_date=?',(did,today())).fetchone()
+        if not x: c.close(); raise HTTPException(404,'找不到今日配送資料')
+        if x['outbound_original'] is not None: c.close(); raise HTTPException(409,f"配送 #{did} 司機已輸入送出數量，公文已鎖定")
+        prepared.append((x,qty))
+    for x,qty in prepared:
+        before={'qty':x['document_final']}
+        c.execute("UPDATE deliveries SET document_original=?,document_final=?,status='WAITING_DRIVER',row_version=row_version+1 WHERE id=?",(qty,qty,x['id']))
+        audit(c,'USER',u['id'],u['role'],'BATCH_SET_DOCUMENT','DELIVERY',x['id'],before=before,after={'qty':qty})
+    c.commit(); c.close(); await publish({'type':'delivery.updated','batch':True}); return {'ok':True,'changed':len(prepared),'total':sum(q for _,q in prepared)}
+
 @app.get('/api/schedule-exceptions')
 def schedule_exceptions(req:Request, month:str=''):
-    require_user(req,['ADMIN','SECRETARY']); c=db()
-    if not month: month=today()[:7]
-    rows=[dict(x) for x in c.execute("""SELECT e.*,b.code branch_code,b.name branch_name,r.code route_code FROM delivery_exceptions e JOIN branches b ON b.id=e.branch_id LEFT JOIN routes r ON r.id=b.route_id WHERE e.service_date LIKE ? ORDER BY e.service_date,r.code,b.stop_order""",(month+'%',)).fetchall()]
-    c.close(); return rows
+    require_user(req,['ADMIN','SECRETARY']); month=month or today()[:7]; c=db()
+    rows=[dict(x) for x in c.execute("""SELECT e.id,e.service_date,e.branch_id,e.exception_type,e.reason,e.created_at,b.code branch_code,b.name branch_name,r.code route_code FROM delivery_exceptions e JOIN branches b ON b.id=e.branch_id LEFT JOIN routes r ON r.id=b.route_id WHERE e.service_date LIKE ? ORDER BY e.service_date,r.code,b.stop_order""",(month+'%',)).fetchall()]
+    for g in c.execute("SELECT id,service_date,reason,created_at FROM global_closures WHERE service_date LIKE ? ORDER BY service_date",(month+'%',)).fetchall():
+        rows.append({'id':'G'+str(g['id']),'service_date':g['service_date'],'branch_id':None,'exception_type':'CLOSED_ALL','reason':g['reason'],'created_at':g['created_at'],'branch_code':'ALL','branch_name':'全部分館','route_code':'全部'})
+    c.close(); rows.sort(key=lambda x:(x['service_date'],str(x.get('route_code') or ''))); return rows
 
-@app.post('/api/schedule-exceptions')
-async def save_schedule_exception(req:Request):
-    u=require_user(req,['SECRETARY']); p=await req.json(); service_date=(p.get('service_date') or '').strip(); et=(p.get('exception_type') or '').upper(); reason=(p.get('reason') or '').strip(); bid=int(p.get('branch_id') or 0)
-    try: date.fromisoformat(service_date)
+def date_span(start_date,end_date):
+    try: a=date.fromisoformat(start_date); b=date.fromisoformat(end_date or start_date)
     except: raise HTTPException(400,'日期格式錯誤')
-    if et not in ('STOP','ADD'): raise HTTPException(400,'類型必須為 STOP 或 ADD')
-    c=db(); b=c.execute('SELECT * FROM branches WHERE id=?',(bid,)).fetchone()
-    if not b: c.close(); raise HTTPException(404,'找不到分館')
-    if is_report_locked(c,service_date): c.close(); raise HTTPException(409,'該日日報已鎖定')
-    existing_delivery=c.execute('SELECT * FROM deliveries WHERE service_date=? AND branch_id=?',(service_date,bid)).fetchone()
-    if et=='STOP' and existing_delivery and (existing_delivery['document_original'] is not None or existing_delivery['outbound_original'] is not None or existing_delivery['branch_signed_at'] is not None):
-        c.close(); raise HTTPException(409,'此站配送已開始，不能再設定休館 / 停送；請由管理者/秘書依異常流程處理')
-    before=c.execute('SELECT * FROM delivery_exceptions WHERE service_date=? AND branch_id=?',(service_date,bid)).fetchone()
-    c.execute("""INSERT INTO delivery_exceptions(service_date,branch_id,exception_type,reason,created_by,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(service_date,branch_id) DO UPDATE SET exception_type=excluded.exception_type,reason=excluded.reason,created_by=excluded.created_by,created_at=excluded.created_at""",(service_date,bid,et,reason,u['id'],now()))
-    audit(c,'USER',u['id'],u['role'],'SET_DELIVERY_EXCEPTION','BRANCH',bid,before=dict(before) if before else None,after={'service_date':service_date,'exception_type':et,'reason':reason})
-    rebuild_service_date(c,service_date); c.close(); await publish({'type':'schedule.updated','date':service_date}); return {'ok':True}
+    if b<a: a,b=b,a
+    if (b-a).days>62: raise HTTPException(400,'單次日期範圍最多63天')
+    return [(a+timedelta(days=i)).isoformat() for i in range((b-a).days+1)]
+
+@app.post('/api/schedule-exceptions/range')
+async def save_schedule_range(req:Request):
+    u=require_user(req,['SECRETARY']); p=await req.json(); et=(p.get('exception_type') or '').upper(); reason=(p.get('reason') or '').strip(); dates=date_span((p.get('start_date') or '').strip(),(p.get('end_date') or '').strip())
+    if et not in ('CLOSED_ALL','STOP','ADD'): raise HTTPException(400,'類型錯誤')
+    c=db()
+    if et=='CLOSED_ALL':
+        for d in dates:
+            started=c.execute("SELECT 1 FROM deliveries WHERE service_date=? AND (document_original IS NOT NULL OR outbound_original IS NOT NULL OR branch_signed_at IS NOT NULL) LIMIT 1",(d,)).fetchone()
+            if started: c.close(); raise HTTPException(409,f'{d} 已有配送開始，不能設定全館休館')
+        for d in dates:
+            c.execute("INSERT INTO global_closures(service_date,reason,created_by,created_at) VALUES(?,?,?,?) ON CONFLICT(service_date) DO UPDATE SET reason=excluded.reason,created_by=excluded.created_by,created_at=excluded.created_at",(d,reason,u['id'],now()))
+            audit(c,'USER',u['id'],u['role'],'SET_GLOBAL_CLOSURE','GLOBAL_CLOSURE',d,after={'reason':reason})
+            rebuild_service_date(c,d)
+    else:
+        bid=int(p.get('branch_id') or 0); b=c.execute('SELECT * FROM branches WHERE id=?',(bid,)).fetchone()
+        if not b: c.close(); raise HTTPException(404,'找不到分館')
+        if et=='STOP':
+            for d in dates:
+                x=c.execute('SELECT * FROM deliveries WHERE service_date=? AND branch_id=?',(d,bid)).fetchone()
+                if x and (x['document_original'] is not None or x['outbound_original'] is not None or x['branch_signed_at'] is not None): c.close(); raise HTTPException(409,f'{d} 配送已開始，不能設定停送')
+        for d in dates:
+            c.execute("""INSERT INTO delivery_exceptions(service_date,branch_id,exception_type,reason,created_by,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(service_date,branch_id) DO UPDATE SET exception_type=excluded.exception_type,reason=excluded.reason,created_by=excluded.created_by,created_at=excluded.created_at""",(d,bid,et,reason,u['id'],now()))
+            audit(c,'USER',u['id'],u['role'],'SET_DELIVERY_EXCEPTION','BRANCH',bid,after={'service_date':d,'exception_type':et,'reason':reason})
+            rebuild_service_date(c,d)
+    c.commit(); c.close(); await publish({'type':'schedule.updated','dates':dates}); return {'ok':True,'days':len(dates)}
 
 @app.delete('/api/schedule-exceptions/{eid}')
-async def delete_schedule_exception(eid:int,req:Request):
-    u=require_user(req,['SECRETARY']); c=db(); x=c.execute('SELECT * FROM delivery_exceptions WHERE id=?',(eid,)).fetchone()
-    if not x: c.close(); raise HTTPException(404,'找不到例外設定')
-    if is_report_locked(c,x['service_date']): c.close(); raise HTTPException(409,'該日日報已鎖定')
-    c.execute('DELETE FROM delivery_exceptions WHERE id=?',(eid,)); audit(c,'USER',u['id'],u['role'],'DELETE_DELIVERY_EXCEPTION','BRANCH',x['branch_id'],before=dict(x)); rebuild_service_date(c,x['service_date']); c.close(); await publish({'type':'schedule.updated','date':x['service_date']}); return {'ok':True}
+async def delete_schedule_exception(eid:str,req:Request):
+    u=require_user(req,['SECRETARY']); c=db()
+    if eid.startswith('G'):
+        try: gid=int(eid[1:])
+        except: c.close(); raise HTTPException(400)
+        x=c.execute('SELECT * FROM global_closures WHERE id=?',(gid,)).fetchone()
+        if not x: c.close(); raise HTTPException(404)
+        c.execute('DELETE FROM global_closures WHERE id=?',(gid,)); audit(c,'USER',u['id'],u['role'],'DELETE_GLOBAL_CLOSURE','GLOBAL_CLOSURE',x['service_date'],before=dict(x)); rebuild_service_date(c,x['service_date'])
+    else:
+        try: iid=int(eid)
+        except: c.close(); raise HTTPException(400)
+        x=c.execute('SELECT * FROM delivery_exceptions WHERE id=?',(iid,)).fetchone()
+        if not x: c.close(); raise HTTPException(404)
+        c.execute('DELETE FROM delivery_exceptions WHERE id=?',(iid,)); audit(c,'USER',u['id'],u['role'],'DELETE_DELIVERY_EXCEPTION','BRANCH',x['branch_id'],before=dict(x)); rebuild_service_date(c,x['service_date'])
+    c.commit(); c.close(); await publish({'type':'schedule.updated'}); return {'ok':True}
 
 @app.get('/api/secretary/sign-status')
 def secretary_sign_status(req:Request):
