@@ -120,13 +120,16 @@ def migrate_corrections_for_repeat_requests(c):
         c.commit()
 
 def apply_demo_branch_limit(c):
-    # Hosted test edition: keep only the first N branches active; preserve all 80 records for later reactivation.
+    # Apply the 3-branch demo preset once only. After that, admin enable/disable choices are respected.
+    key='DEMO_BRANCH_LIMIT_INITIALIZED_V5'
+    if c.execute('SELECT 1 FROM app_settings WHERE key=?',(key,)).fetchone():
+        return
     n=max(1, DEMO_ACTIVE_BRANCHES)
     c.execute('UPDATE branches SET active=CASE WHEN id<=? THEN 1 ELSE 0 END',(n,))
-    # Remove today's tasks for currently inactive test branches so mobile driver screens stay small after redeploy.
     c.execute("DELETE FROM branch_sessions WHERE delivery_id IN (SELECT d.id FROM deliveries d JOIN branches b ON b.id=d.branch_id WHERE d.service_date=? AND b.active=0)",(today(),))
     c.execute("DELETE FROM corrections WHERE delivery_id IN (SELECT d.id FROM deliveries d JOIN branches b ON b.id=d.branch_id WHERE d.service_date=? AND b.active=0)",(today(),))
     c.execute("DELETE FROM deliveries WHERE service_date=? AND branch_id IN (SELECT id FROM branches WHERE active=0)",(today(),))
+    c.execute('INSERT INTO app_settings(key,value) VALUES(?,?)',(key,now()))
     c.commit()
 
 def reset_test_day_once(c):
@@ -268,7 +271,7 @@ def generic_qr(req:Request, data:str):
 
 @app.get('/api/drivers')
 def drivers(req:Request):
-    require_user(req,['ADMIN','SECRETARY']);c=db();rows=[dict(x) for x in c.execute('SELECT * FROM drivers ORDER BY active DESC,id').fetchall()];c.close();return rows
+    require_user(req,['ADMIN','SECRETARY']);c=db();rows=[dict(x) for x in c.execute("SELECT id,name,active,CASE WHEN pin_hash IS NULL THEN 0 ELSE 1 END pin_set FROM drivers ORDER BY active DESC,id").fetchall()];c.close();return rows
 @app.post('/api/drivers/{did}/activation')
 async def activation(req:Request,did:int):
     u=require_user(req,['ADMIN']); raw=secrets.token_urlsafe(32); c=db()
@@ -369,12 +372,29 @@ async def branch_correct(req:Request):
 
 @app.patch('/api/secretary/deliveries/{did}/document')
 async def set_doc(did:int,req:Request):
-    u=require_user(req,['SECRETARY','ADMIN']);p=await req.json();qty=int(p.get('qty',0));c=db();x=c.execute('SELECT * FROM deliveries WHERE id=?',(did,)).fetchone()
-    if not x or x['status'] not in ('WAITING_SECRETARY','WAITING_DRIVER'):c.close();raise HTTPException(409,'目前不可修改公文數量')
-    status='WAITING_BRANCH' if x['outbound_original'] is not None else 'WAITING_DRIVER'; c.execute('UPDATE deliveries SET document_original=?,document_final=?,status=?,row_version=row_version+1 WHERE id=?',(qty,qty,status,did));audit(c,'USER',u['id'],u['role'],'SET_DOCUMENT','DELIVERY',did,after={'qty':qty});c.commit();c.close();await publish({'type':'delivery.updated','id':did});return {'ok':True}
+    u=require_user(req,['SECRETARY','ADMIN']); p=await req.json()
+    try: qty=int(p.get('qty'))
+    except: raise HTTPException(400,'公文數量必須是整數')
+    if qty < 0: raise HTTPException(400,'公文數量不可小於 0')
+    c=db(); x=c.execute('SELECT * FROM deliveries WHERE id=?',(did,)).fetchone()
+    if not x: c.close(); raise HTTPException(404,'找不到配送資料')
+    if x['outbound_original'] is not None:
+        c.close(); raise HTTPException(409,'司機已輸入圖書送出數量，公文數量已鎖定，無法再修改')
+    if x['status'] not in ('WAITING_SECRETARY','WAITING_DRIVER'):
+        c.close(); raise HTTPException(409,'目前配送狀態不可修改公文數量')
+    before={'qty':x['document_final']}
+    c.execute("UPDATE deliveries SET document_original=?,document_final=?,status='WAITING_DRIVER',row_version=row_version+1 WHERE id=?",(qty,qty,did))
+    audit(c,'USER',u['id'],u['role'],'SET_DOCUMENT','DELIVERY',did,before=before,after={'qty':qty})
+    c.commit(); c.close(); await publish({'type':'delivery.updated','id':did}); return {'ok':True,'qty':qty,'locked':False}
+
 @app.post('/api/secretary/documents/zero-all')
 async def zero_all(req:Request):
-    u=require_user(req,['SECRETARY','ADMIN']);c=db();c.execute("UPDATE deliveries SET document_original=0,document_final=0,status=CASE WHEN outbound_original IS NULL THEN 'WAITING_DRIVER' ELSE 'WAITING_BRANCH' END,row_version=row_version+1 WHERE service_date=? AND status IN ('WAITING_SECRETARY','WAITING_DRIVER')",(today(),));audit(c,'USER',u['id'],u['role'],'ZERO_ALL_DOCUMENTS','DAY',today());c.commit();c.close();await publish({'type':'dashboard.refresh'});return {'ok':True}
+    u=require_user(req,['SECRETARY','ADMIN']); c=db()
+    cur=c.execute("UPDATE deliveries SET document_original=0,document_final=0,status='WAITING_DRIVER',row_version=row_version+1 WHERE service_date=? AND outbound_original IS NULL AND status IN ('WAITING_SECRETARY','WAITING_DRIVER')",(today(),))
+    changed=cur.rowcount
+    audit(c,'USER',u['id'],u['role'],'ZERO_ALL_DOCUMENTS','DAY',today(),after={'changed':changed})
+    c.commit(); c.close(); await publish({'type':'dashboard.refresh'}); return {'ok':True,'changed':changed}
+
 @app.post('/api/secretary/final-sign')
 async def final_sign(req:Request):
     u=require_user(req,['SECRETARY']);p=await req.json();c=db();n=c.execute("SELECT COUNT(*) n FROM daily_routes WHERE service_date=? AND status!='DRIVER_SIGNED'",(today(),)).fetchone()['n']
@@ -420,6 +440,14 @@ async def deactivate_branch(req:Request,bid:int):
 async def activate_branch(req:Request,bid:int):
     u=require_user(req,['ADMIN']); c=db(); c.execute('UPDATE branches SET active=1 WHERE id=?',(bid,)); audit(c,'USER',u['id'],u['role'],'ACTIVATE_BRANCH','BRANCH',bid); c.commit(); c.close(); return {'ok':True}
 
+@app.delete('/api/branches/{bid}')
+async def delete_branch(req:Request,bid:int):
+    u=require_user(req,['ADMIN']); c=db(); b=c.execute('SELECT * FROM branches WHERE id=?',(bid,)).fetchone()
+    if not b: c.close(); raise HTTPException(404,'找不到分館')
+    used=c.execute('SELECT 1 FROM deliveries WHERE branch_id=? LIMIT 1',(bid,)).fetchone()
+    if used: c.close(); raise HTTPException(409,'此分館已有配送歷史，為保留簽收紀錄不可永久刪除；請改用「停用」')
+    c.execute('DELETE FROM branches WHERE id=?',(bid,)); audit(c,'USER',u['id'],u['role'],'DELETE_BRANCH','BRANCH',bid,after={'code':b['code'],'name':b['name']}); c.commit(); c.close(); return {'ok':True}
+
 @app.get('/api/routes')
 def list_routes(req:Request):
     require_user(req,['ADMIN','SECRETARY']); c=db(); rows=[dict(x) for x in c.execute('SELECT * FROM routes ORDER BY code').fetchall()]; c.close(); return rows
@@ -442,6 +470,15 @@ async def update_driver(req:Request,did:int):
     u=require_user(req,['ADMIN']); p=await req.json(); c=db(); vals={k:p[k] for k in ['name','active'] if k in p}
     if vals:c.execute('UPDATE drivers SET '+','.join(k+'=?' for k in vals)+' WHERE id=?',(*vals.values(),did))
     audit(c,'USER',u['id'],u['role'],'UPDATE_DRIVER','DRIVER',did,after=vals); c.commit(); c.close(); return {'ok':True}
+
+@app.delete('/api/drivers/{did}')
+async def delete_driver(req:Request,did:int):
+    u=require_user(req,['ADMIN']); c=db(); d=c.execute('SELECT * FROM drivers WHERE id=?',(did,)).fetchone()
+    if not d: c.close(); raise HTTPException(404,'找不到司機')
+    used=c.execute('SELECT 1 FROM daily_routes WHERE driver_id=? LIMIT 1',(did,)).fetchone()
+    devices=c.execute('SELECT 1 FROM driver_devices WHERE driver_id=? LIMIT 1',(did,)).fetchone()
+    if used or devices: c.close(); raise HTTPException(409,'此司機已有配送或裝置歷史，為保留紀錄不可永久刪除；請改用「停用」')
+    c.execute('DELETE FROM drivers WHERE id=?',(did,)); audit(c,'USER',u['id'],u['role'],'DELETE_DRIVER','DRIVER',did,after={'name':d['name']}); c.commit(); c.close(); return {'ok':True}
 @app.post('/api/drivers/{did}/pin')
 async def reset_driver_pin(req:Request,did:int):
     u=require_user(req,['ADMIN']); p=await req.json(); pin=str(p.get('pin',''))
