@@ -99,3 +99,7 @@ Production 版密碼不寫入 GitHub，必須由 Hosting Provider 的 Secret Env
 
 ## V15 hotfix
 修正 Render 上新產生司機啟用 QR 立即被判定失效的時區錯誤。
+
+
+## V16 正式子網域
+正式網址：`https://lib.moving-match.com`。新產生的分館固定 QR 與司機裝置啟用 QR 均使用此網址。

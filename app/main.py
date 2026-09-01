@@ -18,7 +18,7 @@ BASE = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
 DB = DATA_DIR / 'app.db'
 APP_ENV = os.getenv('APP_ENV','development').lower()
-APP_BASE_URL = os.getenv('APP_BASE_URL','').rstrip('/')
+APP_BASE_URL = os.getenv('APP_BASE_URL','https://lib.moving-match.com').rstrip('/')
 DEMO_RESET_LINKS = os.getenv('DEMO_RESET_LINKS','false').lower() == 'true'
 DEMO_ACTIVE_BRANCHES = int(os.getenv('DEMO_ACTIVE_BRANCHES','3'))
 

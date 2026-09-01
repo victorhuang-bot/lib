@@ -1,11 +1,10 @@
-# V15
+# V16
 
-修正司機裝置啟用 QR 新產生後立即顯示失效的問題。
+正式子網域部署版本。
 
-原因：V13/V14 將 now() 改為 Asia/Taipei (+08:00)，但 activation/session 的 expires_at
-仍使用伺服器 naive datetime.now()，Render 為 UTC，造成字串比較時新 QR 被誤判為已過期。
-
-V15：
-- 所有新 expiry 統一使用 Asia/Taipei aware ISO timestamp。
-- 司機啟用 QR 維持建立後 10 分鐘有效、成功使用一次即失效。
-- 同步修正登入 session、密碼重設、司機 session、分館 session 的 expiry 時區一致性。
+- `APP_BASE_URL` 預設為 `https://lib.moving-match.com`。
+- 新產生的分館固定 QR Code 使用 `https://lib.moving-match.com/branch/...`。
+- 新產生的司機裝置啟用 QR Code 使用 `https://lib.moving-match.com/activate-driver/...`。
+- Render Blueprint 設定 `APP_BASE_URL=https://lib.moving-match.com`。
+- 保留 V15：司機啟用 QR 10 分鐘有效、成功使用一次即失效、expiry 與 now() 統一使用 Asia/Taipei (+08:00)。
+- 舊版已印出的固定 QR 若仍含 `onrender.com`，V16 部署後請重新產生 / 重新列印。

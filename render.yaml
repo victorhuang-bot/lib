@@ -6,6 +6,8 @@ services:
     healthCheckPath: /health
     autoDeploy: true
     envVars:
+      - key: APP_BASE_URL
+        value: https://lib.moving-match.com
       - key: APP_ENV
         value: production
       - key: DATA_DIR
