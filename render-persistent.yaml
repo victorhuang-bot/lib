@@ -1,0 +1,27 @@
+# Production-style Render example with persistent disk.
+# Persistent disks require a paid Render plan. Rename this file to render.yaml
+# if you want the database to survive service replacement/redeploys.
+services:
+  - type: web
+    name: library-logistics
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    autoDeploy: true
+    disk:
+      name: library-logistics-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data
+      - key: DEMO_RESET_LINKS
+        value: "false"
+      - key: ADMIN_INITIAL_PASSWORD
+        sync: false
+      - key: SECRETARY_INITIAL_PASSWORD
+        sync: false
+      - key: DEMO_BRANCH_PIN
+        sync: false

@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: library-logistics-demo
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATA_DIR
+        value: /tmp/library-logistics-data
+      - key: DEMO_RESET_LINKS
+        value: "false"
+      - key: ADMIN_INITIAL_PASSWORD
+        sync: false
+      - key: SECRETARY_INITIAL_PASSWORD
+        sync: false
+      - key: DEMO_BRANCH_PIN
+        sync: false
