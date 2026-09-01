@@ -360,10 +360,20 @@ async def branch_correct(req:Request):
     s=branch_auth(req);p=await req.json();c=db();x=c.execute('SELECT * FROM deliveries WHERE id=?',(s['delivery_id'],)).fetchone();corr=c.execute("SELECT * FROM corrections WHERE delivery_id=? AND status='PENDING' ORDER BY id DESC LIMIT 1",(x['id'],)).fetchone()
     if x['status']!='WAITING_BRANCH_CORRECTION' or not corr or corr['status']!='PENDING':c.close();raise HTTPException(409,'目前沒有可更正資料')
     if not p.get('reason','').strip() or not p.get('signer','').strip() or not p.get('signature',''):c.close();raise HTTPException(400,'更正原因、姓名與新簽名必填')
-    try:
-        document=int(p['document']); outbound_qty=int(p['outbound']); inbound=int(p['inbound'])
-    except (KeyError,TypeError,ValueError):
-        c.close(); raise HTTPException(400,'公文、圖書送出、圖書收回三個數量都必須填寫')
+    def optional_qty(key,current):
+        value=p.get(key,None)
+        if value is None or str(value).strip()=='':
+            return current
+        try:
+            value=int(value)
+        except (TypeError,ValueError):
+            c.close(); raise HTTPException(400,f'{key} 數量格式錯誤')
+        if value < 0:
+            c.close(); raise HTTPException(400,'數量不可小於 0')
+        return value
+    document=optional_qty('document',x['document_final'])
+    outbound_qty=optional_qty('outbound',x['outbound_final'])
+    inbound=optional_qty('inbound',x['inbound_final'])
     before={'document':x['document_final'],'outbound':x['outbound_final'],'inbound':x['inbound_final']}
     c.execute("UPDATE deliveries SET document_final=?,outbound_final=?,inbound_final=?,correction_reason=?,correction_signer_name=?,correction_signature=?,corrected_at=?,status='WAITING_DRIVER_RECONFIRM',row_version=row_version+1 WHERE id=?",(document,outbound_qty,inbound,p['reason'],p['signer'],p['signature'],now(),x['id']))
     c.execute("UPDATE corrections SET status='RESOLVED',resolved_at=? WHERE id=?",(now(),corr['id']))

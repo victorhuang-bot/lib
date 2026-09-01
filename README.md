@@ -64,3 +64,7 @@ Production 版密碼不寫入 GitHub，必須由 Hosting Provider 的 Secret Env
 - Branch correction always exposes document / outbound / inbound quantities.
 - Driver may request another correction after each correction until confirming the stop.
 - Correction requests are stored as repeated history rows rather than a one-correction-only record.
+
+
+## V6 更正規則
+分館收到司機更正要求後，公文、圖書送出、圖書收回三個數量欄位可選擇性修改；留白即沿用原值。更正原因、更正人姓名與新簽名仍必填。
