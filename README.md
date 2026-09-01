@@ -74,3 +74,9 @@ Production 版密碼不寫入 GitHub，必須由 Hosting Provider 的 Secret Env
 - ADMIN: route/driver assignment management; document quantities are view-only.
 - SECRETARY: public-document quantity editing, branch PIN/QR/basic branch management; routes and daily driver assignments are view-only.
 - Dashboard route cards can be clicked to filter branch realtime status by route.
+
+## V8：排程例外與三方簽核
+
+總館秘書可在「休館 / 停送 / 加送」頁面，針對指定日期與分館設定 `STOP`（休館/停送）或 `ADD`（臨時加送）。管理者可查看但不能異動。若該站配送已開始（已有公文、司機送出或分館簽收），系統不允許再直接設定停送。
+
+配送完成後，司機手機的每條路線會顯示今日路線總表。所有站點均為完成狀態後，司機才能手寫簽名並送出。總館秘書在「日報 / 月報」可查看各路線簽名進度；全部有配送任務的路線都完成司機簽名後，才可進行第三方手寫簽名。秘書簽名後，今日日報鎖定。

@@ -1,7 +1,10 @@
-# V7
+# V8
 
-- Route cards on dashboard are clickable route filters.
-- ADMIN dashboard document quantities are read-only.
-- SECRETARY alone can edit document quantities before driver outbound entry.
-- SECRETARY can manage branch PIN/QR/basic branch settings and enable/disable branches.
-- SECRETARY route and daily-driver assignment pages are read-only; ADMIN alone can modify them.
+- 新增總館秘書「休館 / 停送 / 臨時加送」排程管理。
+- 停送與臨時加送依分館＋日期建立例外設定；管理者僅供查看。
+- 今日尚未開始的配送可因停送移除；已開始配送不可直接停送。
+- 司機全部站點完成後，手機顯示「今日路線總表」並要求路線簽名。
+- 同一司機若負責多條路線，各路線分別簽名。
+- 總館秘書可查看各路線司機簽名狀態；所有有配送站點的路線都簽完後，才顯示第三方簽名區。
+- 秘書第三方簽名完成後，今日日報狀態 LOCKED。
+- 日報鎖定後，主要配送簽收與更正操作會被後端拒絕。
