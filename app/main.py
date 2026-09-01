@@ -45,6 +45,12 @@ def now():
     # All newly written operational timestamps use Taiwan Standard Time (UTC+8).
     return datetime.now(TAIPEI_TZ).isoformat(timespec='seconds')
 
+def future_iso(**kwargs):
+    # Expiry timestamps MUST use the same timezone/format as now().
+    # Mixing naive server UTC datetime.now() with Asia/Taipei now() caused
+    # newly-created driver activation QR codes to be judged expired immediately.
+    return (datetime.now(TAIPEI_TZ) + timedelta(**kwargs)).isoformat(timespec='seconds')
+
 def report_time(v):
     """Display report timestamps in Taiwan Standard Time.
     Legacy Render records were stored as naive UTC; aware values keep their timezone.
@@ -263,7 +269,7 @@ def reset_page(): return (STATIC/'reset.html').read_text(encoding='utf-8')
 async def login(req:Request):
     p=await req.json(); c=db(); u=c.execute('SELECT * FROM users WHERE username=? AND is_active=1',(p.get('username',''),)).fetchone()
     if not u or not verify_secret(p.get('password',''),u['password_hash']): c.close(); raise HTTPException(401,'帳號或密碼錯誤')
-    tok=secrets.token_urlsafe(32); c.execute('INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)',(thash(tok),u['id'],(datetime.now()+timedelta(hours=12)).isoformat())); audit(c,'USER',u['id'],u['role'],'LOGIN','USER',u['id']); c.commit(); c.close()
+    tok=secrets.token_urlsafe(32); c.execute('INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)',(thash(tok),u['id'],future_iso(hours=12))); audit(c,'USER',u['id'],u['role'],'LOGIN','USER',u['id']); c.commit(); c.close()
     r=JSONResponse({'ok':True,'role':u['role'],'token':tok}); r.set_cookie('session',tok,httponly=True,samesite='lax',secure=(APP_ENV=='production'),max_age=43200); return r
 @app.post('/api/auth/logout')
 def logout(req:Request):
@@ -277,7 +283,7 @@ def me(req:Request):
 async def forgot(req:Request):
     p=await req.json(); c=db(); u=c.execute('SELECT * FROM users WHERE username=?',(p.get('username',''),)).fetchone(); demo=None
     if u:
-        raw=secrets.token_urlsafe(32); c.execute('INSERT INTO password_resets(user_id,token_hash,expires_at,created_at) VALUES(?,?,?,?)',(u['id'],thash(raw),(datetime.now()+timedelta(minutes=15)).isoformat(),now())); c.commit(); demo=(f'/reset-password?token={raw}' if (APP_ENV!='production' or DEMO_RESET_LINKS) else None)
+        raw=secrets.token_urlsafe(32); c.execute('INSERT INTO password_resets(user_id,token_hash,expires_at,created_at) VALUES(?,?,?,?)',(u['id'],thash(raw),future_iso(minutes=15),now())); c.commit(); demo=(f'/reset-password?token={raw}' if (APP_ENV!='production' or DEMO_RESET_LINKS) else None)
     c.close(); return {'ok':True,'message':'若帳號存在，系統已寄送重設連結。','demo_reset_url':demo}
 @app.post('/api/auth/password/reset')
 async def reset(req:Request):
@@ -339,7 +345,7 @@ async def activation(req:Request,did:int):
     u=require_user(req,['ADMIN']); raw=secrets.token_urlsafe(32); c=db()
     # Only the newest activation QR remains valid. Older unused QR codes are revoked immediately.
     c.execute('UPDATE driver_activation_tokens SET revoked_at=? WHERE driver_id=? AND used_at IS NULL AND revoked_at IS NULL',(now(),did))
-    c.execute('INSERT INTO driver_activation_tokens(driver_id,token_hash,created_at,expires_at,created_by) VALUES(?,?,?,?,?)',(did,thash(raw),now(),(datetime.now()+timedelta(minutes=10)).isoformat(),u['id']))
+    c.execute('INSERT INTO driver_activation_tokens(driver_id,token_hash,created_at,expires_at,created_by) VALUES(?,?,?,?,?)',(did,thash(raw),now(),future_iso(minutes=10),u['id']))
     audit(c,'USER',u['id'],u['role'],'CREATE_DRIVER_ACTIVATION_QR','DRIVER',did,after={'expires_in_seconds':600})
     c.commit();c.close();return {'url':public_base_url(req)+'/activate-driver/'+raw,'expires_in_seconds':600}
 @app.get('/api/driver-activation/{token}')
@@ -358,7 +364,7 @@ async def activate_driver(token:str, req:Request):
 async def driver_unlock(req:Request):
     p=await req.json(); c=db(); dev=c.execute('''SELECT dd.*,d.pin_hash FROM driver_devices dd JOIN drivers d ON d.id=dd.driver_id WHERE dd.device_key=? AND dd.revoked_at IS NULL''',(p.get('device_key',''),)).fetchone()
     if not dev or not verify_secret(p.get('pin',''),dev['pin_hash'] or ''):c.close();raise HTTPException(401,'裝置或PIN錯誤')
-    raw=secrets.token_urlsafe(32);c.execute('INSERT INTO driver_sessions(token_hash,driver_id,device_id,expires_at) VALUES(?,?,?,?)',(thash(raw),dev['driver_id'],dev['id'],(datetime.now()+timedelta(hours=12)).isoformat()));c.commit();c.close();return {'token':raw}
+    raw=secrets.token_urlsafe(32);c.execute('INSERT INTO driver_sessions(token_hash,driver_id,device_id,expires_at) VALUES(?,?,?,?)',(thash(raw),dev['driver_id'],dev['id'],future_iso(hours=12)));c.commit();c.close();return {'token':raw}
 def driver_auth(req):
     auth=req.headers.get('Authorization',''); raw=auth[7:] if auth.startswith('Bearer ') else ''
     c=db();r=c.execute('SELECT * FROM driver_sessions WHERE token_hash=? AND expires_at>?',(thash(raw),now())).fetchone();c.close();
@@ -422,7 +428,7 @@ async def branch_verify(req:Request):
     if not b or not verify_secret(p.get('pin',''),b['pin_hash']):c.close();raise HTTPException(401,'QR或驗證碼錯誤')
     x=c.execute('SELECT * FROM deliveries WHERE service_date=? AND branch_id=?',(today(),b['id'])).fetchone()
     if not x:c.close();raise HTTPException(404,'今日沒有配送任務')
-    raw=secrets.token_urlsafe(32);c.execute('INSERT INTO branch_sessions(token_hash,branch_id,delivery_id,expires_at) VALUES(?,?,?,?)',(thash(raw),b['id'],x['id'],(datetime.now()+timedelta(minutes=30)).isoformat()));c.commit();c.close();return {'session':raw,'branch':b['name']}
+    raw=secrets.token_urlsafe(32);c.execute('INSERT INTO branch_sessions(token_hash,branch_id,delivery_id,expires_at) VALUES(?,?,?,?)',(thash(raw),b['id'],x['id'],future_iso(minutes=30)));c.commit();c.close();return {'session':raw,'branch':b['name']}
 def branch_auth(req):
     auth=req.headers.get('Authorization',''); raw=auth[7:] if auth.startswith('Bearer ') else ''
     c=db();r=c.execute('SELECT * FROM branch_sessions WHERE token_hash=? AND expires_at>?',(thash(raw),now())).fetchone();c.close();

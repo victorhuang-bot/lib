@@ -95,3 +95,7 @@ Production 版密碼不寫入 GitHub，必須由 Hosting Provider 的 Secret Env
 
 ## V12 調整
 司機今日路線總表於最終路線簽名前，只顯示各分館「公文」與「圖書收回」及兩項本線總計；圖書送出不在此畫面顯示。
+
+
+## V15 hotfix
+修正 Render 上新產生司機啟用 QR 立即被判定失效的時區錯誤。
