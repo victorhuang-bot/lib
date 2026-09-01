@@ -1,6 +1,7 @@
-# V6
+# V7
 
-- 分館更正數量改為選擇性修改。
-- 公文、圖書送出、圖書收回三個更正欄位皆為選填。
-- 留白代表沿用目前數量，不會改成 0。
-- 更正原因、更正人姓名、新簽名仍為必填。
+- Route cards on dashboard are clickable route filters.
+- ADMIN dashboard document quantities are read-only.
+- SECRETARY alone can edit document quantities before driver outbound entry.
+- SECRETARY can manage branch PIN/QR/basic branch settings and enable/disable branches.
+- SECRETARY route and daily-driver assignment pages are read-only; ADMIN alone can modify them.

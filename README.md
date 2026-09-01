@@ -68,3 +68,9 @@ Production 版密碼不寫入 GitHub，必須由 Hosting Provider 的 Secret Env
 
 ## V6 更正規則
 分館收到司機更正要求後，公文、圖書送出、圖書收回三個數量欄位可選擇性修改；留白即沿用原值。更正原因、更正人姓名與新簽名仍必填。
+
+
+## V7 permission update
+- ADMIN: route/driver assignment management; document quantities are view-only.
+- SECRETARY: public-document quantity editing, branch PIN/QR/basic branch management; routes and daily driver assignments are view-only.
+- Dashboard route cards can be clicked to filter branch realtime status by route.

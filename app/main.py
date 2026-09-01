@@ -257,7 +257,7 @@ def branch_qr_png(req:Request,bid:int):
     im=qrcode.make(public_base_url(req)+'/branch/'+raw); bio=io.BytesIO(); im.save(bio,'PNG'); return Response(bio.getvalue(),media_type='image/png')
 @app.post('/api/branches/{bid}/qr/rotate')
 async def rotate_qr(req:Request,bid:int):
-    u=require_user(req,['ADMIN']); c=db(); raw=secrets.token_urlsafe(24); c.execute('UPDATE branches SET access_token_hash=?,qr_created_at=? WHERE id=?',(thash(raw),now(),bid)); audit(c,'USER',u['id'],u['role'],'ROTATE_BRANCH_QR','BRANCH',bid,after={'token':raw});c.commit();c.close(); await publish({'type':'branch.qr_rotated','branch_id':bid});return {'ok':True}
+    u=require_user(req,['ADMIN','SECRETARY']); c=db(); raw=secrets.token_urlsafe(24); c.execute('UPDATE branches SET access_token_hash=?,qr_created_at=? WHERE id=?',(thash(raw),now(),bid)); audit(c,'USER',u['id'],u['role'],'ROTATE_BRANCH_QR','BRANCH',bid,after={'token':raw});c.commit();c.close(); await publish({'type':'branch.qr_rotated','branch_id':bid});return {'ok':True}
 @app.post('/api/branches/{bid}/pin')
 async def set_branch_pin(req:Request,bid:int):
     u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); pin=p.get('pin','');
@@ -382,7 +382,7 @@ async def branch_correct(req:Request):
 
 @app.patch('/api/secretary/deliveries/{did}/document')
 async def set_doc(did:int,req:Request):
-    u=require_user(req,['SECRETARY','ADMIN']); p=await req.json()
+    u=require_user(req,['SECRETARY']); p=await req.json()
     try: qty=int(p.get('qty'))
     except: raise HTTPException(400,'公文數量必須是整數')
     if qty < 0: raise HTTPException(400,'公文數量不可小於 0')
@@ -399,7 +399,7 @@ async def set_doc(did:int,req:Request):
 
 @app.post('/api/secretary/documents/zero-all')
 async def zero_all(req:Request):
-    u=require_user(req,['SECRETARY','ADMIN']); c=db()
+    u=require_user(req,['SECRETARY']); c=db()
     cur=c.execute("UPDATE deliveries SET document_original=0,document_final=0,status='WAITING_DRIVER',row_version=row_version+1 WHERE service_date=? AND outbound_original IS NULL AND status IN ('WAITING_SECRETARY','WAITING_DRIVER')",(today(),))
     changed=cur.rowcount
     audit(c,'USER',u['id'],u['role'],'ZERO_ALL_DOCUMENTS','DAY',today(),after={'changed':changed})
@@ -422,7 +422,7 @@ def audits(req:Request,limit:int=100):
 # ===== Expanded Admin / Secretary management =====
 @app.post('/api/branches')
 async def create_branch(req:Request):
-    u=require_user(req,['ADMIN']); p=await req.json(); c=db(); code=(p.get('code') or '').strip(); name=(p.get('name') or '').strip()
+    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); c=db(); code=(p.get('code') or '').strip(); name=(p.get('name') or '').strip()
     if not code or not name: c.close(); raise HTTPException(400,'分館代碼與名稱必填')
     if c.execute('SELECT 1 FROM branches WHERE code=?',(code,)).fetchone(): c.close(); raise HTTPException(409,'分館代碼已存在')
     route_id=int(p.get('route_id') or 1); stop_order=int(p.get('stop_order') or 1); raw=secrets.token_urlsafe(24)
@@ -437,7 +437,7 @@ def branch_detail(req:Request,bid:int):
 
 @app.patch('/api/branches/{bid}')
 async def update_branch(req:Request,bid:int):
-    u=require_user(req,['ADMIN']); p=await req.json(); c=db(); old=c.execute('SELECT * FROM branches WHERE id=?',(bid,)).fetchone()
+    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); c=db(); old=c.execute('SELECT * FROM branches WHERE id=?',(bid,)).fetchone()
     if not old: c.close(); raise HTTPException(404)
     fields=['code','name','route_id','stop_order','address','phone','contact_name','contact_info','delivery_weekdays','delivery_frequency']; vals={k:p[k] for k in fields if k in p}
     if vals: c.execute('UPDATE branches SET '+','.join(k+'=?' for k in vals)+' WHERE id=?',(*vals.values(),bid))
@@ -445,10 +445,10 @@ async def update_branch(req:Request,bid:int):
 
 @app.post('/api/branches/{bid}/deactivate')
 async def deactivate_branch(req:Request,bid:int):
-    u=require_user(req,['ADMIN']); c=db(); c.execute('UPDATE branches SET active=0 WHERE id=?',(bid,)); audit(c,'USER',u['id'],u['role'],'DEACTIVATE_BRANCH','BRANCH',bid); c.commit(); c.close(); return {'ok':True}
+    u=require_user(req,['ADMIN','SECRETARY']); c=db(); c.execute('UPDATE branches SET active=0 WHERE id=?',(bid,)); audit(c,'USER',u['id'],u['role'],'DEACTIVATE_BRANCH','BRANCH',bid); c.commit(); c.close(); return {'ok':True}
 @app.post('/api/branches/{bid}/activate')
 async def activate_branch(req:Request,bid:int):
-    u=require_user(req,['ADMIN']); c=db(); c.execute('UPDATE branches SET active=1 WHERE id=?',(bid,)); audit(c,'USER',u['id'],u['role'],'ACTIVATE_BRANCH','BRANCH',bid); c.commit(); c.close(); return {'ok':True}
+    u=require_user(req,['ADMIN','SECRETARY']); c=db(); c.execute('UPDATE branches SET active=1 WHERE id=?',(bid,)); audit(c,'USER',u['id'],u['role'],'ACTIVATE_BRANCH','BRANCH',bid); c.commit(); c.close(); return {'ok':True}
 
 @app.delete('/api/branches/{bid}')
 async def delete_branch(req:Request,bid:int):
@@ -506,7 +506,7 @@ def daily_route_list(req:Request, service_date:str|None=None):
     require_user(req,['ADMIN','SECRETARY']); d=service_date or today(); c=db(); rows=[dict(x) for x in c.execute('''SELECT dr.id,dr.service_date,dr.status,r.id route_id,r.code,r.name,d.id driver_id,d.name driver_name,COUNT(x.id) total,SUM(CASE WHEN x.status='STOP_COMPLETED' THEN 1 ELSE 0 END) completed FROM daily_routes dr JOIN routes r ON r.id=dr.route_id JOIN drivers d ON d.id=dr.driver_id LEFT JOIN deliveries x ON x.daily_route_id=dr.id WHERE dr.service_date=? GROUP BY dr.id ORDER BY r.code''',(d,)).fetchall()]; c.close(); return rows
 @app.patch('/api/daily-routes/{drid}/driver')
 async def assign_driver(req:Request,drid:int):
-    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); did=int(p.get('driver_id')); c=db(); c.execute('UPDATE daily_routes SET driver_id=? WHERE id=?',(did,drid)); audit(c,'USER',u['id'],u['role'],'ASSIGN_DAILY_DRIVER','DAILY_ROUTE',drid,after={'driver_id':did}); c.commit(); c.close(); await publish({'type':'route.updated','id':drid}); return {'ok':True}
+    u=require_user(req,['ADMIN']); p=await req.json(); did=int(p.get('driver_id')); c=db(); c.execute('UPDATE daily_routes SET driver_id=? WHERE id=?',(did,drid)); audit(c,'USER',u['id'],u['role'],'ASSIGN_DAILY_DRIVER','DAILY_ROUTE',drid,after={'driver_id':did}); c.commit(); c.close(); await publish({'type':'route.updated','id':drid}); return {'ok':True}
 
 @app.get('/api/deliveries/all')
 def all_deliveries(req:Request, service_date:str|None=None):
