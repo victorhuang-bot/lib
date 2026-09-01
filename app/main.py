@@ -3,13 +3,15 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, Fil
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import sqlite3, os, secrets, hashlib, hmac, base64, io, json, asyncio, csv
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
+from zoneinfo import ZoneInfo
 import qrcode
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as XLImage
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.utils import ImageReader
 
 BASE = Path(__file__).resolve().parent.parent
@@ -38,7 +40,24 @@ app.mount('/static', StaticFiles(directory=STATIC), name='static')
 
 subscribers = set()
 
-def now(): return datetime.now().isoformat(timespec='seconds')
+TAIPEI_TZ = ZoneInfo("Asia/Taipei")
+def now():
+    # All newly written operational timestamps use Taiwan Standard Time (UTC+8).
+    return datetime.now(TAIPEI_TZ).isoformat(timespec='seconds')
+
+def report_time(v):
+    """Display report timestamps in Taiwan Standard Time.
+    Legacy Render records were stored as naive UTC; aware values keep their timezone.
+    """
+    if not v: return ''
+    try:
+        dt=datetime.fromisoformat(str(v).replace('Z','+00:00'))
+        if dt.tzinfo is None:
+            dt=dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(TAIPEI_TZ).strftime('%Y-%m-%d %H:%M:%S')
+    except Exception:
+        return str(v)
+
 def today(): return date.today().isoformat()
 def db():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -700,7 +719,9 @@ def correction_list(req:Request):
     require_user(req,['ADMIN','SECRETARY']); c=db(); rows=[dict(x) for x in c.execute('''SELECT co.*,b.name branch_name,r.code route_code,d.name driver_name,x.document_final,x.outbound_final,x.inbound_final,x.note_final,x.correction_reason,x.correction_signer_name,x.corrected_at FROM corrections co JOIN deliveries x ON x.id=co.delivery_id JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id JOIN drivers d ON d.id=co.requested_by_driver_id ORDER BY co.id DESC''').fetchall()]; c.close(); return rows
 
 def report_rows(c,start_date,end_date):
-    return c.execute("""SELECT x.service_date 日期,r.code 路線,b.code 分館代碼,b.name 分館,x.document_final 公文,x.outbound_final 圖書送出,x.inbound_final 圖書收回,COALESCE(x.note_final,'') 備註,COALESCE(x.correction_signer_name,x.signer_name,'') 簽收人,COALESCE(x.corrected_at,x.branch_signed_at,'') 簽收時間,CASE WHEN EXISTS(SELECT 1 FROM corrections co2 WHERE co2.delivery_id=x.id) THEN '是' ELSE '否' END 是否更正,COALESCE(x.correction_reason,'') 更正原因 FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id WHERE x.service_date BETWEEN ? AND ? ORDER BY x.service_date,r.code,b.stop_order""",(start_date,end_date)).fetchall()
+    rows=[dict(x) for x in c.execute("""SELECT x.service_date 日期,r.code 路線,b.code 分館代碼,b.name 分館,x.document_final 公文,x.outbound_final 圖書送出,x.inbound_final 圖書收回,COALESCE(x.note_final,'') 備註,COALESCE(x.correction_signer_name,x.signer_name,'') 簽收人,COALESCE(x.corrected_at,x.branch_signed_at,'') 簽收時間,CASE WHEN EXISTS(SELECT 1 FROM corrections co2 WHERE co2.delivery_id=x.id) THEN '是' ELSE '否' END 是否更正,COALESCE(x.correction_reason,'') 更正原因 FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id WHERE x.service_date BETWEEN ? AND ? ORDER BY x.service_date,r.code,b.stop_order""",(start_date,end_date)).fetchall()]
+    for r in rows: r['簽收時間']=report_time(r.get('簽收時間'))
+    return rows
 
 def decode_data_url(v):
     if not v or ',' not in v: return None
@@ -757,36 +778,54 @@ def official_xlsx(payload,d):
     for col,w in {'A':16,'B':16,'C':22,'D':12,'E':14,'F':14,'G':16,'H':22,'I':24}.items(): ws.column_dimensions[col].width=w
     bio=io.BytesIO(); wb.save(bio); return bio.getvalue()
 
+
+def register_pdf_zh_font():
+    # Prefer an embedded Traditional-Chinese TrueType font so downloaded PDFs render
+    # correctly in Safari/Preview/Chrome instead of relying on viewer CID substitution.
+    candidates=[
+        '/usr/share/fonts/truetype/arphic/uming.ttc',
+        '/usr/share/fonts/truetype/arphic-bkai00mp/bkai00mp.ttf',
+    ]
+    for fp in candidates:
+        if os.path.exists(fp):
+            try:
+                pdfmetrics.registerFont(TTFont('ReportZH',fp,subfontIndex=0))
+                return 'ReportZH'
+            except Exception:
+                pass
+    pdfmetrics.registerFont(UnicodeCIDFont('MSung-Light'))
+    return 'MSung-Light'
+
 def pdf_bytes(rows,title):
-    bio=io.BytesIO(); pdfmetrics.registerFont(UnicodeCIDFont('MSung-Light')); cv=canvas.Canvas(bio,pagesize=(842,595)); cv.setFont('MSung-Light',16); cv.drawString(30,565,title); y=540; cv.setFont('MSung-Light',7.3)
+    bio=io.BytesIO(); zh=register_pdf_zh_font(); cv=canvas.Canvas(bio,pagesize=(842,595)); cv.setFont(zh,16); cv.drawString(30,565,title); y=540; cv.setFont(zh,7.3)
     for r in rows:
         line=f"{r['日期']}  {r['路線']}線  {r['分館代碼']} {r['分館']}  公文:{r['公文'] or 0}  送出:{r['圖書送出'] or 0}  收回:{r['圖書收回'] or 0}  簽收:{r['簽收人'] or '—'}  更正:{r['是否更正']}"; cv.drawString(25,y,line[:150]); y-=12
         extra=f"備註:{r['備註'] or '—'}  簽收時間:{r['簽收時間'] or '—'}  更正原因:{r['更正原因'] or '—'}"; cv.drawString(40,y,extra[:160]); y-=14
-        if y<30: cv.showPage(); cv.setFont('MSung-Light',7.3); y=565
+        if y<30: cv.showPage(); cv.setFont(zh,7.3); y=565
     cv.save(); return bio.getvalue()
 
 def official_pdf(payload,d):
-    bio=io.BytesIO(); pdfmetrics.registerFont(UnicodeCIDFont('MSung-Light')); cv=canvas.Canvas(bio,pagesize=(842,595))
-    cv.setFont('MSung-Light',16); cv.drawString(30,565,f'{d} 圖書物流配送暨電子簽收日報'); y=538
+    bio=io.BytesIO(); zh=register_pdf_zh_font(); cv=canvas.Canvas(bio,pagesize=(842,595))
+    cv.setFont(zh,16); cv.drawString(30,565,f'{d} 圖書物流配送暨電子簽收日報'); y=538
     for r in payload['routes']:
         if y<110: cv.showPage(); y=565
-        cv.setFont('MSung-Light',12); cv.drawString(30,y,f"{r['code']}線｜司機 {r['driver_name'] or '—'}"); y-=18; cv.setFont('MSung-Light',8)
+        cv.setFont(zh,12); cv.drawString(30,y,f"{r['code']}線｜司機 {r['driver_name'] or '—'}"); y-=18; cv.setFont(zh,8)
         for x in r['stops']:
             cv.drawString(42,y,f"{x['branch_name']}  公文 {x['document_final'] or 0}｜送出 {x['outbound_final'] or 0}｜收回 {x['inbound_final'] or 0}｜簽收 {x['correction_signer_name'] or x['signer_name'] or '—'}"); y-=13
-            if y<90: cv.showPage(); cv.setFont('MSung-Light',8); y=565
-        cv.setFont('MSung-Light',9); cv.drawString(42,y,f"路線合計：公文 {r['totals']['document']}｜送出 {r['totals']['outbound']}｜收回 {r['totals']['inbound']}"); y-=16
+            if y<90: cv.showPage(); cv.setFont(zh,8); y=565
+        cv.setFont(zh,9); cv.drawString(42,y,f"路線合計：公文 {r['totals']['document']}｜送出 {r['totals']['outbound']}｜收回 {r['totals']['inbound']}"); y-=16
         data=decode_data_url(r.get('driver_signature'))
         if data:
             try:
                 cv.drawImage(ImageReader(io.BytesIO(data)),42,y-45,width=150,height=42,mask='auto'); cv.drawString(200,y-22,f"司機簽名 {r['driver_signed_at'] or ''}"); y-=55
             except: pass
     if y<110: cv.showPage(); y=565
-    cv.setFont('MSung-Light',11); cv.drawString(30,y,f"全部總計：公文 {payload['grand']['document']}｜送出 {payload['grand']['outbound']}｜收回 {payload['grand']['inbound']}"); y-=22
+    cv.setFont(zh,11); cv.drawString(30,y,f"全部總計：公文 {payload['grand']['document']}｜送出 {payload['grand']['outbound']}｜收回 {payload['grand']['inbound']}"); y-=22
     rep=payload['report'] or {}; data=decode_data_url(rep.get('secretary_signature'))
     if data:
         try: cv.drawImage(ImageReader(io.BytesIO(data)),30,y-55,width=180,height=50,mask='auto')
         except: pass
-    cv.setFont('MSung-Light',9); cv.drawString(225,y-28,f"總館秘書最終簽名 {rep.get('secretary_signed_at') or ''}")
+    cv.setFont(zh,9); cv.drawString(225,y-28,f"總館秘書最終簽名 {rep.get('secretary_signed_at') or ''}")
     cv.save(); return bio.getvalue()
 
 @app.get('/api/reports/daily.xlsx')
