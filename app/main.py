@@ -16,6 +16,7 @@ DB = DATA_DIR / 'app.db'
 APP_ENV = os.getenv('APP_ENV','development').lower()
 APP_BASE_URL = os.getenv('APP_BASE_URL','').rstrip('/')
 DEMO_RESET_LINKS = os.getenv('DEMO_RESET_LINKS','false').lower() == 'true'
+DEMO_ACTIVE_BRANCHES = int(os.getenv('DEMO_ACTIVE_BRANCHES','3'))
 
 ADMIN_USERNAME = os.getenv('ADMIN_USERNAME','moving')
 SECRETARY_USERNAME = os.getenv('SECRETARY_USERNAME','lib')
@@ -76,13 +77,14 @@ def init_db():
     CREATE TABLE IF NOT EXISTS branches(id INTEGER PRIMARY KEY, code TEXT UNIQUE, name TEXT, route_id INTEGER, stop_order INTEGER, active INTEGER DEFAULT 1, pin_hash TEXT, access_token_hash TEXT UNIQUE, qr_created_at TEXT, address TEXT DEFAULT '', phone TEXT DEFAULT '', contact_name TEXT DEFAULT '', contact_info TEXT DEFAULT '', delivery_weekdays TEXT DEFAULT '1,2,3,4,5', delivery_frequency TEXT DEFAULT '每週固定');
     CREATE TABLE IF NOT EXISTS daily_routes(id INTEGER PRIMARY KEY, service_date TEXT, route_id INTEGER, driver_id INTEGER, status TEXT DEFAULT 'ACTIVE', driver_signature TEXT, driver_signed_at TEXT, UNIQUE(service_date,route_id));
     CREATE TABLE IF NOT EXISTS deliveries(id INTEGER PRIMARY KEY, service_date TEXT, daily_route_id INTEGER, branch_id INTEGER, status TEXT DEFAULT 'WAITING_SECRETARY', document_original INTEGER, document_final INTEGER, outbound_original INTEGER, outbound_final INTEGER, inbound_final INTEGER, note_final TEXT, signer_name TEXT, branch_signed_at TEXT, branch_signature TEXT, correction_signature TEXT, correction_signer_name TEXT, correction_reason TEXT, corrected_at TEXT, driver_confirmed_at TEXT, row_version INTEGER DEFAULT 1, UNIQUE(service_date,branch_id));
-    CREATE TABLE IF NOT EXISTS corrections(id INTEGER PRIMARY KEY, delivery_id INTEGER UNIQUE, requested_by_driver_id INTEGER, requested_at TEXT, fields_json TEXT, driver_note TEXT, status TEXT, resolved_at TEXT);
+    CREATE TABLE IF NOT EXISTS corrections(id INTEGER PRIMARY KEY, delivery_id INTEGER, requested_by_driver_id INTEGER, requested_at TEXT, fields_json TEXT, driver_note TEXT, status TEXT, resolved_at TEXT);
     CREATE TABLE IF NOT EXISTS audit_logs(id INTEGER PRIMARY KEY, actor_type TEXT, actor_id TEXT, role TEXT, action TEXT, entity_type TEXT, entity_id TEXT, before_json TEXT, after_json TEXT, reason TEXT, created_at TEXT);
     CREATE TABLE IF NOT EXISTS branch_sessions(token_hash TEXT PRIMARY KEY, branch_id INTEGER, delivery_id INTEGER, expires_at TEXT);
     CREATE TABLE IF NOT EXISTS driver_sessions(token_hash TEXT PRIMARY KEY, driver_id INTEGER, device_id INTEGER, expires_at TEXT);
     CREATE TABLE IF NOT EXISTS daily_reports(id INTEGER PRIMARY KEY, service_date TEXT UNIQUE, secretary_signature TEXT, secretary_signed_at TEXT, status TEXT DEFAULT 'OPEN', locked_at TEXT);
     CREATE TABLE IF NOT EXISTS email_recipients(id INTEGER PRIMARY KEY, email TEXT, recipient_type TEXT DEFAULT 'TO', active INTEGER DEFAULT 1, created_at TEXT);
     CREATE TABLE IF NOT EXISTS email_logs(id INTEGER PRIMARY KEY, report_type TEXT, period TEXT, recipients TEXT, status TEXT, error_message TEXT, sent_at TEXT, created_at TEXT);
+    CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, value TEXT);
     ''')
     if not c.execute('SELECT 1 FROM users').fetchone():
         admin_password=initial_secret('ADMIN_INITIAL_PASSWORD','85017306')
@@ -96,11 +98,53 @@ def init_db():
         for i in range(1,81):
             name=names[i-1] if i<=len(names) else f'示範分館{i:02d}'
             route=((i-1)%6)+1; order=((i-1)//6)+1; tok=secrets.token_urlsafe(24)
-            c.execute('INSERT INTO branches(code,name,route_id,stop_order,pin_hash,access_token_hash,qr_created_at) VALUES(?,?,?,?,?,?,?)',(f'B{i:03d}',name,route,order,hash_secret(branch_pin),thash(tok),now()))
+            active=1 if i<=DEMO_ACTIVE_BRANCHES else 0
+            c.execute('INSERT INTO branches(code,name,route_id,stop_order,active,pin_hash,access_token_hash,qr_created_at) VALUES(?,?,?,?,?,?,?,?)',(f'B{i:03d}',name,route,order,active,hash_secret(branch_pin),thash(tok),now()))
             # raw bootstrap token only for demo retrieval is derived by rotation endpoint; initial QR regenerated below through helper table impossible, so store demo token in audit
             c.execute('INSERT INTO audit_logs(actor_type,role,action,entity_type,entity_id,after_json,created_at) VALUES(?,?,?,?,?,?,?)',('SYSTEM','SYSTEM','SEED_BRANCH_TOKEN','BRANCH',str(i),json.dumps({'token':tok}),now()))
         c.commit()
-    ensure_today(c); c.close()
+    migrate_corrections_for_repeat_requests(c)
+    apply_demo_branch_limit(c)
+    ensure_today(c)
+    reset_test_day_once(c)
+    c.close()
+
+def migrate_corrections_for_repeat_requests(c):
+    row=c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='corrections'").fetchone()
+    sql=(row['sql'] or '') if row else ''
+    if 'delivery_id INTEGER UNIQUE' in sql or 'UNIQUE' in sql.upper():
+        c.execute('ALTER TABLE corrections RENAME TO corrections_old')
+        c.execute('CREATE TABLE corrections(id INTEGER PRIMARY KEY, delivery_id INTEGER, requested_by_driver_id INTEGER, requested_at TEXT, fields_json TEXT, driver_note TEXT, status TEXT, resolved_at TEXT)')
+        c.execute('INSERT INTO corrections(id,delivery_id,requested_by_driver_id,requested_at,fields_json,driver_note,status,resolved_at) SELECT id,delivery_id,requested_by_driver_id,requested_at,fields_json,driver_note,status,resolved_at FROM corrections_old')
+        c.execute('DROP TABLE corrections_old')
+        c.commit()
+
+def apply_demo_branch_limit(c):
+    # Hosted test edition: keep only the first N branches active; preserve all 80 records for later reactivation.
+    n=max(1, DEMO_ACTIVE_BRANCHES)
+    c.execute('UPDATE branches SET active=CASE WHEN id<=? THEN 1 ELSE 0 END',(n,))
+    # Remove today's tasks for currently inactive test branches so mobile driver screens stay small after redeploy.
+    c.execute("DELETE FROM branch_sessions WHERE delivery_id IN (SELECT d.id FROM deliveries d JOIN branches b ON b.id=d.branch_id WHERE d.service_date=? AND b.active=0)",(today(),))
+    c.execute("DELETE FROM corrections WHERE delivery_id IN (SELECT d.id FROM deliveries d JOIN branches b ON b.id=d.branch_id WHERE d.service_date=? AND b.active=0)",(today(),))
+    c.execute("DELETE FROM deliveries WHERE service_date=? AND branch_id IN (SELECT id FROM branches WHERE active=0)",(today(),))
+    c.commit()
+
+def reset_test_day_once(c):
+    key='V4_THREE_BRANCH_TEST_RESET'
+    if c.execute('SELECT 1 FROM app_settings WHERE key=?',(key,)).fetchone():
+        return
+    # One-time clean restart for the hosted test: reset only today's three active test branches.
+    active_ids=[r['id'] for r in c.execute('SELECT id FROM branches WHERE active=1 ORDER BY id LIMIT ?',(max(1,DEMO_ACTIVE_BRANCHES),)).fetchall()]
+    if active_ids:
+        q=','.join('?' for _ in active_ids)
+        dids=[r['id'] for r in c.execute(f'SELECT id FROM deliveries WHERE service_date=? AND branch_id IN ({q})',(today(),*active_ids)).fetchall()]
+        if dids:
+            qd=','.join('?' for _ in dids)
+            c.execute(f'DELETE FROM branch_sessions WHERE delivery_id IN ({qd})',dids)
+            c.execute(f'DELETE FROM corrections WHERE delivery_id IN ({qd})',dids)
+            c.execute(f"UPDATE deliveries SET status='WAITING_SECRETARY',document_original=NULL,document_final=NULL,outbound_original=NULL,outbound_final=NULL,inbound_final=NULL,note_final=NULL,signer_name=NULL,branch_signed_at=NULL,branch_signature=NULL,correction_signature=NULL,correction_signer_name=NULL,correction_reason=NULL,corrected_at=NULL,driver_confirmed_at=NULL,row_version=row_version+1 WHERE id IN ({qd})",dids)
+    c.execute('INSERT INTO app_settings(key,value) VALUES(?,?)',(key,now()))
+    c.commit()
 
 def ensure_today(c):
     d=today()
@@ -257,13 +301,13 @@ def driver_auth(req):
     return dict(r)
 @app.get('/api/driver/today')
 def driver_today(req:Request):
-    s=driver_auth(req); c=db(); rows=[dict(x) for x in c.execute('''SELECT x.*,b.name branch_name,b.code branch_code,r.code route_code FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id WHERE x.service_date=? AND dr.driver_id=? ORDER BY r.code,b.stop_order''',(today(),s['driver_id'])).fetchall()];c.close();return rows
+    s=driver_auth(req); c=db(); rows=[dict(x) for x in c.execute('''SELECT x.*,b.name branch_name,b.code branch_code,r.code route_code FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id WHERE x.service_date=? AND dr.driver_id=? AND b.active=1 ORDER BY r.code,b.stop_order''',(today(),s['driver_id'])).fetchall()];c.close();return rows
 @app.patch('/api/driver/deliveries/{did}/outbound')
 async def outbound(did:int,req:Request):
     s=driver_auth(req);p=await req.json();qty=int(p.get('qty',0));c=db(); x=c.execute('''SELECT x.*,dr.driver_id FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id WHERE x.id=?''',(did,)).fetchone()
     if not x or x['driver_id']!=s['driver_id']:c.close();raise HTTPException(403)
-    if x['status'] not in ('WAITING_DRIVER','WAITING_SECRETARY'):c.close();raise HTTPException(409,'目前狀態不可輸入送出數量')
-    status='WAITING_BRANCH' if x['document_original'] is not None else 'WAITING_SECRETARY'; c.execute('UPDATE deliveries SET outbound_original=?,outbound_final=?,status=?,row_version=row_version+1 WHERE id=?',(qty,qty,status,did));audit(c,'DRIVER',s['driver_id'],'DRIVER','SET_OUTBOUND','DELIVERY',did,after={'qty':qty});c.commit();c.close();await publish({'type':'delivery.updated','id':did});return {'ok':True}
+    if x['status'] not in ('WAITING_DRIVER','WAITING_SECRETARY','WAITING_BRANCH'):c.close();raise HTTPException(409,'分館簽收後不可再修改送出數量')
+    status='WAITING_BRANCH' if x['document_original'] is not None else 'WAITING_SECRETARY'; c.execute('UPDATE deliveries SET outbound_original=?,outbound_final=?,status=?,row_version=row_version+1 WHERE id=?',(qty,qty,status,did));audit(c,'DRIVER',s['driver_id'],'DRIVER','SET_OR_EDIT_OUTBOUND','DELIVERY',did,before={'qty':x['outbound_final']},after={'qty':qty});c.commit();c.close();await publish({'type':'delivery.updated','id':did});return {'ok':True}
 @app.post('/api/driver/deliveries/{did}/confirm')
 async def confirm(did:int,req:Request):
     s=driver_auth(req);c=db();x=c.execute('''SELECT x.*,dr.driver_id FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id WHERE x.id=?''',(did,)).fetchone()
@@ -274,11 +318,10 @@ async def confirm(did:int,req:Request):
 async def request_correction(did:int,req:Request):
     s=driver_auth(req); p=await req.json(); c=db(); x=c.execute('''SELECT x.*,dr.driver_id FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id WHERE x.id=?''',(did,)).fetchone()
     if not x or x['driver_id']!=s['driver_id']:c.close();raise HTTPException(403)
-    if x['status']!='WAITING_DRIVER_CONFIRM':c.close();raise HTTPException(409,'只有第一次簽收後可提出更正')
-    if c.execute('SELECT 1 FROM corrections WHERE delivery_id=?',(did,)).fetchone():c.close();raise HTTPException(409,'此筆配送已使用唯一一次更正機會')
-    fields=p.get('fields',[]); allowed={'document','outbound','inbound','note'}
-    if not fields or any(f not in allowed for f in fields):c.close();raise HTTPException(400,'請指定更正欄位')
-    c.execute('INSERT INTO corrections(delivery_id,requested_by_driver_id,requested_at,fields_json,driver_note,status) VALUES(?,?,?,?,?,?)',(did,s['driver_id'],now(),json.dumps(fields),p.get('note',''),'PENDING'));c.execute("UPDATE deliveries SET status='WAITING_BRANCH_CORRECTION',row_version=row_version+1 WHERE id=?",(did,));c.commit();c.close();await publish({'type':'delivery.updated','id':did});return {'ok':True}
+    if x['status'] not in ('WAITING_DRIVER_CONFIRM','WAITING_DRIVER_RECONFIRM'):c.close();raise HTTPException(409,'目前狀態不可要求分館更正')
+    if c.execute("SELECT 1 FROM corrections WHERE delivery_id=? AND status='PENDING'",(did,)).fetchone():c.close();raise HTTPException(409,'此筆已有待分館處理的更正要求')
+    fields=['document','outbound','inbound']
+    c.execute('INSERT INTO corrections(delivery_id,requested_by_driver_id,requested_at,fields_json,driver_note,status) VALUES(?,?,?,?,?,?)',(did,s['driver_id'],now(),json.dumps(fields),p.get('note',''),'PENDING'));audit(c,'DRIVER',s['driver_id'],'DRIVER','REQUEST_CORRECTION','DELIVERY',did,after={'fields':fields,'note':p.get('note','')});c.execute("UPDATE deliveries SET status='WAITING_BRANCH_CORRECTION',row_version=row_version+1 WHERE id=?",(did,));c.commit();c.close();await publish({'type':'delivery.updated','id':did});return {'ok':True}
 @app.post('/api/driver/routes/{rid}/sign')
 async def sign_route(rid:int,req:Request):
     s=driver_auth(req); p=await req.json();c=db();dr=c.execute('SELECT * FROM daily_routes WHERE id=? AND driver_id=?',(rid,s['driver_id'])).fetchone();
@@ -301,7 +344,7 @@ def branch_auth(req):
     return dict(r)
 @app.get('/api/branch-session/today')
 def branch_today(req:Request):
-    s=branch_auth(req);c=db();x=c.execute('''SELECT x.*,b.name branch_name FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.id=? AND x.branch_id=?''',(s['delivery_id'],s['branch_id'])).fetchone();corr=c.execute('SELECT * FROM corrections WHERE delivery_id=?',(x['id'],)).fetchone();c.close();out=dict(x);out['correction']=dict(corr) if corr else None;return out
+    s=branch_auth(req);c=db();x=c.execute('''SELECT x.*,b.name branch_name FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.id=? AND x.branch_id=?''',(s['delivery_id'],s['branch_id'])).fetchone();corr=c.execute("SELECT * FROM corrections WHERE delivery_id=? ORDER BY CASE WHEN status='PENDING' THEN 0 ELSE 1 END,id DESC LIMIT 1",(x['id'],)).fetchone();c.close();out=dict(x);out['correction']=dict(corr) if corr else None;return out
 @app.post('/api/branch-session/sign')
 async def branch_sign(req:Request):
     s=branch_auth(req);p=await req.json();c=db();x=c.execute('SELECT * FROM deliveries WHERE id=?',(s['delivery_id'],)).fetchone()
@@ -311,16 +354,18 @@ async def branch_sign(req:Request):
     c.execute("UPDATE deliveries SET document_final=?,outbound_final=?,inbound_final=?,note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,status='WAITING_DRIVER_CONFIRM',row_version=row_version+1 WHERE id=?",(*vals,now(),x['id']));audit(c,'BRANCH',s['branch_id'],'BRANCH','BRANCH_SIGN','DELIVERY',x['id'],after={'document':vals[0],'outbound':vals[1],'inbound':vals[2],'note':vals[3],'signer':vals[4]});c.commit();c.close();await publish({'type':'delivery.updated','id':x['id']});return {'ok':True}
 @app.post('/api/branch-session/correct')
 async def branch_correct(req:Request):
-    s=branch_auth(req);p=await req.json();c=db();x=c.execute('SELECT * FROM deliveries WHERE id=?',(s['delivery_id'],)).fetchone();corr=c.execute('SELECT * FROM corrections WHERE delivery_id=?',(x['id'],)).fetchone()
+    s=branch_auth(req);p=await req.json();c=db();x=c.execute('SELECT * FROM deliveries WHERE id=?',(s['delivery_id'],)).fetchone();corr=c.execute("SELECT * FROM corrections WHERE delivery_id=? AND status='PENDING' ORDER BY id DESC LIMIT 1",(x['id'],)).fetchone()
     if x['status']!='WAITING_BRANCH_CORRECTION' or not corr or corr['status']!='PENDING':c.close();raise HTTPException(409,'目前沒有可更正資料')
-    fields=json.loads(corr['fields_json']); updates={}
-    mapping={'document':'document_final','outbound':'outbound_final','inbound':'inbound_final','note':'note_final'}
-    for f in fields:
-        if f in p: updates[mapping[f]]=int(p[f]) if f!='note' else p[f]
     if not p.get('reason','').strip() or not p.get('signer','').strip() or not p.get('signature',''):c.close();raise HTTPException(400,'更正原因、姓名與新簽名必填')
-    sets=','.join(k+'=?' for k in updates); vals=list(updates.values())
-    sql=f"UPDATE deliveries SET {sets}, correction_reason=?,correction_signer_name=?,correction_signature=?,corrected_at=?,status='WAITING_DRIVER_RECONFIRM',row_version=row_version+1 WHERE id=?"
-    c.execute(sql,(*vals,p['reason'],p['signer'],p['signature'],now(),x['id']));c.execute("UPDATE corrections SET status='RESOLVED',resolved_at=? WHERE id=?",(now(),corr['id']));c.commit();c.close();await publish({'type':'delivery.updated','id':x['id']});return {'ok':True}
+    try:
+        document=int(p['document']); outbound_qty=int(p['outbound']); inbound=int(p['inbound'])
+    except (KeyError,TypeError,ValueError):
+        c.close(); raise HTTPException(400,'公文、圖書送出、圖書收回三個數量都必須填寫')
+    before={'document':x['document_final'],'outbound':x['outbound_final'],'inbound':x['inbound_final']}
+    c.execute("UPDATE deliveries SET document_final=?,outbound_final=?,inbound_final=?,correction_reason=?,correction_signer_name=?,correction_signature=?,corrected_at=?,status='WAITING_DRIVER_RECONFIRM',row_version=row_version+1 WHERE id=?",(document,outbound_qty,inbound,p['reason'],p['signer'],p['signature'],now(),x['id']))
+    c.execute("UPDATE corrections SET status='RESOLVED',resolved_at=? WHERE id=?",(now(),corr['id']))
+    audit(c,'BRANCH',s['branch_id'],'BRANCH','BRANCH_CORRECT','DELIVERY',x['id'],before=before,after={'document':document,'outbound':outbound_qty,'inbound':inbound,'reason':p['reason'],'signer':p['signer']})
+    c.commit();c.close();await publish({'type':'delivery.updated','id':x['id']});return {'ok':True}
 
 @app.patch('/api/secretary/deliveries/{did}/document')
 async def set_doc(did:int,req:Request):

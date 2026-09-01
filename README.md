@@ -55,3 +55,12 @@ Production 版密碼不寫入 GitHub，必須由 Hosting Provider 的 Secret Env
 `https://your-domain.example/activate-driver/...`
 
 因此不同手機可以直接連線測試。
+
+
+## V4 mobile test changes
+
+- Test deployment activates only 3 branches; the remaining seeded branches are inactive and can be reactivated later.
+- Driver outbound quantity stays visible after save and can be edited until branch signing.
+- Branch correction always exposes document / outbound / inbound quantities.
+- Driver may request another correction after each correction until confirming the stop.
+- Correction requests are stored as repeated history rows rather than a one-correction-only record.

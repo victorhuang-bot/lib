@@ -18,3 +18,5 @@ services:
         sync: false
       - key: DEMO_BRANCH_PIN
         sync: false
+      - key: DEMO_ACTIVE_BRANCHES
+        value: "3"
