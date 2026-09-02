@@ -1,23 +1,18 @@
-# V18.2 — SMTP + Email UI Hotfix
+# V19 — 路線與分館正式資料版
 
-## SMTP 修正
-- 不再於 `render.yaml` / `render-persistent.yaml` 宣告 SMTP secret keys，避免 Blueprint 更新把使用者在 Render 手動設定的 SMTP 值清空或變成未同步狀態。
-- Google Workspace 非機密項目加入安全預設：
-  - SMTP_HOST=smtp.gmail.com
-  - SMTP_PORT=587
-  - SMTP_USER=victor.huang@moving-match.com
-  - SMTP_FROM=lib@moving-match.com
-  - SMTP_TLS=true
-- `SMTP_PASSWORD` 仍必須只存在 Render Environment，不寫入 GitHub。
-- 後台 SMTP 診斷顯示每個欄位來自「Render / 系統預設 / 未設定」，但永不回傳密碼內容。
-- 因此即使 Blueprint 沒有帶入 Host/User/From/Port/TLS，系統仍可正常使用；只要 Render 的 SMTP_PASSWORD 存在即可。
+## 本版調整
+1. 移除 Email / SMTP 功能與後台 Email 頁面。
+2. 移除 PDF 報表下載，只保留日報 Excel 與月報 Excel。
+3. 路線由 A/B/C/D/E/F 改為 1/2/3/4/5/6，介面顯示「路線1」到「路線6」。
+4. 依營運提供資料匯入 74 個目前分館代碼、名稱與路線順序。
+5. 既有多出的示範分館保留歷史資料但停用，不再列入目前配送。
+6. 74 個目前分館設定為啟用；各館固定配送星期仍保留既有/預設設定，後續可由分館管理調整。
 
-## Email UI 修正
-- 報表寄送紀錄改為固定欄寬＋橫向捲動容器。
-- 收件人與錯誤訊息允許自動換行，不再把整個 Email 頁面撐出視窗。
-- 錯誤訊息列表只顯示前 72 字，完整內容放在滑鼠提示 title。
-- SENT / FAILED 使用狀態標籤。
-- 手機版保留 Email Log 所有必要欄位，不再被全站表格 CSS 隱藏。
+## 帳號安全
+Email 功能移除後，秘書忘記密碼請由管理者在「帳號與安全性」重設。管理者可在登入後修改自己的密碼。
 
-## 重要部署步驟
-V18.1 已可能因 Blueprint 把 SMTP 欄位清空。部署 V18.2 後，請回 Render → Environment 確認至少 `SMTP_PASSWORD` 還存在；若沒有，重新貼上 Google App Password 並 Save Changes。其他 SMTP 欄位即使沒有也有正式 Workspace 預設值。
+## 保留功能
+- V17 司機臨時交接 / 接手提示 / 分段簽名 / Audit Log
+- 固定分館 QR 與司機 10 分鐘啟用 QR
+- 正式網域 https://lib.moving-match.com
+- Excel 日報 / 月報
