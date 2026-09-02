@@ -114,8 +114,8 @@ async function loadPrefillDocs(serviceDate){
       return `<tr><td>${d.route_name||('路線'+d.route_code)}</td><td>${d.driver_name||'未指派'}</td><td>${d.branch_code}</td><td>${d.branch_name}</td><td>${editor}</td></tr>`;
     }).join(''):`<tr><td colspan="5" class="muted">${x.service_date} 沒有符合固定排程或非固定運送的分館。</td></tr>`;
   }catch(e){
-    hint.textContent='公文預填清單讀取失敗';
-    body.innerHTML=`<tr><td colspan="5"><div class="error">${e.message}</div></td></tr>`;
+    hint.textContent=`公文預填清單讀取失敗：${e.message}`;
+    body.innerHTML=`<tr><td colspan="5"><div class="error"><b>無法建立 ${serviceDate} 公文清單</b><br>${e.message}<br><span class="muted">請重新整理一次；若仍失敗，Render Log 會顯示 PREFILL_ERROR。</span></div></td></tr>`;
   }
 }
 async function setNextDoc(id,branchName){

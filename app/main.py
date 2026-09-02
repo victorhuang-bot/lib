@@ -515,22 +515,76 @@ def branch_expected_on(c,b,service_date):
     return bool(b['active']) and weekday in days
 
 def rebuild_service_date(c, service_date):
+    # Idempotent / concurrency-safe day builder for PostgreSQL.
+    # It is safe for dashboard, prefill and schedule refresh to call this repeatedly.
+    try:
+        date.fromisoformat(service_date)
+    except:
+        raise ValueError('service_date must be YYYY-MM-DD')
+
     route_map={}
-    for r in c.execute('SELECT * FROM routes WHERE active=1').fetchall():
-        dr=c.execute('SELECT * FROM daily_routes WHERE service_date=? AND route_id=?',(service_date,r['id'])).fetchone()
+    routes=c.execute('SELECT * FROM routes WHERE active=1 ORDER BY id').fetchall()
+    for r in routes:
+        dr=c.execute(
+            'SELECT * FROM daily_routes WHERE service_date=? AND route_id=?',
+            (service_date,r['id'])
+        ).fetchone()
         if not dr:
             driver=default_driver_id(c,r['id'])
-            cur=c.execute('INSERT INTO daily_routes(service_date,route_id,driver_id) VALUES(?,?,?)',(service_date,r['id'],driver))
-            new_id=cur.lastrowid
-            dr=c.execute('SELECT * FROM daily_routes WHERE id=?',(new_id,)).fetchone()
-        route_map[r['id']]=dr['id']
-    for b in c.execute('SELECT * FROM branches ORDER BY id').fetchall():
+            if USE_POSTGRES:
+                c.execute(
+                    '''INSERT INTO daily_routes(service_date,route_id,driver_id)
+                       VALUES(?,?,?)
+                       ON CONFLICT(service_date,route_id) DO NOTHING''',
+                    (service_date,r['id'],driver)
+                )
+            else:
+                try:
+                    c.execute(
+                        'INSERT INTO daily_routes(service_date,route_id,driver_id) VALUES(?,?,?)',
+                        (service_date,r['id'],driver)
+                    )
+                except Exception:
+                    pass
+            dr=c.execute(
+                'SELECT * FROM daily_routes WHERE service_date=? AND route_id=?',
+                (service_date,r['id'])
+            ).fetchone()
+        if dr:
+            route_map[r['id']]=dr['id']
+
+    branches=c.execute('SELECT * FROM branches ORDER BY id').fetchall()
+    for b in branches:
         expected=branch_expected_on(c,b,service_date)
-        existing=c.execute('SELECT * FROM deliveries WHERE service_date=? AND branch_id=?',(service_date,b['id'])).fetchone()
+        existing=c.execute(
+            'SELECT * FROM deliveries WHERE service_date=? AND branch_id=?',
+            (service_date,b['id'])
+        ).fetchone()
+
         if expected and not existing and b['route_id'] in route_map:
-            c.execute('INSERT INTO deliveries(service_date,daily_route_id,branch_id,status) VALUES(?,?,?,?)',(service_date,route_map[b['route_id']],b['id'],'WAITING_SECRETARY'))
+            if USE_POSTGRES:
+                c.execute(
+                    '''INSERT INTO deliveries(service_date,daily_route_id,branch_id,status)
+                       VALUES(?,?,?,?)
+                       ON CONFLICT(service_date,branch_id) DO NOTHING''',
+                    (service_date,route_map[b['route_id']],b['id'],'WAITING_SECRETARY')
+                )
+            else:
+                try:
+                    c.execute(
+                        'INSERT INTO deliveries(service_date,daily_route_id,branch_id,status) VALUES(?,?,?,?)',
+                        (service_date,route_map[b['route_id']],b['id'],'WAITING_SECRETARY')
+                    )
+                except Exception:
+                    pass
+
         elif not expected and existing:
-            untouched=(existing['document_original'] is None and existing['outbound_original'] is None and existing['branch_signed_at'] is None and existing['driver_confirmed_at'] is None)
+            untouched=(
+                existing['document_original'] is None and
+                existing['outbound_original'] is None and
+                existing['branch_signed_at'] is None and
+                existing['driver_confirmed_at'] is None
+            )
             if untouched:
                 c.execute('DELETE FROM branch_sessions WHERE delivery_id=?',(existing['id'],))
                 c.execute('DELETE FROM corrections WHERE delivery_id=?',(existing['id'],))
@@ -840,10 +894,11 @@ def document_prefill(req:Request, service_date:str|None=None):
     if selected < date.fromisoformat(today()):
         raise HTTPException(400,'公文預填只能選擇今天或未來日期')
     c=db()
-    # Build the selected date independently from today's in-progress deliveries.
-    # Fixed weekdays + CLOSED_ALL / STOP / ADD are respected by rebuild_service_date().
-    rebuild_service_date(c,d)
-    rows=[dict(x) for x in c.execute('''SELECT x.id,x.service_date,x.status,
+    try:
+        # Build the selected date independently from today's in-progress deliveries.
+        # Fixed weekdays + CLOSED_ALL / STOP / ADD are respected by rebuild_service_date().
+        rebuild_service_date(c,d)
+        rows=[dict(x) for x in c.execute('''SELECT x.id,x.service_date,x.status,
         x.document_final,x.outbound_original,
         b.code branch_code,b.name branch_name,b.stop_order,
         r.code route_code,r.name route_name,
@@ -855,15 +910,27 @@ def document_prefill(req:Request, service_date:str|None=None):
         LEFT JOIN drivers dv ON dv.id=dr.driver_id
         WHERE x.service_date=?
         ORDER BY CAST(r.code AS INTEGER),r.code,b.stop_order''',(d,)).fetchall()]
-    closure=c.execute('SELECT reason FROM global_closures WHERE service_date=?',(d,)).fetchone()
-    c.close()
-    return {
-        'service_date':d,
-        'is_global_closure':bool(closure),
-        'closure_reason':closure['reason'] if closure else None,
-        'count':len(rows),
-        'rows':rows
-    }
+        closure=c.execute('SELECT reason FROM global_closures WHERE service_date=?',(d,)).fetchone()
+        result={
+            'service_date':d,
+            'is_global_closure':bool(closure),
+            'closure_reason':closure['reason'] if closure else None,
+            'count':len(rows),
+            'rows':rows
+        }
+        c.close()
+        return result
+    except HTTPException:
+        try: c.rollback()
+        except: pass
+        c.close()
+        raise
+    except Exception as e:
+        try: c.rollback()
+        except: pass
+        c.close()
+        print('PREFILL_ERROR',d,type(e).__name__,str(e),flush=True)
+        raise HTTPException(500,f'公文預填建立失敗：{type(e).__name__}: {e}')
 
 @app.patch('/api/secretary/deliveries/{did}/document')
 async def set_doc(did:int,req:Request):
