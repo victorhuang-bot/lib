@@ -6,8 +6,10 @@ import sqlite3, os, secrets, hashlib, hmac, base64, io, json, asyncio, csv, smtp
 try:
     import psycopg
     from psycopg.rows import dict_row
+    from psycopg_pool import ConnectionPool
 except Exception:
     psycopg=None
+    ConnectionPool=None
 
 from email.message import EmailMessage
 from datetime import datetime, timedelta, date, timezone
@@ -26,6 +28,31 @@ DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
 DB = DATA_DIR / 'app.db'
 DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
 USE_POSTGRES = bool(DATABASE_URL)
+
+# V18.3.9: Neon connection pool.
+# min_size=0 lets Neon scale to zero when truly idle; max_size limits free-tier pressure.
+_PG_POOL = None
+def pg_pool():
+    global _PG_POOL
+    if not USE_POSTGRES:
+        return None
+    if ConnectionPool is None:
+        raise RuntimeError('DATABASE_URL 已設定，但 psycopg_pool 未安裝')
+    if _PG_POOL is None:
+        _PG_POOL=ConnectionPool(
+            conninfo=DATABASE_URL,
+            min_size=0,
+            max_size=5,
+            timeout=8,
+            max_idle=60,
+            kwargs={
+                'row_factory': dict_row,
+                'connect_timeout': 5,
+                'options': '-c statement_timeout=10000'
+            },
+            open=True
+        )
+    return _PG_POOL
 APP_ENV = os.getenv('APP_ENV','development').lower()
 APP_BASE_URL = os.getenv('APP_BASE_URL','https://lib.moving-match.com').rstrip('/')
 DEMO_RESET_LINKS = os.getenv('DEMO_RESET_LINKS','false').lower() == 'true'
@@ -111,7 +138,9 @@ class _PgCursor:
 
 class _PgCompat:
     def __init__(self, url):
-        self.con=psycopg.connect(url, row_factory=dict_row)
+        self.pool=pg_pool()
+        self.con=self.pool.getconn(timeout=8)
+        self.con.row_factory=dict_row
     def _q(self, sql):
         # Application SQL uses sqlite qmark parameters; psycopg uses %s.
         return sql.replace('?', '%s')
@@ -148,13 +177,21 @@ class _PgCompat:
                 self.execute(stmt)
     def commit(self): self.con.commit()
     def rollback(self): self.con.rollback()
-    def close(self): self.con.close()
+    def close(self):
+        if getattr(self,'con',None) is not None:
+            try:
+                self.pool.putconn(self.con)
+            finally:
+                self.con=None
 
 def db():
     if USE_POSTGRES:
-        if psycopg is None:
-            raise RuntimeError('DATABASE_URL 已設定，但尚未安裝 psycopg')
-        return _PgCompat(DATABASE_URL)
+        if psycopg is None or ConnectionPool is None:
+            raise RuntimeError('DATABASE_URL 已設定，但 PostgreSQL driver/pool 尚未安裝')
+        try:
+            return _PgCompat(DATABASE_URL)
+        except Exception as e:
+            raise RuntimeError(f'PostgreSQL 暫時無法連線：{type(e).__name__}: {e}')
     # Local development fallback only.
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     con=sqlite3.connect(DB, timeout=30); con.row_factory=sqlite3.Row
