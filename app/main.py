@@ -82,6 +82,17 @@ def verify_secret(s, stored):
         got=hashlib.pbkdf2_hmac('sha256', s.encode(), salt, 120000)
         return hmac.compare_digest(exp,got)
     except: return False
+
+def verify_legacy_v18_secret(s, stored):
+    """Compatibility with V18 system_accounts password hashes."""
+    try:
+        if not stored or not str(stored).startswith('pbkdf2_sha256$'):
+            return False
+        _, rounds, salt_hex, digest_hex = str(stored).split('$', 3)
+        got = hashlib.pbkdf2_hmac('sha256', s.encode('utf-8'), bytes.fromhex(salt_hex), int(rounds))
+        return hmac.compare_digest(got.hex(), digest_hex)
+    except Exception:
+        return False
 def thash(s): return hashlib.sha256(s.encode()).hexdigest()
 
 
@@ -113,23 +124,30 @@ def init_db():
     CREATE TABLE IF NOT EXISTS delivery_driver_assignments(id INTEGER PRIMARY KEY, delivery_id INTEGER UNIQUE, driver_id INTEGER, assigned_at TEXT, handoff_id INTEGER);
     CREATE TABLE IF NOT EXISTS route_segment_signatures(id INTEGER PRIMARY KEY, service_date TEXT, daily_route_id INTEGER, driver_id INTEGER, signature TEXT, signed_at TEXT, UNIQUE(service_date,daily_route_id,driver_id));
     ''')
-    if not c.execute('SELECT 1 FROM users').fetchone():
-        admin_password=initial_secret('ADMIN_INITIAL_PASSWORD','85017306')
-        secretary_password=initial_secret('SECRETARY_INITIAL_PASSWORD','03751080')
-        branch_pin=initial_secret('DEMO_BRANCH_PIN','1234')
-        c.execute('INSERT INTO users(username,password_hash,role,email) VALUES(?,?,?,?)',(ADMIN_USERNAME,hash_secret(admin_password),'ADMIN',''))
-        c.execute('INSERT INTO users(username,password_hash,role,email) VALUES(?,?,?,?)',(SECRETARY_USERNAME,hash_secret(secretary_password),'SECRETARY',''))
+    # V19.1: ensure ADMIN and SECRETARY independently.  A partially migrated DB
+    # must not prevent either login account from being created.
+    admin_password=initial_secret('ADMIN_INITIAL_PASSWORD','85017306')
+    secretary_password=initial_secret('SECRETARY_INITIAL_PASSWORD','03751080')
+    if not c.execute('SELECT 1 FROM users WHERE username=?',(ADMIN_USERNAME,)).fetchone():
+        c.execute('INSERT INTO users(username,password_hash,role,email,is_active) VALUES(?,?,?,?,1)',(ADMIN_USERNAME,hash_secret(admin_password),'ADMIN',''))
+    if not c.execute('SELECT 1 FROM users WHERE username=?',(SECRETARY_USERNAME,)).fetchone():
+        c.execute('INSERT INTO users(username,password_hash,role,email,is_active) VALUES(?,?,?,?,1)',(SECRETARY_USERNAME,hash_secret(secretary_password),'SECRETARY',''))
+
+    # Seed demo master data only when routes/branches are genuinely empty.
+    if not c.execute('SELECT 1 FROM routes').fetchone():
         for i in range(1,7): c.execute('INSERT INTO routes(id,code,name) VALUES(?,?,?)',(i,str(i),f'路線{i}'))
+    if not c.execute('SELECT 1 FROM drivers').fetchone():
         for n in ['王先生','李先生','陳先生','林先生','張先生']: c.execute('INSERT INTO drivers(name) VALUES(?)',(n,))
+    if not c.execute('SELECT 1 FROM branches').fetchone():
+        branch_pin=initial_secret('DEMO_BRANCH_PIN','1234')
         names=['松山分館','民生分館','中山分館','北投分館','石牌分館','大安分館','士林分館','萬華分館','信義分館','內湖分館','南港分館','文山分館']
         for i in range(1,81):
             name=names[i-1] if i<=len(names) else f'示範分館{i:02d}'
             route=((i-1)%6)+1; order=((i-1)//6)+1; tok=secrets.token_urlsafe(24)
             active=1 if i<=DEMO_ACTIVE_BRANCHES else 0
             c.execute('INSERT INTO branches(code,name,route_id,stop_order,active,pin_hash,access_token_hash,qr_created_at) VALUES(?,?,?,?,?,?,?,?)',(f'B{i:03d}',name,route,order,active,hash_secret(branch_pin),thash(tok),now()))
-            # raw bootstrap token only for demo retrieval is derived by rotation endpoint; initial QR regenerated below through helper table impossible, so store demo token in audit
             c.execute('INSERT INTO audit_logs(actor_type,role,action,entity_type,entity_id,after_json,created_at) VALUES(?,?,?,?,?,?,?)',('SYSTEM','SYSTEM','SEED_BRANCH_TOKEN','BRANCH',str(i),json.dumps({'token':tok}),now()))
-        c.commit()
+    c.commit()
     migrate_corrections_for_repeat_requests(c)
     migrate_route_secretary_signatures(c)
     apply_demo_branch_limit(c)
@@ -305,10 +323,46 @@ def reset_page(): return (STATIC/'reset.html').read_text(encoding='utf-8')
 
 @app.post('/api/auth/login')
 async def login(req:Request):
-    p=await req.json(); c=db(); u=c.execute('SELECT * FROM users WHERE username=? AND is_active=1',(p.get('username',''),)).fetchone()
-    if not u or not verify_secret(p.get('password',''),u['password_hash']): c.close(); raise HTTPException(401,'帳號或密碼錯誤')
+    p=await req.json(); username=(p.get('username') or '').strip(); password=p.get('password','')
+    c=db(); u=c.execute('SELECT * FROM users WHERE username=? AND is_active=1',(username,)).fetchone()
+    ok = bool(u and verify_secret(password,u['password_hash']))
+
+    # V19.1 compatibility: V18 stored changed ADMIN/SECRETARY passwords in
+    # system_accounts using a different PBKDF2 serialization. If such a row exists,
+    # verify it once and migrate the successful password into the canonical users table.
+    if u and not ok:
+        try:
+            has_legacy = c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='system_accounts'").fetchone()
+            if has_legacy:
+                legacy = c.execute('SELECT password_hash FROM system_accounts WHERE username=?',(username,)).fetchone()
+                if legacy and verify_legacy_v18_secret(password, legacy['password_hash']):
+                    c.execute('UPDATE users SET password_hash=?, failed_count=0, locked_until=NULL WHERE id=?',(hash_secret(password),u['id']))
+                    audit(c,'SYSTEM','V19.1','SYSTEM','MIGRATE_LOGIN_PASSWORD','USER',u['id'])
+                    c.commit(); ok=True
+        except Exception:
+            pass
+
+    if not u or not ok:
+        c.close(); raise HTTPException(401,'帳號或密碼錯誤')
     tok=secrets.token_urlsafe(32); c.execute('INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)',(thash(tok),u['id'],future_iso(hours=12))); audit(c,'USER',u['id'],u['role'],'LOGIN','USER',u['id']); c.commit(); c.close()
     r=JSONResponse({'ok':True,'role':u['role'],'token':tok}); r.set_cookie('session',tok,httponly=True,samesite='lax',secure=(APP_ENV=='production'),max_age=43200); return r
+@app.post('/api/auth/admin-recovery')
+async def admin_recovery(req:Request):
+    """Emergency recovery, disabled by default. Set ADMIN_LOGIN_RECOVERY=true temporarily in Render."""
+    if os.getenv('ADMIN_LOGIN_RECOVERY','false').lower() != 'true':
+        raise HTTPException(404,'Not found')
+    p=await req.json(); supplied=p.get('password','')
+    env_password=initial_secret('ADMIN_INITIAL_PASSWORD','85017306')
+    if not hmac.compare_digest(supplied,env_password):
+        raise HTTPException(401,'管理者修復密碼錯誤')
+    c=db(); u=c.execute('SELECT * FROM users WHERE username=?',(ADMIN_USERNAME,)).fetchone()
+    if not u:
+        c.execute('INSERT INTO users(username,password_hash,role,email,is_active) VALUES(?,?,?,?,1)',(ADMIN_USERNAME,hash_secret(env_password),'ADMIN',''))
+    else:
+        c.execute('UPDATE users SET password_hash=?,is_active=1,failed_count=0,locked_until=NULL WHERE id=?',(hash_secret(env_password),u['id']))
+        c.execute('DELETE FROM sessions WHERE user_id=?',(u['id'],))
+    c.commit(); c.close(); return {'ok':True,'message':'管理者登入已修復；請立即關閉 ADMIN_LOGIN_RECOVERY'}
+
 @app.post('/api/auth/logout')
 def logout(req:Request):
     auth=req.headers.get('Authorization',''); tok=auth[7:] if auth.startswith('Bearer ') else req.cookies.get('session'); c=db();
