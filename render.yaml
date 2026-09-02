@@ -22,3 +22,15 @@ services:
         sync: false
       - key: DEMO_ACTIVE_BRANCHES
         value: "3"
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: SMTP_TLS
+        sync: false

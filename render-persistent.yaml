@@ -27,3 +27,17 @@ services:
         sync: false
       - key: DEMO_BRANCH_PIN
         sync: false
+
+# SMTP values are managed in Render Environment
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: SMTP_TLS
+        sync: false

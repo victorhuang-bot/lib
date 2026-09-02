@@ -92,19 +92,35 @@ def verify_secret(s, stored):
 def thash(s): return hashlib.sha256(s.encode()).hexdigest()
 
 def smtp_config():
+    raw_port=os.getenv('SMTP_PORT','587').strip() or '587'
+    try: port=int(raw_port)
+    except ValueError: port=587
+    user=os.getenv('SMTP_USER','').strip()
     return {
         'host': os.getenv('SMTP_HOST','').strip(),
-        'port': int(os.getenv('SMTP_PORT','587')),
-        'user': os.getenv('SMTP_USER','').strip(),
+        'port': port,
+        'user': user,
         'password': os.getenv('SMTP_PASSWORD',''),
-        'from': os.getenv('SMTP_FROM','').strip() or os.getenv('SMTP_USER','').strip(),
+        'from': os.getenv('SMTP_FROM','').strip() or user,
         'tls': os.getenv('SMTP_TLS','true').lower() not in ('0','false','no'),
     }
+
+def smtp_diagnostics():
+    cfg=smtp_config()
+    checks={
+        'SMTP_HOST': bool(cfg['host']),
+        'SMTP_PORT': bool(os.getenv('SMTP_PORT','').strip()),
+        'SMTP_USER': bool(cfg['user']),
+        'SMTP_PASSWORD': bool(cfg['password']),
+        'SMTP_FROM': bool(os.getenv('SMTP_FROM','').strip()),
+        'SMTP_TLS': bool(os.getenv('SMTP_TLS','').strip()),
+    }
+    return {'checks':checks,'missing':[k for k,v in checks.items() if not v]}
 
 def smtp_send(subject, body, to_list, cc_list=None, attachments=None):
     cfg=smtp_config(); cc_list=cc_list or []; attachments=attachments or []
     if not cfg['host'] or not cfg['from'] or not cfg['password']:
-        raise RuntimeError('SMTP 尚未完整設定')
+        raise RuntimeError('SMTP 尚未完整設定：'+', '.join(smtp_diagnostics()['missing']))
     msg=EmailMessage(); msg['Subject']=subject; msg['From']=cfg['from']; msg['To']=', '.join(to_list)
     if cc_list: msg['Cc']=', '.join(cc_list)
     msg.set_content(body)
@@ -916,7 +932,7 @@ def monthly_pdf(req:Request,month:str|None=None):
 
 @app.get('/api/email/settings')
 def email_settings(req:Request):
-    require_user(req,['ADMIN']); cfg=smtp_config(); return {'host':cfg['host'],'port':cfg['port'],'user':cfg['user'],'from':cfg['from'],'tls':cfg['tls'],'password_configured':bool(cfg['password'])}
+    require_user(req,['ADMIN']); cfg=smtp_config(); diag=smtp_diagnostics(); return {'host':cfg['host'],'port':cfg['port'],'user':cfg['user'],'from':cfg['from'],'tls':cfg['tls'],'password_configured':bool(cfg['password']),'checks':diag['checks'],'missing':diag['missing'],'configured':not bool(diag['missing'])}
 
 @app.post('/api/email/test')
 async def email_test(req:Request):
@@ -1022,25 +1038,10 @@ async def segment_sign(rid:int,req:Request):
     if not assigned or not assigned['n'] or assigned['done']<assigned['n']: c.close(); raise HTTPException(409,'您的配送區段尚未全部完成')
     c.execute('INSERT INTO route_segment_signatures(service_date,daily_route_id,driver_id,signature,signed_at) VALUES(?,?,?,?,?) ON CONFLICT(service_date,daily_route_id,driver_id) DO UPDATE SET signature=excluded.signature,signed_at=excluded.signed_at',(today(),rid,s['driver_id'],sig,now()));audit(c,'DRIVER',s['driver_id'],'DRIVER','DRIVER_SEGMENT_SIGN','DAILY_ROUTE',rid);c.commit();c.close();return {'ok':True}
 
-def smtp_send(to_list,subject,body,attachments=None):
-    host=os.getenv('SMTP_HOST','').strip();port=int(os.getenv('SMTP_PORT','587'));user=os.getenv('SMTP_USER','').strip();password=os.getenv('SMTP_PASSWORD','');sender=os.getenv('SMTP_FROM',user).strip();tls=os.getenv('SMTP_TLS','true').lower() not in ('0','false','no')
-    if not host or not sender: raise RuntimeError('SMTP 尚未設定')
-    m=EmailMessage();m['From']=sender;m['To']=', '.join(to_list);m['Subject']=subject;m.set_content(body)
-    for fn,data,mime in attachments or []: mt,st=mime.split('/',1);m.add_attachment(data,maintype=mt,subtype=st,filename=fn)
-    if port==465:
-        with smtplib.SMTP_SSL(host,port,context=ssl.create_default_context()) as x:
-            if user:x.login(user,password)
-            x.send_message(m)
-    else:
-        with smtplib.SMTP(host,port,timeout=30) as x:
-            if tls:x.starttls(context=ssl.create_default_context())
-            if user:x.login(user,password)
-            x.send_message(m)
-
 @app.post('/api/email/smtp-test')
 async def smtp_test(req:Request):
     require_user(req,['ADMIN']);p=await req.json();email=(p.get('email') or '').strip()
     if '@' not in email: raise HTTPException(400,'Email格式錯誤')
-    try:smtp_send([email],'圖書物流系統 SMTP 測試','lib.moving-match.com SMTP 郵件服務測試成功。')
+    try:smtp_send('圖書物流系統 SMTP 測試','lib.moving-match.com SMTP 郵件服務測試成功。',[email])
     except Exception as e:raise HTTPException(500,str(e))
     return {'ok':True}
