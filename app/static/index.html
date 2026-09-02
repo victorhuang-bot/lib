@@ -39,8 +39,19 @@ async function deleteBranch(id,name){if(!confirm(`永久刪除「${name}」？\n
 async function resetBranchPin(id){let pin=prompt('輸入新的4位分館驗證碼');if(pin)try{await api('/api/branches/'+id+'/pin',{method:'POST',body:JSON.stringify({pin})});alert('已重設');await loadBranches()}catch(e){alert(e.message)}}
 async function qr(id,name){let x=await api('/api/branches/'+id+'/qr');let w=open('','qr','width=500,height=650');w.document.write(`<style>body{text-align:center;font-family:sans-serif;padding:30px}img{width:320px}</style><h1>圖書物流簽收</h1><h2>${name}</h2><img src="/api/branches/${id}/qr.png"><p>1. 掃描 QR Code<br>2. 輸入 4 位分館驗證碼<br>3. 確認數量<br>4. 完成簽名</p><button onclick="print()">列印</button>`)}
 async function rotate(id){if(confirm('舊 QR 將立即失效。確定重新產生？')){try{await api('/api/branches/'+id+'/qr/rotate',{method:'POST'});await loadBranches();alert('已產生新的固定QR；舊QR已失效')}catch(e){alert(e.message)}}}
-async function loadRoutesPage(){await getCaches();let [rs,dr]=await Promise.all([api('/api/routes'),api('/api/daily-routes')]);const admin=me.role==='ADMIN';routeList.innerHTML='<table><tr><th>代碼</th><th>名稱</th><th>狀態</th><th>權限</th></tr>'+rs.map(r=>`<tr><td>${r.code}</td><td>${r.name}</td><td>${r.active?'啟用':'停用'}</td><td>${admin?`<button class="btn alt small" onclick="editRoute(${r.id},'${r.code}','${r.name}',${r.active})">修改</button>`:'查看'}</td></tr>`).join('')+'</table>';assignList.innerHTML='<table><tr><th>路線</th><th>進度</th><th>今日司機</th><th>臨時交接</th></tr>'+dr.map(r=>`<tr><td>${r.code}線</td><td>${r.completed||0}/${r.total}</td><td>${admin?`<select onchange="assignDriver(${r.id},this.value,${JSON.stringify(r.code).replace(/"/g,'&quot;')},this)">${driversCache.filter(d=>d.active).map(d=>`<option value="${d.id}" ${d.id==r.driver_id?'selected':''}>${d.name}</option>`).join('')}</select>`:`<b>${r.driver_name}</b><br><span class="muted">秘書僅供查看</span>`}</td></tr>`).join('')+'</table>'}
-async function addRoute(){if(me.role!=='ADMIN')return;let code=prompt('路線代碼，例如 G');if(!code)return;let name=prompt('路線名稱',code+'線');await api('/api/routes',{method:'POST',body:JSON.stringify({code,name})});loadRoutesPage()}
+async function loadRoutesPage(){
+  const admin=me.role==='ADMIN';
+  await getCaches();
+  try{
+    const rs=await api('/api/routes');
+    routeList.innerHTML='<table><tr><th>代碼</th><th>名稱</th><th>狀態</th><th>權限</th></tr>'+rs.map(r=>`<tr><td>${r.code}</td><td>${r.name}</td><td>${r.active?'啟用':'停用'}</td><td>${admin?`<button class="btn alt small" onclick="editRoute(${r.id},'${r.code}','${r.name}',${r.active})">修改</button>`:'查看'}</td></tr>`).join('')+'</table>';
+  }catch(e){routeList.innerHTML=`<div class="warn">路線資料讀取失敗：${e.message}</div>`}
+  try{
+    const dr=await api('/api/daily-routes');
+    assignList.innerHTML='<table><tr><th>路線</th><th>進度</th><th>今日司機</th><th>臨時交接</th></tr>'+dr.map(r=>`<tr><td>${r.name||('路線'+r.code)}</td><td>${r.completed||0}/${r.total||0}</td><td>${admin?`<select onchange="assignDriver(${r.id},this.value,${JSON.stringify(r.code).replace(/"/g,'&quot;')},this)">${driversCache.filter(d=>d.active).map(d=>`<option value="${d.id}" ${d.id==r.driver_id?'selected':''}>${d.name}</option>`).join('')}</select>`:`<b>${r.driver_name||'—'}</b><br><span class="muted">秘書僅供查看</span>`}</td><td>${admin?`<button class="btn alt small" onclick="handoffRoute(${r.id},'${r.code}')">臨時交接</button>`:'—'}</td></tr>`).join('')+'</table>';
+  }catch(e){assignList.innerHTML=`<div class="warn">今日司機指派讀取失敗：${e.message}</div>`}
+}
+async function addRoute(){if(me.role!=='ADMIN')return;let code=prompt('路線代碼，例如 7');if(!code)return;let name=prompt('路線名稱','路線'+code);await api('/api/routes',{method:'POST',body:JSON.stringify({code,name})});loadRoutesPage()}
 async function editRoute(id,code,name,active){if(me.role!=='ADMIN')return;let n=prompt('路線名稱',name);if(n!==null){await api('/api/routes/'+id,{method:'PATCH',body:JSON.stringify({name:n})});loadRoutesPage()}}
 async function assignDriver(id,did,code,sel){
   if(me.role!=='ADMIN')return;

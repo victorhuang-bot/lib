@@ -275,7 +275,6 @@ def init_db():
         c.execute('INSERT INTO users(username,password_hash,role,email) VALUES(?,?,?,?)',(ADMIN_USERNAME,hash_secret(admin_password),'ADMIN',RESET_EMAIL))
         c.execute('INSERT INTO users(username,password_hash,role,email) VALUES(?,?,?,?)',(SECRETARY_USERNAME,hash_secret(secretary_password),'SECRETARY',RESET_EMAIL))
         for i in range(1,7): c.execute('INSERT INTO routes(id,code,name) VALUES(?,?,?)',(i,str(i),f'路線{i}'))
-        for n in ['王先生','李先生','陳先生','林先生','張先生']: c.execute('INSERT INTO drivers(name) VALUES(?)',(n,))
         names=['松山分館','民生分館','中山分館','北投分館','石牌分館','大安分館','士林分館','萬華分館','信義分館','內湖分館','南港分館','文山分館']
         for i in range(1,81):
             name=names[i-1] if i<=len(names) else f'示範分館{i:02d}'
@@ -289,6 +288,7 @@ def init_db():
     migrate_route_secretary_signatures(c)
     migrate_official_routes_and_branches(c)
     migrate_default_route_drivers(c)
+    cleanup_legacy_demo_drivers(c)
     if USE_POSTGRES:
         # Explicit seed IDs 1..6 must advance identity sequences before later inserts.
         for tbl in ('routes','users','drivers','branches'):
@@ -385,6 +385,63 @@ def migrate_default_route_drivers(c):
 
     c.execute(
         "INSERT INTO app_settings(key,value) VALUES('DEFAULT_ROUTE_DRIVERS_V1832',?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (now(),)
+    )
+    c.commit()
+
+
+def cleanup_legacy_demo_drivers(c):
+    """Remove V18 demo drivers from a fresh/unused DB; if historical use exists, deactivate instead."""
+    legacy_names=('王先生','李先生','陳先生','林先生','張先生','測試司機')
+    placeholders=','.join('?' for _ in legacy_names)
+    rows=c.execute(
+        f"SELECT id,name FROM drivers WHERE name IN ({placeholders}) ORDER BY id",
+        legacy_names
+    ).fetchall()
+
+    for row in rows:
+        did=row['id']
+
+        # Any unstarted daily route still pointing at a legacy/test driver is moved
+        # to that route's configured official default driver.
+        drs=c.execute(
+            'SELECT id,route_id,driver_signed_at FROM daily_routes WHERE driver_id=?',
+            (did,)
+        ).fetchall()
+        for dr in drs:
+            started=c.execute(
+                """SELECT 1 FROM deliveries
+                   WHERE daily_route_id=? AND
+                     (document_original IS NOT NULL OR outbound_original IS NOT NULL OR
+                      branch_signed_at IS NOT NULL OR driver_confirmed_at IS NOT NULL)
+                   LIMIT 1""",
+                (dr['id'],)
+            ).fetchone()
+            if not started and not dr['driver_signed_at']:
+                target=default_driver_id(c,dr['route_id'])
+                if target != did:
+                    c.execute('UPDATE daily_routes SET driver_id=? WHERE id=?',(target,dr['id']))
+
+        # Preserve genuine historical attribution. If anything meaningful still
+        # references the driver, deactivate instead of corrupting history.
+        used=c.execute('SELECT 1 FROM daily_routes WHERE driver_id=? LIMIT 1',(did,)).fetchone()
+        used=used or c.execute('SELECT 1 FROM route_handoffs WHERE from_driver_id=? OR to_driver_id=? LIMIT 1',(did,did)).fetchone()
+        used=used or c.execute('SELECT 1 FROM delivery_driver_assignments WHERE driver_id=? LIMIT 1',(did,)).fetchone()
+        used=used or c.execute('SELECT 1 FROM route_segment_signatures WHERE driver_id=? LIMIT 1',(did,)).fetchone()
+        used=used or c.execute('SELECT 1 FROM corrections WHERE requested_by_driver_id=? LIMIT 1',(did,)).fetchone()
+
+        if used:
+            c.execute('UPDATE drivers SET active=0 WHERE id=?',(did,))
+        else:
+            # Test/demo device credentials have no business value.
+            c.execute('DELETE FROM driver_sessions WHERE driver_id=?',(did,))
+            c.execute('DELETE FROM driver_activation_tokens WHERE driver_id=?',(did,))
+            c.execute('DELETE FROM driver_devices WHERE driver_id=?',(did,))
+            c.execute('DELETE FROM drivers WHERE id=?',(did,))
+
+    c.execute(
+        "INSERT INTO app_settings(key,value) VALUES('CLEAN_LEGACY_DRIVERS_V1833',?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         (now(),)
     )
@@ -589,7 +646,15 @@ def account_security(req:Request):
 def dashboard(req:Request):
     require_user(req,['ADMIN','SECRETARY']); c=db(); ensure_today(c)
     rows=c.execute('SELECT status,COUNT(*) n FROM deliveries WHERE service_date=? GROUP BY status',(today(),)).fetchall(); counts={r['status']:r['n'] for r in rows}; total=sum(counts.values()); completed=counts.get('STOP_COMPLETED',0)
-    routes=c.execute('''SELECT dr.id,r.code,r.name,d.name driver,COUNT(x.id) total,SUM(CASE WHEN x.status='STOP_COMPLETED' THEN 1 ELSE 0 END) completed,dr.status FROM daily_routes dr JOIN routes r ON r.id=dr.route_id JOIN drivers d ON d.id=dr.driver_id LEFT JOIN deliveries x ON x.daily_route_id=dr.id WHERE dr.service_date=? GROUP BY dr.id,r.code,r.name,d.id,d.name ORDER BY r.code''',(today(),)).fetchall()
+    routes=c.execute('''SELECT dr.id,r.code,r.name,d.name driver,
+        (SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id) total,
+        (SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status='STOP_COMPLETED') completed,
+        dr.status
+        FROM daily_routes dr
+        JOIN routes r ON r.id=dr.route_id
+        LEFT JOIN drivers d ON d.id=dr.driver_id
+        WHERE dr.service_date=?
+        ORDER BY CAST(r.code AS INTEGER),r.code''',(today(),)).fetchall()
     c.close(); return {'date':today(),'total':total,'completed':completed,'waiting_branch':counts.get('WAITING_BRANCH',0),'waiting_driver':counts.get('WAITING_DRIVER',0),'waiting_driver_confirm':counts.get('WAITING_DRIVER_CONFIRM',0)+counts.get('WAITING_DRIVER_RECONFIRM',0),'waiting_correction':counts.get('WAITING_BRANCH_CORRECTION',0),'routes':[dict(x) for x in routes]}
 @app.get('/api/dashboard/deliveries')
 def dashboard_deliveries(req:Request, status:str|None=None, route:str|None=None, search:str|None=None):
@@ -1006,7 +1071,17 @@ async def revoke_device(req:Request,device_id:int):
 
 @app.get('/api/daily-routes')
 def daily_route_list(req:Request, service_date:str|None=None):
-    require_user(req,['ADMIN','SECRETARY']); d=service_date or today(); c=db(); rows=[dict(x) for x in c.execute('''SELECT dr.id,dr.service_date,dr.status,r.id route_id,r.code,r.name,d.id driver_id,d.name driver_name,COUNT(x.id) total,SUM(CASE WHEN x.status='STOP_COMPLETED' THEN 1 ELSE 0 END) completed FROM daily_routes dr JOIN routes r ON r.id=dr.route_id JOIN drivers d ON d.id=dr.driver_id LEFT JOIN deliveries x ON x.daily_route_id=dr.id WHERE dr.service_date=? GROUP BY dr.id,r.code,r.name,d.id,d.name ORDER BY r.code''',(d,)).fetchall()]; c.close(); return rows
+    require_user(req,['ADMIN','SECRETARY']); d=service_date or today(); c=db()
+    rows=[dict(x) for x in c.execute('''SELECT dr.id,dr.service_date,dr.status,
+        r.id route_id,r.code,r.name,dv.id driver_id,dv.name driver_name,
+        (SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id) total,
+        (SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status='STOP_COMPLETED') completed
+        FROM daily_routes dr
+        JOIN routes r ON r.id=dr.route_id
+        LEFT JOIN drivers dv ON dv.id=dr.driver_id
+        WHERE dr.service_date=?
+        ORDER BY CAST(r.code AS INTEGER),r.code''',(d,)).fetchall()]
+    c.close(); return rows
 @app.patch('/api/daily-routes/{drid}/driver')
 async def assign_driver(req:Request,drid:int):
     u=require_user(req,['ADMIN']); p=await req.json(); did=int(p.get('driver_id')); c=db(); c.execute('UPDATE daily_routes SET driver_id=? WHERE id=?',(did,drid)); audit(c,'USER',u['id'],u['role'],'ASSIGN_DAILY_DRIVER','DAILY_ROUTE',drid,after={'driver_id':did}); c.commit(); c.close(); await publish({'type':'route.updated','id':drid}); return {'ok':True}
