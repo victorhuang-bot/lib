@@ -2,7 +2,7 @@ async function api(url,opt={}){
   const t=sessionStorage.getItem('admin_session');
   const baseHeaders={...(opt.headers||{}),'Content-Type':'application/json',...(t?{'Authorization':'Bearer '+t}:{})};
   const method=(opt.method||'GET').toUpperCase();
-  const safeRetry=(method==='GET'||method==='HEAD'||url.includes('/api/auth/login')||url.includes('/api/secretary/documents/prefill-save')||url.includes('/api/secretary/documents/prefill-batch'));
+  const safeRetry=(method==='GET'||method==='HEAD'||url.includes('/api/auth/login'));
   let lastStatus=0;
   for(let attempt=0;attempt<(safeRetry?2:1);attempt++){
     if(attempt>0) await new Promise(r=>setTimeout(r,1800));
@@ -20,7 +20,7 @@ async function api(url,opt={}){
     if(r.ok)return data;
     if([502,503,504].includes(r.status)){
       if(attempt===0&&safeRetry)continue;
-      throw new Error('Render / PostgreSQL 正在喚醒或暫時連線不穩，系統已自動重試一次。請稍候 5～10 秒再按一次。');
+      throw new Error(safeRetry?'Render / PostgreSQL 正在喚醒或暫時連線不穩，系統已自動重試一次。請稍候 5～10 秒再試。':'存檔時服務暫時無法回應。為避免重複寫入，系統沒有自動重送；請稍候 5～10 秒後重新整理確認是否已存檔。');
     }
     if(r.status===401&&!url.includes('/api/auth/login')&&!url.includes('/api/auth/me')){
       sessionStorage.removeItem('admin_session');

@@ -682,7 +682,8 @@ async def publish(event):
 def health(): return {'ok':True,'environment':APP_ENV}
 
 @app.get('/', response_class=HTMLResponse)
-def home(): return (STATIC/'index.html').read_text(encoding='utf-8')
+def home():
+    return HTMLResponse((STATIC/'index.html').read_text(encoding='utf-8'),headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0'})
 @app.get('/branch/{token}', response_class=HTMLResponse)
 def branch_page(token:str): return (STATIC/'branch.html').read_text(encoding='utf-8').replace('__BRANCH_TOKEN__',token)
 @app.get('/activate-driver/{token}', response_class=HTMLResponse)
@@ -692,12 +693,31 @@ def driver_page(): return (STATIC/'driver.html').read_text(encoding='utf-8')
 @app.get('/reset-password', response_class=HTMLResponse)
 def reset_page(): return (STATIC/'reset.html').read_text(encoding='utf-8')
 
+def _login_db(username,password):
+    c=db()
+    try:
+        u=c.execute('SELECT * FROM users WHERE username=? AND is_active=1',(username,)).fetchone()
+        if not u or not verify_secret(password,u['password_hash']):
+            raise HTTPException(401,'帳號或密碼錯誤')
+        tok=secrets.token_urlsafe(32)
+        c.execute('INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)',(thash(tok),u['id'],future_iso(hours=12)))
+        audit(c,'USER',u['id'],u['role'],'LOGIN','USER',u['id'])
+        c.commit()
+        return {'ok':True,'role':u['role'],'token':tok}
+    except:
+        try: c.rollback()
+        except: pass
+        raise
+    finally:
+        c.close()
+
 @app.post('/api/auth/login')
 async def login(req:Request):
-    p=await req.json(); c=db(); u=c.execute('SELECT * FROM users WHERE username=? AND is_active=1',(p.get('username',''),)).fetchone()
-    if not u or not verify_secret(p.get('password',''),u['password_hash']): c.close(); raise HTTPException(401,'帳號或密碼錯誤')
-    tok=secrets.token_urlsafe(32); c.execute('INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)',(thash(tok),u['id'],future_iso(hours=12))); audit(c,'USER',u['id'],u['role'],'LOGIN','USER',u['id']); c.commit(); c.close()
-    r=JSONResponse({'ok':True,'role':u['role'],'token':tok}); r.set_cookie('session',tok,httponly=True,samesite='lax',secure=(APP_ENV=='production'),max_age=43200); return r
+    p=await req.json()
+    result=await asyncio.to_thread(_login_db,p.get('username',''),p.get('password',''))
+    r=JSONResponse(result)
+    r.set_cookie('session',result['token'],httponly=True,samesite='lax',secure=(APP_ENV=='production'),max_age=43200)
+    return r
 @app.post('/api/auth/logout')
 def logout(req:Request):
     auth=req.headers.get('Authorization',''); tok=auth[7:] if auth.startswith('Bearer ') else req.cookies.get('session'); c=db();
@@ -988,29 +1008,34 @@ def document_prefill(req:Request, service_date:str|None=None):
         c.close(); print('PREFILL_ERROR',d,type(e).__name__,str(e),flush=True)
         raise HTTPException(500,f'公文預填讀取失敗：{type(e).__name__}: {e}')
 
+def _prefill_save_db(user_id,user_role,d,bid,qty):
+    c=db()
+    try:
+        x=ensure_prefill_delivery(c,d,bid)
+        if x['outbound_original'] is not None:
+            raise HTTPException(409,'司機已輸入圖書送出數量，公文已鎖定')
+        c.execute('UPDATE deliveries SET document_original=COALESCE(document_original,?),document_final=?,row_version=row_version+1 WHERE id=?',(qty,qty,x['id']))
+        audit(c,'USER',user_id,user_role,'PREFILL_DOCUMENT','DELIVERY',x['id'],after={'service_date':d,'qty':qty})
+        c.commit()
+        return {'ok':True,'id':x['id'],'qty':qty}
+    except HTTPException:
+        c.rollback(); raise
+    except Exception as e:
+        c.rollback()
+        print('PREFILL_SAVE_ERROR',d,bid,type(e).__name__,str(e),flush=True)
+        raise HTTPException(500,f'公文預填存檔失敗：{type(e).__name__}: {e}')
+    finally:
+        c.close()
+
 @app.post('/api/secretary/documents/prefill-save')
 async def document_prefill_save(req:Request):
     u=require_user(req,['SECRETARY']); p=await req.json(); d=str(p.get('service_date') or '')
     try: date.fromisoformat(d); bid=int(p.get('branch_id')); qty=int(p.get('qty'))
     except: raise HTTPException(400,'日期、分館或公文數量格式錯誤')
     if qty<0: raise HTTPException(400,'公文數量不可小於 0')
-    c=db()
-    try:
-        x=ensure_prefill_delivery(c,d,bid)
-        if x['outbound_original'] is not None: raise HTTPException(409,'司機已輸入圖書送出數量，公文已鎖定')
-        c.execute('UPDATE deliveries SET document_original=COALESCE(document_original,?),document_final=?,row_version=row_version+1 WHERE id=?',(qty,qty,x['id']))
-        audit(c,'USER',u['id'],u['role'],'PREFILL_DOCUMENT','DELIVERY',x['id'],after={'service_date':d,'qty':qty})
-        c.commit(); did=x['id']; c.close(); return {'ok':True,'id':did,'qty':qty}
-    except HTTPException:
-        c.rollback(); c.close(); raise
-    except Exception as e:
-        c.rollback(); c.close(); raise HTTPException(500,f'公文預填存檔失敗：{type(e).__name__}: {e}')
+    return await asyncio.to_thread(_prefill_save_db,u['id'],u['role'],d,bid,qty)
 
-@app.post('/api/secretary/documents/prefill-batch')
-async def document_prefill_batch(req:Request):
-    u=require_user(req,['SECRETARY']); p=await req.json(); d=str(p.get('service_date') or ''); items=p.get('items') or []
-    try: date.fromisoformat(d)
-    except: raise HTTPException(400,'日期格式錯誤')
+def _prefill_batch_db(user_id,user_role,d,items):
     c=db(); changed=0; total=0
     try:
         for it in items:
@@ -1020,12 +1045,24 @@ async def document_prefill_batch(req:Request):
             if x['outbound_original'] is not None: continue
             c.execute('UPDATE deliveries SET document_original=COALESCE(document_original,?),document_final=?,row_version=row_version+1 WHERE id=?',(qty,qty,x['id']))
             changed+=1; total+=qty
-        audit(c,'USER',u['id'],u['role'],'PREFILL_DOCUMENT_BATCH','DELIVERY',d,after={'service_date':d,'changed':changed,'total':total})
-        c.commit(); c.close(); return {'ok':True,'changed':changed,'total':total}
+        audit(c,'USER',user_id,user_role,'PREFILL_DOCUMENT_BATCH','DELIVERY',d,after={'service_date':d,'changed':changed,'total':total})
+        c.commit()
+        return {'ok':True,'changed':changed,'total':total}
     except HTTPException:
-        c.rollback(); c.close(); raise
+        c.rollback(); raise
     except Exception as e:
-        c.rollback(); c.close(); raise HTTPException(500,f'公文批次預填失敗：{type(e).__name__}: {e}')
+        c.rollback()
+        print('PREFILL_BATCH_ERROR',d,type(e).__name__,str(e),flush=True)
+        raise HTTPException(500,f'公文批次預填失敗：{type(e).__name__}: {e}')
+    finally:
+        c.close()
+
+@app.post('/api/secretary/documents/prefill-batch')
+async def document_prefill_batch(req:Request):
+    u=require_user(req,['SECRETARY']); p=await req.json(); d=str(p.get('service_date') or ''); items=p.get('items') or []
+    try: date.fromisoformat(d)
+    except: raise HTTPException(400,'日期格式錯誤')
+    return await asyncio.to_thread(_prefill_batch_db,u['id'],u['role'],d,items)
 
 @app.patch('/api/secretary/deliveries/{did}/document')
 async def set_doc(did:int,req:Request):
