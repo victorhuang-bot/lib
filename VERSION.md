@@ -1,15 +1,21 @@
-# V18.3.1 PostgreSQL Hotfix
+# V18.3.2 PostgreSQL Edition
 
-基底：library-logistics-github-deploy-v18.2
+基底：V18.3.1 PostgreSQL Hotfix
 
-## 主要變更
-- 正式環境讀取 `DATABASE_URL` 並使用 PostgreSQL。
-- Render Web Service 可維持 Free，不需要 Persistent Disk。
-- 未設定 `DATABASE_URL` 時只供本機開發 fallback SQLite。
-- 路線 A-F 改為路線 1-6，route id 仍維持 1..6。
-- 匯入 74 個正式分館與指定順序。
-- 「今日路線 / 司機指派」若選到名稱含「支援」的司機，會先跳出二次確認提醒。
-- 保留 V18.2 既有功能，包括 V17 司機臨時交接。
+## 每日預設司機
+- 路線1：許春芳
+- 路線2：陳錦隆
+- 路線3：彭運土
+- 路線4：林聖原
+- 路線5：張閔傑
+- 路線6：陳錦隆
 
-## V18.3.1 Hotfix
-- 修正 PostgreSQL 相容層啟動時缺少 `import re`，導致 Render `NameError: re is not defined`。
+## 規則
+- 每日第一次建立路線時自動帶入上述預設司機。
+- 路線2與路線6共用陳錦隆，屬正常設定。
+- 若正式司機不存在，初始化時會自動新增並啟用。
+- 已開始配送、簽收或已完成司機路線簽名的當日路線，不會因部署而強制換司機。
+- 管理者仍可人工臨時改派。
+- 名稱含「支援」的司機仍保留二次確認提醒。
+- V17 司機臨時交接與 segment signing 保留。
+- Neon PostgreSQL、路線1～6、74個正式分館與其順序全部保留。
