@@ -537,6 +537,9 @@ def rebuild_service_date(c, service_date):
                 c.execute('DELETE FROM deliveries WHERE id=?',(existing['id'],))
     c.commit()
 
+def next_service_date():
+    return (date.fromisoformat(today()) + timedelta(days=1)).isoformat()
+
 def ensure_today(c):
     rebuild_service_date(c,today())
 
@@ -826,16 +829,46 @@ async def branch_correct(req:Request):
     audit(c,'BRANCH',s['branch_id'],'BRANCH','BRANCH_CORRECT','DELIVERY',x['id'],before=before,after={'document':document,'outbound':outbound_qty,'inbound':inbound,'reason':p['reason'],'signer':p['signer']})
     c.commit();c.close();await publish({'type':'delivery.updated','id':x['id']});return {'ok':True}
 
+@app.get('/api/secretary/documents/next-day')
+def next_day_documents(req:Request):
+    require_user(req,['SECRETARY'])
+    d=next_service_date()
+    c=db()
+    # Build tomorrow independently from today's in-progress deliveries.
+    # Fixed weekdays + CLOSED_ALL / STOP / ADD are respected by rebuild_service_date().
+    rebuild_service_date(c,d)
+    rows=[dict(x) for x in c.execute('''SELECT x.id,x.service_date,x.status,
+        x.document_final,x.outbound_original,
+        b.code branch_code,b.name branch_name,b.stop_order,
+        r.code route_code,r.name route_name,
+        dv.id driver_id,dv.name driver_name
+        FROM deliveries x
+        JOIN branches b ON b.id=x.branch_id
+        JOIN daily_routes dr ON dr.id=x.daily_route_id
+        JOIN routes r ON r.id=dr.route_id
+        LEFT JOIN drivers dv ON dv.id=dr.driver_id
+        WHERE x.service_date=?
+        ORDER BY CAST(r.code AS INTEGER),r.code,b.stop_order''',(d,)).fetchall()]
+    closure=c.execute('SELECT reason FROM global_closures WHERE service_date=?',(d,)).fetchone()
+    c.close()
+    return {
+        'service_date':d,
+        'is_global_closure':bool(closure),
+        'closure_reason':closure['reason'] if closure else None,
+        'count':len(rows),
+        'rows':rows
+    }
+
 @app.patch('/api/secretary/deliveries/{did}/document')
 async def set_doc(did:int,req:Request):
     u=require_user(req,['SECRETARY']); p=await req.json()
-    c_lock=db(); locked=is_report_locked(c_lock); c_lock.close()
-    if locked: raise HTTPException(409,'今日日報已鎖定')
     try: qty=int(p.get('qty'))
     except: raise HTTPException(400,'公文數量必須是整數')
     if qty < 0: raise HTTPException(400,'公文數量不可小於 0')
     c=db(); x=c.execute('SELECT * FROM deliveries WHERE id=?',(did,)).fetchone()
     if not x: c.close(); raise HTTPException(404,'找不到配送資料')
+    if is_report_locked(c,x['service_date']):
+        c.close(); raise HTTPException(409,f"{x['service_date']} 日報已鎖定")
     if x['outbound_original'] is not None:
         c.close(); raise HTTPException(409,'司機已輸入圖書送出數量，公文數量已鎖定，無法再修改')
     if x['status'] not in ('WAITING_SECRETARY','WAITING_DRIVER'):
@@ -846,34 +879,49 @@ async def set_doc(did:int,req:Request):
     c.commit(); c.close(); await publish({'type':'delivery.updated','id':did}); return {'ok':True,'qty':qty,'locked':False}
 
 @app.post('/api/secretary/documents/zero-all')
-async def zero_all(req:Request):
-    u=require_user(req,['SECRETARY']); c=db()
-    if is_report_locked(c): c.close(); raise HTTPException(409,'今日日報已鎖定')
-    cur=c.execute("UPDATE deliveries SET document_original=0,document_final=0,status='WAITING_DRIVER',row_version=row_version+1 WHERE service_date=? AND outbound_original IS NULL AND status IN ('WAITING_SECRETARY','WAITING_DRIVER')",(today(),))
+async def zero_all(req:Request, service_date:str|None=None):
+    u=require_user(req,['SECRETARY'])
+    d=service_date or today()
+    try: date.fromisoformat(d)
+    except: raise HTTPException(400,'日期格式錯誤')
+    c=db()
+    if d>today():
+        rebuild_service_date(c,d)
+    if is_report_locked(c,d): c.close(); raise HTTPException(409,f'{d} 日報已鎖定')
+    cur=c.execute("UPDATE deliveries SET document_original=0,document_final=0,status='WAITING_DRIVER',row_version=row_version+1 WHERE service_date=? AND outbound_original IS NULL AND status IN ('WAITING_SECRETARY','WAITING_DRIVER')",(d,))
     changed=cur.rowcount
-    audit(c,'USER',u['id'],u['role'],'ZERO_ALL_DOCUMENTS','DAY',today(),after={'changed':changed})
-    c.commit(); c.close(); await publish({'type':'dashboard.refresh'}); return {'ok':True,'changed':changed}
+    audit(c,'USER',u['id'],u['role'],'ZERO_ALL_DOCUMENTS','DAY',d,after={'changed':changed,'service_date':d})
+    c.commit(); c.close()
+    if d==today(): await publish({'type':'dashboard.refresh'})
+    return {'ok':True,'changed':changed,'service_date':d}
 
 @app.post('/api/secretary/documents/batch')
 async def batch_documents(req:Request):
     u=require_user(req,['SECRETARY']); p=await req.json(); items=p.get('items') or []
     if not isinstance(items,list) or not items: raise HTTPException(400,'沒有可存檔的公文數量')
+    d=p.get('service_date') or today()
+    try: date.fromisoformat(d)
+    except: raise HTTPException(400,'日期格式錯誤')
     c=db()
-    if is_report_locked(c): c.close(); raise HTTPException(409,'今日日報已鎖定')
+    if d>today():
+        rebuild_service_date(c,d)
+    if is_report_locked(c,d): c.close(); raise HTTPException(409,f'{d} 日報已鎖定')
     prepared=[]
     for item in items:
         try: did=int(item.get('id')); qty=int(item.get('qty'))
         except: c.close(); raise HTTPException(400,'公文數量格式錯誤')
         if qty<0: c.close(); raise HTTPException(400,'公文數量需為0以上整數')
-        x=c.execute('SELECT * FROM deliveries WHERE id=? AND service_date=?',(did,today())).fetchone()
-        if not x: c.close(); raise HTTPException(404,'找不到今日配送資料')
+        x=c.execute('SELECT * FROM deliveries WHERE id=? AND service_date=?',(did,d)).fetchone()
+        if not x: c.close(); raise HTTPException(404,f'找不到 {d} 配送資料')
         if x['outbound_original'] is not None: c.close(); raise HTTPException(409,f"配送 #{did} 司機已輸入送出數量，公文已鎖定")
         prepared.append((x,qty))
     for x,qty in prepared:
         before={'qty':x['document_final']}
         c.execute("UPDATE deliveries SET document_original=?,document_final=?,status='WAITING_DRIVER',row_version=row_version+1 WHERE id=?",(qty,qty,x['id']))
         audit(c,'USER',u['id'],u['role'],'BATCH_SET_DOCUMENT','DELIVERY',x['id'],before=before,after={'qty':qty})
-    c.commit(); c.close(); await publish({'type':'delivery.updated','batch':True}); return {'ok':True,'changed':len(prepared),'total':sum(q for _,q in prepared)}
+    c.commit(); c.close()
+    if d==today(): await publish({'type':'delivery.updated','batch':True})
+    return {'ok':True,'changed':len(prepared),'total':sum(q for _,q in prepared),'service_date':d}
 
 @app.get('/api/schedule-exceptions')
 def schedule_exceptions(req:Request, month:str=''):

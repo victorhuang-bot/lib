@@ -5,7 +5,29 @@
 <div id="login" class="login card"><h1>圖書物流配送暨電子簽收</h1><p class="muted">管理者 / 總館秘書</p><input id="u" placeholder="帳號" style="width:100%;margin:6px 0"><input id="p" type="password" placeholder="密碼" style="width:100%;margin:6px 0"><button class="btn big" onclick="login()">登入</button><button class="btn alt big" style="margin-top:8px" onclick="forgot()">忘記密碼</button><div id="msg"></div></div>
 <div id="app" class="hidden"><header class="top"><div class="brand">圖書物流配送暨電子簽收管理系統</div><div><span id="who"></span> <button class="btn alt" onclick="logout()">登出</button></div></header><main class="wrap">
 <div class="nav"><span class="pill" onclick="show('dash')">即時看板</span><span class="pill" onclick="show('branches')">分館管理</span><span class="pill" onclick="show('routes')">路線 / 每日指派</span><span class="pill" onclick="show('drivers')">司機 / 裝置</span><span class="pill" onclick="show('schedule')">休館 / 停送 / 非固定運送</span><span class="pill" onclick="show('records')">配送 / 更正</span><span class="pill" onclick="show('reports')">日報 / 月報</span><span class="pill" onclick="show('account')">帳號與安全性</span><span class="pill" onclick="show('email')">Email</span><span class="pill" onclick="show('audit')">Audit Log</span></div>
-<section id="dash"><div class="card"><h2>今日即時配送進度</h2><div id="metrics" class="grid"></div><div id="secretaryDocTools" class="toolbar"><button class="btn" onclick="saveAllDocs()">全部確認存檔</button><button class="btn alt" onclick="zeroAll()">今日公文全部設為 0</button><span class="muted">可先填完各館公文，再一次確認；也可逐館存檔。</span></div></div><div id="routeCards" class="grid"></div><div class="card"><div class="row" style="justify-content:space-between"><h3>分館即時狀態</h3><div id="routeFilterLabel" class="muted">目前：全部路線</div></div><div class="toolbar"><select id="filter" onchange="loadDeliveries()"><option value="">全部狀態</option><option value="WAITING_SECRETARY">待秘書</option><option value="WAITING_DRIVER">待司機</option><option value="WAITING_BRANCH">待分館簽收</option><option value="WAITING_DRIVER_CONFIRM">待司機確認</option><option value="WAITING_BRANCH_CORRECTION">待更正</option><option value="STOP_COMPLETED">已完成</option></select><input id="search" placeholder="搜尋分館" oninput="loadDeliveries()"></div><div style="overflow:auto"><table><thead><tr><th>路線</th><th>分館</th><th>狀態</th><th>司機</th><th>時間</th><th>公文</th></tr></thead><tbody id="delivs"></tbody></table></div></div></section>
+<section id="dash"><div class="card"><h2>今日即時配送進度</h2><div id="metrics" class="grid"></div><div id="secretaryDocTools" class="toolbar"><button class="btn" onclick="saveAllDocs()">全部確認存檔</button><button class="btn alt" onclick="zeroAll()">今日公文全部設為 0</button><span class="muted">今日配送與明日公文預填互不影響。</span></div></div><div id="routeCards" class="grid"></div><div class="card"><div class="row" style="justify-content:space-between"><h3>分館即時狀態</h3><div id="routeFilterLabel" class="muted">目前：全部路線</div></div><div class="toolbar"><select id="filter" onchange="loadDeliveries()"><option value="">全部狀態</option><option value="WAITING_SECRETARY">待秘書</option><option value="WAITING_DRIVER">待司機</option><option value="WAITING_BRANCH">待分館簽收</option><option value="WAITING_DRIVER_CONFIRM">待司機確認</option><option value="WAITING_BRANCH_CORRECTION">待更正</option><option value="STOP_COMPLETED">已完成</option></select><input id="search" placeholder="搜尋分館" oninput="loadDeliveries()"></div><div style="overflow:auto"><table><thead><tr><th>路線</th><th>分館</th><th>狀態</th><th>司機</th><th>時間</th><th>公文</th></tr></thead><tbody id="delivs"></tbody></table></div></div>
+<div id="nextDayDocsCard" class="card hidden">
+  <div class="sectiontitle">
+    <div>
+      <h2>次日公文預填</h2>
+      <div id="nextDayDocHint" class="muted">載入明日配送分館…</div>
+    </div>
+    <button class="btn alt" onclick="loadNextDayDocs()">重新整理明日清單</button>
+  </div>
+  <div class="notice" style="margin:12px 0">今日「分館即時狀態」會持續顯示，不會因為預填明日公文而切換日期。</div>
+  <div id="nextDayClosure" class="warn hidden"></div>
+  <div id="nextDayDocTools" class="toolbar">
+    <button class="btn" onclick="saveAllNextDocs()">明日公文全部確認存檔</button>
+    <button class="btn alt" onclick="zeroAllNextDocs()">明日公文全部設為 0</button>
+    <span class="muted">明日司機第一次輸入「圖書送出」前，秘書仍可再次修改。</span>
+  </div>
+  <div style="overflow:auto">
+    <table>
+      <thead><tr><th>路線</th><th>預設/已指派司機</th><th>分館代碼</th><th>分館</th><th>明日公文</th></tr></thead>
+      <tbody id="nextDayDocsBody"></tbody>
+    </table>
+  </div>
+</div></section>
 <section id="branches" class="hidden"><div class="card"><div class="sectiontitle"><div><h2>分館資料維護 / 固定 QR</h2><p class="muted">新增、修改、停用/啟用；已有配送歷史者不可永久刪除。</p></div><button id="addBranchBtn" class="btn" onclick="editBranch()">＋ 新增分館</button></div><div class="toolbar"><input id="branchSearch" placeholder="搜尋代碼 / 分館名稱" oninput="renderBranches()"><label><input type="checkbox" id="showInactive" checked onchange="renderBranches()"> 顯示停用 / 歷史分館</label><span id="branchSummary" class="muted"></span></div><div id="branchList" style="overflow:auto"><div class="muted">載入中…</div></div></div></section>
 <section id="routes" class="hidden"><div class="grid"><div class="card"><div class="sectiontitle"><h2>路線管理</h2><button id="addRouteBtn" class="btn" onclick="addRoute()">＋ 新增路線</button></div><div id="routeList"></div></div><div class="card"><h2>今日路線 / 司機指派</h2><div id="assignList"></div></div></div></section>
 <section id="drivers" class="hidden"><div class="card"><div class="sectiontitle"><div><h2>司機資料 / 裝置管理</h2><p class="muted">新增、修改、停用/啟用、一次性啟用 QR 與裝置管理。</p></div><button id="addDriverBtn" class="btn" onclick="openDriverForm()">＋ 新增司機</button></div><div class="toolbar"><input id="driverSearch" placeholder="搜尋司機姓名" oninput="renderDrivers()"><span id="driverSummary" class="muted"></span></div><div id="driverList"><div class="muted">載入中…</div></div></div></section>
@@ -16,7 +38,7 @@
 <section id="audit" class="hidden"><div class="card"><h2>Audit Log</h2><div id="auditList" style="overflow:auto"></div></div></section>
 </main></div><div id="modalHost"></div><script src="/static/common.js"></script><script>
 let me=null, routesCache=[], driversCache=[]; const todayStr=new Date().toISOString().slice(0,10); reportDate.value=todayStr; reportMonth.value=todayStr.slice(0,7); setTimeout(()=>{if(document.querySelector('#exStart')){exStart.value=todayStr;exEnd.value=todayStr;exMonth.value=todayStr.slice(0,7)}},0);
-async function boot(){let x=await api('/api/auth/me');if(x.user){me=x.user;loginEl(false);who.textContent=me.username+' / '+me.role;document.querySelector('#addBranchBtn').style.display=['ADMIN','SECRETARY'].includes(me.role)?'':'none';document.querySelectorAll('#addRouteBtn,#addDriverBtn').forEach(e=>e.style.display=me.role==='ADMIN'?'':'none');const dt=document.querySelector('#secretaryDocTools');if(dt)dt.style.display=me.role==='SECRETARY'?'':'none';loadAll();connect()}}function loginEl(show){document.querySelector('#login').classList.toggle('hidden',!show);document.querySelector('#app').classList.toggle('hidden',show)}boot();
+async function boot(){let x=await api('/api/auth/me');if(x.user){me=x.user;loginEl(false);who.textContent=me.username+' / '+me.role;document.querySelector('#addBranchBtn').style.display=['ADMIN','SECRETARY'].includes(me.role)?'':'none';document.querySelectorAll('#addRouteBtn,#addDriverBtn').forEach(e=>e.style.display=me.role==='ADMIN'?'':'none');const dt=document.querySelector('#secretaryDocTools');if(dt)dt.style.display=me.role==='SECRETARY'?'':'none';const nd=document.querySelector('#nextDayDocsCard');if(nd)nd.classList.toggle('hidden',me.role!=='SECRETARY');loadAll();if(me.role==='SECRETARY')loadNextDayDocs();connect()}}function loginEl(show){document.querySelector('#login').classList.toggle('hidden',!show);document.querySelector('#app').classList.toggle('hidden',show)}boot();
 async function login(){try{let x=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:u.value,password:p.value})});sessionStorage.setItem('admin_session',x.token);location.reload()}catch(e){msg.innerHTML='<div class="error">'+e.message+'</div>'}}async function forgot(){let name=u.value||prompt('請輸入帳號');if(!name)return;let x=await api('/api/auth/password/forgot',{method:'POST',body:JSON.stringify({username:name})});msg.innerHTML='<div class="ok">'+x.message+(x.demo_reset_url?'<br>Demo：'+x.demo_reset_url:'')+'</div>'}async function logout(){await api('/api/auth/logout',{method:'POST'});sessionStorage.removeItem('admin_session');location.reload()}
 function show(id){for(let x of ['dash','branches','routes','drivers','schedule','records','reports','account','email','audit'])document.querySelector('#'+x).classList.toggle('hidden',x!==id);({branches:loadBranches,routes:loadRoutesPage,drivers:loadDrivers,schedule:loadSchedule,records:loadRecords,reports:loadSignStatus,account:loadAccount,email:loadEmail,audit:loadAudit}[id]||(()=>{}))()}
 let selectedRoute='';
@@ -36,6 +58,74 @@ async function loadDeliveries(){let q='?';const f=document.querySelector('#filte
 async function setDoc(id,branchName){try{const el=document.querySelector('#doc'+id);if(!el||el.value==='')throw new Error('請輸入公文數量');const qty=Number(el.value);if(qty<0||!Number.isInteger(qty))throw new Error('公文數量請輸入 0 以上整數');if(!confirm(`${branchName}\n確認公文數量為 ${qty}？`))return;let r=await api('/api/secretary/deliveries/'+id+'/document',{method:'PATCH',body:JSON.stringify({qty})});alert(`${branchName}\n公文數量 ${r.qty} 已儲存。\n司機輸入「圖書送出數量」前仍可再次修改。`);await loadAll()}catch(e){alert(e.message);await loadAll()}}
 async function saveAllDocs(){try{let items=[];document.querySelectorAll('#delivs input[id^="doc"]').forEach(el=>{if(el.value!==''){const qty=Number(el.value);if(!Number.isInteger(qty)||qty<0)throw new Error('公文數量請輸入 0 以上整數');items.push({id:Number(el.id.slice(3)),qty})}});if(!items.length)throw new Error('目前沒有可存檔的公文數量');const total=items.reduce((a,b)=>a+b.qty,0);if(!confirm(`確認一次存檔 ${items.length} 個分館？\n公文總數：${total}`))return;let r=await api('/api/secretary/documents/batch',{method:'POST',body:JSON.stringify({items})});alert(`已一次存檔 ${r.changed} 個分館。\n公文總數：${r.total}`);await loadAll()}catch(e){alert(e.message);await loadAll()}}
 async function zeroAll(){if(confirm('將「司機尚未輸入送出數量」的今日配送公文全部設為 0？')){try{let r=await api('/api/secretary/documents/zero-all',{method:'POST'});alert(`已將 ${r.changed} 個尚未鎖定的分館公文設為 0。`);await loadAll()}catch(e){alert(e.message)}}}
+let nextDocDate='';
+async function loadNextDayDocs(){
+  if(me?.role!=='SECRETARY')return;
+  const body=document.querySelector('#nextDayDocsBody'),hint=document.querySelector('#nextDayDocHint'),closure=document.querySelector('#nextDayClosure'),tools=document.querySelector('#nextDayDocTools');
+  try{
+    const x=await api('/api/secretary/documents/next-day');
+    nextDocDate=x.service_date;
+    hint.textContent=`目前編輯：${x.service_date}（明日）｜預計配送 ${x.count} 館；今日即時配送狀態持續保留。`;
+    if(x.is_global_closure){
+      closure.classList.remove('hidden');
+      closure.textContent=`${x.service_date} 全館休館，明日沒有配送。${x.closure_reason?' 原因：'+x.closure_reason:''}`;
+      tools.style.display='none';
+    }else{
+      closure.classList.add('hidden');
+      tools.style.display='';
+    }
+    body.innerHTML=x.rows.length?x.rows.map(d=>{
+      const locked=d.outbound_original!==null;
+      const value=d.document_final??'';
+      const editor=locked
+        ? `<b>${value===''?'—':value}</b><br><span class="muted">司機已輸入送出・已鎖定</span>`
+        : `<div class="row"><input id="nextdoc${d.id}" type="number" min="0" value="${value}" style="width:90px"><button class="btn alt small" onclick="setNextDoc(${d.id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">存檔</button></div>`;
+      return `<tr><td>${d.route_name||('路線'+d.route_code)}</td><td>${d.driver_name||'未指派'}</td><td>${d.branch_code}</td><td>${d.branch_name}</td><td>${editor}</td></tr>`;
+    }).join(''):`<tr><td colspan="5" class="muted">明日沒有符合固定排程或非固定運送的分館。</td></tr>`;
+  }catch(e){
+    hint.textContent='明日公文清單讀取失敗';
+    body.innerHTML=`<tr><td colspan="5"><div class="error">${e.message}</div></td></tr>`;
+  }
+}
+async function setNextDoc(id,branchName){
+  try{
+    const el=document.querySelector('#nextdoc'+id);
+    if(!el||el.value==='')throw new Error('請輸入明日公文數量');
+    const qty=Number(el.value);
+    if(!Number.isInteger(qty)||qty<0)throw new Error('公文數量請輸入 0 以上整數');
+    if(!confirm(`${nextDocDate}（明日）\n${branchName}\n確認公文數量為 ${qty}？`))return;
+    await api('/api/secretary/deliveries/'+id+'/document',{method:'PATCH',body:JSON.stringify({qty})});
+    alert(`${branchName}\n明日公文 ${qty} 已儲存。`);
+    await loadNextDayDocs();
+  }catch(e){alert(e.message)}
+}
+async function saveAllNextDocs(){
+  try{
+    const items=[];
+    document.querySelectorAll('#nextDayDocsBody input[id^="nextdoc"]').forEach(el=>{
+      if(el.value!==''){
+        const qty=Number(el.value);
+        if(!Number.isInteger(qty)||qty<0)throw new Error('公文數量請輸入 0 以上整數');
+        items.push({id:Number(el.id.slice(7)),qty});
+      }
+    });
+    if(!items.length)throw new Error('目前沒有可存檔的明日公文數量');
+    const total=items.reduce((a,b)=>a+b.qty,0);
+    if(!confirm(`${nextDocDate}（明日）\n確認一次存檔 ${items.length} 個分館？\n公文總數：${total}`))return;
+    const r=await api('/api/secretary/documents/batch',{method:'POST',body:JSON.stringify({service_date:nextDocDate,items})});
+    alert(`明日公文已存檔 ${r.changed} 個分館。\n公文總數：${r.total}`);
+    await loadNextDayDocs();
+  }catch(e){alert(e.message)}
+}
+async function zeroAllNextDocs(){
+  if(!nextDocDate)return;
+  if(!confirm(`${nextDocDate}（明日）\n將明日所有尚未鎖定的配送分館公文設為 0？`))return;
+  try{
+    const r=await api('/api/secretary/documents/zero-all?service_date='+encodeURIComponent(nextDocDate),{method:'POST'});
+    alert(`明日已有 ${r.changed} 個分館公文設為 0。`);
+    await loadNextDayDocs();
+  }catch(e){alert(e.message)}
+}
 async function getCaches(){[routesCache,driversCache]=await Promise.all([api('/api/routes'),api('/api/drivers')])}
 let branchesCache=[];
 async function loadBranches(){const box=document.querySelector('#branchList');try{await getCaches();branchesCache=await api('/api/branches');renderBranches()}catch(e){box.innerHTML=`<div class="error">分館資料載入失敗：${e.message}</div>`}}
@@ -96,7 +186,7 @@ function between(v,a,b){if(!a||!b)return false;if(a>b){let t=a;a=b;b=t}return v>
 function renderRangeCalendar(){if(!document.querySelector('#rangeCal'))return;const month=exMonth.value||todayStr.slice(0,7),x=monthDays(month),start=exStart.value,end=exEnd.value||start;let html='<div class="muted">一</div><div class="muted">二</div><div class="muted">三</div><div class="muted">四</div><div class="muted">五</div><div class="muted">六</div><div class="muted">日</div>';for(let i=0;i<x.firstDay;i++)html+='<div class="blank"></div>';for(let d=1;d<=x.n;d++){let iso=dateISO(x.y,x.m,d);html+=`<div class="day ${between(iso,start,end)?'sel':''}" data-date="${iso}">${d}</div>`}rangeCal.innerHTML=html;rangeCal.querySelectorAll('.day').forEach(el=>{el.onpointerdown=e=>{calDragging=true;exStart.value=el.dataset.date;exEnd.value=el.dataset.date;renderRangeCalendar();e.preventDefault()};el.onpointerenter=()=>{if(calDragging){exEnd.value=el.dataset.date;renderRangeCalendar()}};el.onpointerup=e=>{calDragging=false;exEnd.value=el.dataset.date;if(exStart.value>exEnd.value){let t=exStart.value;exStart.value=exEnd.value;exEnd.value=t}renderRangeCalendar();e.preventDefault()}})}
 window.addEventListener('pointerup',()=>calDragging=false);
 async function loadSchedule(){let bs=await api('/api/branches');if(exBranch)exBranch.innerHTML=bs.filter(b=>b.active).map(b=>`<option value="${b.id}">${b.code}｜${b.name}</option>`).join('');const sec=me.role==='SECRETARY';scheduleEditor.classList.toggle('hidden',!sec);scheduleReadonly.classList.toggle('hidden',sec);if(!exMonth.value)exMonth.value=todayStr.slice(0,7);if(!exStart.value){exStart.value=todayStr;exEnd.value=todayStr}scheduleTypeChanged();renderRangeCalendar();let x=await api('/api/schedule-exceptions?month='+(exMonth.value||todayStr.slice(0,7)));exceptionList.innerHTML=x.length?'<table><tr><th>日期</th><th>路線</th><th>分館</th><th>類型</th><th>原因</th><th></th></tr>'+x.map(v=>`<tr><td>${v.service_date}</td><td>${v.route_code||'—'}</td><td>${v.branch_name}</td><td>${v.exception_type==='CLOSED_ALL'?'休館':v.exception_type==='STOP'?'停送':'非固定運送'}</td><td>${v.reason||'—'}</td><td>${sec?`<button class="btn danger small" onclick="deleteException('${v.id}')">取消設定</button>`:'查看'}</td></tr>`).join('')+'</table>':'本月尚無例外設定'}
-async function saveExceptionRange(){try{let body={start_date:exStart.value,end_date:exEnd.value||exStart.value,exception_type:exType.value,reason:exReason.value};if(exType.value!=='CLOSED_ALL')body.branch_id=+exBranch.value;const label=exType.value==='CLOSED_ALL'?'休館（全部分館）':exType.value==='STOP'?'停送':'非固定運送';if(!confirm(`${label}\n${body.start_date} ～ ${body.end_date}\n確定儲存？`))return;let r=await api('/api/schedule-exceptions/range',{method:'POST',body:JSON.stringify(body)});alert(`已儲存 ${label}，共 ${r.days} 天。`);exReason.value='';await loadSchedule();await loadAll()}catch(e){alert(e.message)}}
+async function saveExceptionRange(){try{let body={start_date:exStart.value,end_date:exEnd.value||exStart.value,exception_type:exType.value,reason:exReason.value};if(exType.value!=='CLOSED_ALL')body.branch_id=+exBranch.value;const label=exType.value==='CLOSED_ALL'?'休館（全部分館）':exType.value==='STOP'?'停送':'非固定運送';if(!confirm(`${label}\n${body.start_date} ～ ${body.end_date}\n確定儲存？`))return;let r=await api('/api/schedule-exceptions/range',{method:'POST',body:JSON.stringify(body)});alert(`已儲存 ${label}，共 ${r.days} 天。`);exReason.value='';await loadSchedule();await loadAll();if(me.role==='SECRETARY')await loadNextDayDocs()}catch(e){alert(e.message)}}
 async function deleteException(id){if(!confirm('取消這筆休館 / 停送 / 非固定運送設定？'))return;try{await api('/api/schedule-exceptions/'+id,{method:'DELETE'});await loadSchedule();await loadAll()}catch(e){alert(e.message)}}
 function setupCanvas(id){const c=document.getElementById(id);if(!c||c.dataset.ready)return;c.dataset.ready='1';const ctx=c.getContext('2d');ctx.lineWidth=3;ctx.lineCap='round';let on=false;const pos=e=>{const r=c.getBoundingClientRect(),t=e.touches?e.touches[0]:e;return [(t.clientX-r.left)*c.width/r.width,(t.clientY-r.top)*c.height/r.height]};const st=e=>{on=true;let [x,y]=pos(e);ctx.beginPath();ctx.moveTo(x,y);e.preventDefault()};const mv=e=>{if(!on)return;let [x,y]=pos(e);ctx.lineTo(x,y);ctx.stroke();e.preventDefault()};const en=e=>{on=false;e.preventDefault()};c.addEventListener('mousedown',st);c.addEventListener('mousemove',mv);window.addEventListener('mouseup',en);c.addEventListener('touchstart',st,{passive:false});c.addEventListener('touchmove',mv,{passive:false});c.addEventListener('touchend',en,{passive:false})}
 function clearSig(id){const c=document.getElementById(id);c.getContext('2d').clearRect(0,0,c.width,c.height)}
