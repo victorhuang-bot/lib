@@ -883,54 +883,92 @@ async def branch_correct(req:Request):
     audit(c,'BRANCH',s['branch_id'],'BRANCH','BRANCH_CORRECT','DELIVERY',x['id'],before=before,after={'document':document,'outbound':outbound_qty,'inbound':inbound,'reason':p['reason'],'signer':p['signer']})
     c.commit();c.close();await publish({'type':'delivery.updated','id':x['id']});return {'ok':True}
 
+
+def ensure_prefill_delivery(c, service_date, branch_id):
+    b=c.execute('SELECT * FROM branches WHERE id=?',(branch_id,)).fetchone()
+    if not b or not branch_expected_on(c,b,service_date):
+        raise HTTPException(409,'此分館不是所選日期的配送站點')
+    dr=c.execute('SELECT * FROM daily_routes WHERE service_date=? AND route_id=?',(service_date,b['route_id'])).fetchone()
+    if not dr:
+        driver=default_driver_id(c,b['route_id'])
+        c.execute('INSERT INTO daily_routes(service_date,route_id,driver_id) VALUES(?,?,?) ON CONFLICT(service_date,route_id) DO NOTHING',(service_date,b['route_id'],driver))
+        dr=c.execute('SELECT * FROM daily_routes WHERE service_date=? AND route_id=?',(service_date,b['route_id'])).fetchone()
+    x=c.execute('SELECT * FROM deliveries WHERE service_date=? AND branch_id=?',(service_date,branch_id)).fetchone()
+    if not x:
+        c.execute("INSERT INTO deliveries(service_date,daily_route_id,branch_id,status) VALUES(?,?,?,'WAITING_SECRETARY') ON CONFLICT(service_date,branch_id) DO NOTHING",(service_date,dr['id'],branch_id))
+        x=c.execute('SELECT * FROM deliveries WHERE service_date=? AND branch_id=?',(service_date,branch_id)).fetchone()
+    return x
+
 @app.get('/api/secretary/documents/prefill')
 def document_prefill(req:Request, service_date:str|None=None):
     require_user(req,['SECRETARY'])
     d=service_date or next_service_date()
-    try:
-        selected=date.fromisoformat(d)
-    except:
-        raise HTTPException(400,'日期格式錯誤')
-    if selected < date.fromisoformat(today()):
-        raise HTTPException(400,'公文預填只能選擇今天或未來日期')
+    try: selected=date.fromisoformat(d)
+    except: raise HTTPException(400,'日期格式錯誤')
+    if selected < date.fromisoformat(today()): raise HTTPException(400,'公文預填只能選擇今天或未來日期')
     c=db()
     try:
-        # Build the selected date independently from today's in-progress deliveries.
-        # Fixed weekdays + CLOSED_ALL / STOP / ADD are respected by rebuild_service_date().
-        rebuild_service_date(c,d)
-        rows=[dict(x) for x in c.execute('''SELECT x.id,x.service_date,x.status,
-        x.document_final,x.outbound_original,
-        b.code branch_code,b.name branch_name,b.stop_order,
-        r.code route_code,r.name route_name,
-        dv.id driver_id,dv.name driver_name
-        FROM deliveries x
-        JOIN branches b ON b.id=x.branch_id
-        JOIN daily_routes dr ON dr.id=x.daily_route_id
-        JOIN routes r ON r.id=dr.route_id
-        LEFT JOIN drivers dv ON dv.id=dr.driver_id
-        WHERE x.service_date=?
-        ORDER BY CAST(r.code AS INTEGER),r.code,b.stop_order''',(d,)).fetchall()]
         closure=c.execute('SELECT reason FROM global_closures WHERE service_date=?',(d,)).fetchone()
-        result={
-            'service_date':d,
-            'is_global_closure':bool(closure),
-            'closure_reason':closure['reason'] if closure else None,
-            'count':len(rows),
-            'rows':rows
-        }
+        rows=[]
+        if not closure:
+            branches=c.execute("SELECT b.*,r.code route_code,r.name route_name FROM branches b JOIN routes r ON r.id=b.route_id WHERE b.active=1 AND r.active=1 ORDER BY CAST(r.code AS INTEGER),r.code,b.stop_order").fetchall()
+            for b in branches:
+                if not branch_expected_on(c,b,d): continue
+                existing=c.execute("SELECT x.id,x.status,x.document_final,x.outbound_original,dr.driver_id,dv.name driver_name FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id LEFT JOIN drivers dv ON dv.id=dr.driver_id WHERE x.service_date=? AND x.branch_id=?",(d,b['id'])).fetchone()
+                if existing:
+                    did,status,doc,outbound,driver_id,driver_name=existing['id'],existing['status'],existing['document_final'],existing['outbound_original'],existing['driver_id'],existing['driver_name']
+                else:
+                    did,status,doc,outbound=None,'WAITING_SECRETARY',None,None
+                    driver_id=default_driver_id(c,b['route_id'])
+                    dv=c.execute('SELECT name FROM drivers WHERE id=?',(driver_id,)).fetchone() if driver_id else None
+                    driver_name=dv['name'] if dv else None
+                rows.append({'id':did,'branch_id':b['id'],'service_date':d,'status':status,'document_final':doc,'outbound_original':outbound,'branch_code':b['code'],'branch_name':b['name'],'stop_order':b['stop_order'],'route_code':b['route_code'],'route_name':b['route_name'],'driver_id':driver_id,'driver_name':driver_name})
         c.close()
-        return result
-    except HTTPException:
-        try: c.rollback()
-        except: pass
-        c.close()
-        raise
+        return {'service_date':d,'is_global_closure':bool(closure),'closure_reason':closure['reason'] if closure else None,'count':len(rows),'rows':rows}
     except Exception as e:
         try: c.rollback()
         except: pass
-        c.close()
-        print('PREFILL_ERROR',d,type(e).__name__,str(e),flush=True)
-        raise HTTPException(500,f'公文預填建立失敗：{type(e).__name__}: {e}')
+        c.close(); print('PREFILL_ERROR',d,type(e).__name__,str(e),flush=True)
+        raise HTTPException(500,f'公文預填讀取失敗：{type(e).__name__}: {e}')
+
+@app.post('/api/secretary/documents/prefill-save')
+async def document_prefill_save(req:Request):
+    u=require_user(req,['SECRETARY']); p=await req.json(); d=str(p.get('service_date') or '')
+    try: date.fromisoformat(d); bid=int(p.get('branch_id')); qty=int(p.get('qty'))
+    except: raise HTTPException(400,'日期、分館或公文數量格式錯誤')
+    if qty<0: raise HTTPException(400,'公文數量不可小於 0')
+    c=db()
+    try:
+        x=ensure_prefill_delivery(c,d,bid)
+        if x['outbound_original'] is not None: raise HTTPException(409,'司機已輸入圖書送出數量，公文已鎖定')
+        c.execute('UPDATE deliveries SET document_original=COALESCE(document_original,?),document_final=?,row_version=row_version+1 WHERE id=?',(qty,qty,x['id']))
+        audit(c,'USER',u['id'],u['role'],'PREFILL_DOCUMENT','DELIVERY',x['id'],after={'service_date':d,'qty':qty})
+        c.commit(); did=x['id']; c.close(); return {'ok':True,'id':did,'qty':qty}
+    except HTTPException:
+        c.rollback(); c.close(); raise
+    except Exception as e:
+        c.rollback(); c.close(); raise HTTPException(500,f'公文預填存檔失敗：{type(e).__name__}: {e}')
+
+@app.post('/api/secretary/documents/prefill-batch')
+async def document_prefill_batch(req:Request):
+    u=require_user(req,['SECRETARY']); p=await req.json(); d=str(p.get('service_date') or ''); items=p.get('items') or []
+    try: date.fromisoformat(d)
+    except: raise HTTPException(400,'日期格式錯誤')
+    c=db(); changed=0; total=0
+    try:
+        for it in items:
+            bid=int(it.get('branch_id')); qty=int(it.get('qty'))
+            if qty<0: raise HTTPException(400,'公文數量不可小於 0')
+            x=ensure_prefill_delivery(c,d,bid)
+            if x['outbound_original'] is not None: continue
+            c.execute('UPDATE deliveries SET document_original=COALESCE(document_original,?),document_final=?,row_version=row_version+1 WHERE id=?',(qty,qty,x['id']))
+            changed+=1; total+=qty
+        audit(c,'USER',u['id'],u['role'],'PREFILL_DOCUMENT_BATCH','DELIVERY',d,after={'service_date':d,'changed':changed,'total':total})
+        c.commit(); c.close(); return {'ok':True,'changed':changed,'total':total}
+    except HTTPException:
+        c.rollback(); c.close(); raise
+    except Exception as e:
+        c.rollback(); c.close(); raise HTTPException(500,f'公文批次預填失敗：{type(e).__name__}: {e}')
 
 @app.patch('/api/secretary/deliveries/{did}/document')
 async def set_doc(did:int,req:Request):

@@ -110,22 +110,22 @@ async function loadPrefillDocs(serviceDate){
       const value=d.document_final??'';
       const editor=locked
         ? `<b>${value===''?'—':value}</b><br><span class="muted">司機已輸入送出・已鎖定</span>`
-        : `<div class="row"><input id="nextdoc${d.id}" type="number" min="0" value="${value}" style="width:90px"><button class="btn alt small" onclick="setNextDoc(${d.id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">存檔</button></div>`;
+        : `<div class="row"><input id="nextdocb${d.branch_id}" type="number" min="0" value="${value}" style="width:90px"><button class="btn alt small" onclick="setNextDoc(${d.branch_id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">存檔</button></div>`;
       return `<tr><td>${d.route_name||('路線'+d.route_code)}</td><td>${d.driver_name||'未指派'}</td><td>${d.branch_code}</td><td>${d.branch_name}</td><td>${editor}</td></tr>`;
     }).join(''):`<tr><td colspan="5" class="muted">${x.service_date} 沒有符合固定排程或非固定運送的分館。</td></tr>`;
   }catch(e){
     hint.textContent=`公文預填清單讀取失敗：${e.message}`;
-    body.innerHTML=`<tr><td colspan="5"><div class="error"><b>無法建立 ${serviceDate} 公文清單</b><br>${e.message}<br><span class="muted">請重新整理一次；若仍失敗，Render Log 會顯示 PREFILL_ERROR。</span></div></td></tr>`;
+    body.innerHTML=`<tr><td colspan="5"><div class="error"><b>無法讀取 ${serviceDate} 公文清單</b><br>${e.message}<br><span class="muted">請重新整理一次；若仍失敗，Render Log 會顯示 PREFILL_ERROR。</span></div></td></tr>`;
   }
 }
-async function setNextDoc(id,branchName){
+async function setNextDoc(branchId,branchName){
   try{
-    const el=document.querySelector('#nextdoc'+id);
-    if(!el||el.value==='')throw new Error('請輸入明日公文數量');
+    const el=document.querySelector('#nextdocb'+branchId);
+    if(!el||el.value==='')throw new Error('請輸入公文數量');
     const qty=Number(el.value);
     if(!Number.isInteger(qty)||qty<0)throw new Error('公文數量請輸入 0 以上整數');
     if(!confirm(`${nextDocDate}\n${branchName}\n確認公文數量為 ${qty}？`))return;
-    await api('/api/secretary/deliveries/'+id+'/document',{method:'PATCH',body:JSON.stringify({qty})});
+    await api('/api/secretary/documents/prefill-save',{method:'POST',body:JSON.stringify({service_date:nextDocDate,branch_id:branchId,qty})});
     alert(`${branchName}\n${nextDocDate} 公文 ${qty} 已儲存。`);
     await loadNextDayDocs();
   }catch(e){alert(e.message)}
@@ -133,17 +133,17 @@ async function setNextDoc(id,branchName){
 async function saveAllNextDocs(){
   try{
     const items=[];
-    document.querySelectorAll('#nextDayDocsBody input[id^="nextdoc"]').forEach(el=>{
+    document.querySelectorAll('#nextDayDocsBody input[id^="nextdocb"]').forEach(el=>{
       if(el.value!==''){
         const qty=Number(el.value);
         if(!Number.isInteger(qty)||qty<0)throw new Error('公文數量請輸入 0 以上整數');
-        items.push({id:Number(el.id.slice(7)),qty});
+        items.push({branch_id:Number(el.id.slice(8)),qty});
       }
     });
     if(!items.length)throw new Error('目前沒有可存檔的明日公文數量');
     const total=items.reduce((a,b)=>a+b.qty,0);
     if(!confirm(`${nextDocDate}\n確認一次存檔 ${items.length} 個分館？\n公文總數：${total}`))return;
-    const r=await api('/api/secretary/documents/batch',{method:'POST',body:JSON.stringify({service_date:nextDocDate,items})});
+    const r=await api('/api/secretary/documents/prefill-batch',{method:'POST',body:JSON.stringify({service_date:nextDocDate,items})});
     alert(`${nextDocDate} 公文已存檔 ${r.changed} 個分館。\n公文總數：${r.total}`);
     await loadNextDayDocs();
   }catch(e){alert(e.message)}
