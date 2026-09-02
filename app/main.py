@@ -91,6 +91,35 @@ def verify_secret(s, stored):
     except: return False
 def thash(s): return hashlib.sha256(s.encode()).hexdigest()
 
+def smtp_config():
+    return {
+        'host': os.getenv('SMTP_HOST','').strip(),
+        'port': int(os.getenv('SMTP_PORT','587')),
+        'user': os.getenv('SMTP_USER','').strip(),
+        'password': os.getenv('SMTP_PASSWORD',''),
+        'from': os.getenv('SMTP_FROM','').strip() or os.getenv('SMTP_USER','').strip(),
+        'tls': os.getenv('SMTP_TLS','true').lower() not in ('0','false','no'),
+    }
+
+def smtp_send(subject, body, to_list, cc_list=None, attachments=None):
+    cfg=smtp_config(); cc_list=cc_list or []; attachments=attachments or []
+    if not cfg['host'] or not cfg['from'] or not cfg['password']:
+        raise RuntimeError('SMTP 尚未完整設定')
+    msg=EmailMessage(); msg['Subject']=subject; msg['From']=cfg['from']; msg['To']=', '.join(to_list)
+    if cc_list: msg['Cc']=', '.join(cc_list)
+    msg.set_content(body)
+    for filename,data,mime in attachments:
+        maintype,subtype=mime.split('/',1); msg.add_attachment(data,maintype=maintype,subtype=subtype,filename=filename)
+    if cfg['port']==465:
+        with smtplib.SMTP_SSL(cfg['host'],cfg['port'],context=ssl.create_default_context(),timeout=30) as x:
+            if cfg['user']: x.login(cfg['user'],cfg['password'])
+            x.send_message(msg)
+    else:
+        with smtplib.SMTP(cfg['host'],cfg['port'],timeout=30) as x:
+            if cfg['tls']: x.starttls(context=ssl.create_default_context())
+            if cfg['user']: x.login(cfg['user'],cfg['password'])
+            x.send_message(msg)
+
 def init_db():
     DB.parent.mkdir(parents=True, exist_ok=True)
     c=db()
@@ -285,15 +314,47 @@ def me(req:Request):
     u=current_user(req); return {'user': {'username':u['username'],'role':u['role']} if u else None}
 @app.post('/api/auth/password/forgot')
 async def forgot(req:Request):
-    p=await req.json(); c=db(); u=c.execute('SELECT * FROM users WHERE username=?',(p.get('username',''),)).fetchone(); demo=None
+    p=await req.json(); username=(p.get('username') or '').strip(); c=db(); u=c.execute('SELECT * FROM users WHERE username=?',(username,)).fetchone(); demo=None
     if u:
-        raw=secrets.token_urlsafe(32); c.execute('INSERT INTO password_resets(user_id,token_hash,expires_at,created_at) VALUES(?,?,?,?)',(u['id'],thash(raw),future_iso(minutes=15),now())); c.commit(); demo=(f'/reset-password?token={raw}' if (APP_ENV!='production' or DEMO_RESET_LINKS) else None)
+        raw=secrets.token_urlsafe(32); c.execute('INSERT INTO password_resets(user_id,token_hash,expires_at,created_at) VALUES(?,?,?,?)',(u['id'],thash(raw),future_iso(minutes=30),now())); c.commit()
+        reset_url=APP_BASE_URL+f'/reset-password?token={raw}'
+        if APP_ENV!='production' or DEMO_RESET_LINKS: demo=reset_url
+        try:
+            smtp_send('圖書物流系統密碼重設',f'帳號：{username}\n\n請於 30 分鐘內使用以下連結重設密碼：\n{reset_url}\n\n若非本人操作，請忽略此信。',[RESET_EMAIL])
+        except Exception as e:
+            c.close(); raise HTTPException(500,'密碼重設信寄送失敗：'+str(e))
     c.close(); return {'ok':True,'message':'若帳號存在，系統已寄送重設連結。','demo_reset_url':demo}
 @app.post('/api/auth/password/reset')
 async def reset(req:Request):
     p=await req.json(); c=db(); r=c.execute('SELECT * FROM password_resets WHERE token_hash=? AND used_at IS NULL AND expires_at>?',(thash(p.get('token','')),now())).fetchone()
     if not r: c.close(); raise HTTPException(400,'重設連結無效或已過期')
     c.execute('UPDATE users SET password_hash=? WHERE id=?',(hash_secret(p.get('new_password','')),r['user_id'])); c.execute('UPDATE password_resets SET used_at=? WHERE id=?',(now(),r['id'])); c.execute('DELETE FROM sessions WHERE user_id=?',(r['user_id'],)); c.commit(); c.close(); return {'ok':True}
+
+
+@app.post('/api/account/change-password')
+async def change_own_password(req:Request):
+    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); current=p.get('current_password',''); newp=p.get('new_password',''); confirm=p.get('confirm_password','')
+    if newp!=confirm: raise HTTPException(400,'兩次新密碼不一致')
+    if len(newp)<8: raise HTTPException(400,'新密碼至少 8 碼')
+    c=db(); fresh=c.execute('SELECT * FROM users WHERE id=?',(u['id'],)).fetchone()
+    if not fresh or not verify_secret(current,fresh['password_hash']): c.close(); raise HTTPException(400,'目前密碼錯誤')
+    c.execute('UPDATE users SET password_hash=? WHERE id=?',(hash_secret(newp),u['id'])); c.execute('DELETE FROM sessions WHERE user_id=? AND token_hash!=?',(u['id'], thash((req.headers.get('Authorization','')[7:] if req.headers.get('Authorization','').startswith('Bearer ') else req.cookies.get('session','')))))
+    audit(c,'USER',u['id'],u['role'],'CHANGE_OWN_PASSWORD','USER',u['id']); c.commit(); c.close(); return {'ok':True}
+
+@app.post('/api/account/reset-secretary-password')
+async def reset_secretary_password(req:Request):
+    u=require_user(req,['ADMIN']); p=await req.json(); admin_password=p.get('admin_password',''); newp=p.get('new_password',''); confirm=p.get('confirm_password','')
+    if newp!=confirm: raise HTTPException(400,'兩次新密碼不一致')
+    if len(newp)<8: raise HTTPException(400,'新密碼至少 8 碼')
+    c=db(); admin=c.execute('SELECT * FROM users WHERE id=?',(u['id'],)).fetchone()
+    if not admin or not verify_secret(admin_password,admin['password_hash']): c.close(); raise HTTPException(400,'管理者密碼驗證失敗')
+    sec=c.execute("SELECT * FROM users WHERE role='SECRETARY' ORDER BY id LIMIT 1").fetchone()
+    if not sec: c.close(); raise HTTPException(404,'找不到秘書帳號')
+    c.execute('UPDATE users SET password_hash=? WHERE id=?',(hash_secret(newp),sec['id'])); c.execute('DELETE FROM sessions WHERE user_id=?',(sec['id'],)); audit(c,'USER',u['id'],u['role'],'RESET_SECRETARY_PASSWORD','USER',sec['id']); c.commit(); c.close(); return {'ok':True}
+
+@app.get('/api/account/security')
+def account_security(req:Request):
+    u=require_user(req,['ADMIN','SECRETARY']); c=db(); rows=[dict(x) for x in c.execute("SELECT username,role,email,is_active FROM users WHERE role IN ('ADMIN','SECRETARY') ORDER BY id").fetchall()]; c.close(); return {'current':{'username':u['username'],'role':u['role']},'accounts':rows}
 
 @app.get('/api/dashboard/today')
 def dashboard(req:Request):
@@ -853,30 +914,68 @@ def monthly_xlsx(req:Request,month:str|None=None):
 def monthly_pdf(req:Request,month:str|None=None):
     require_user(req,['ADMIN','SECRETARY']); m=month or today()[:7]; a,b=month_range(m); c=db(); rows=report_rows(c,a,b); c.close(); return Response(pdf_bytes(rows,f'{m} 圖書物流配送月報'),media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="{m}_monthly.pdf"'})
 
+@app.get('/api/email/settings')
+def email_settings(req:Request):
+    require_user(req,['ADMIN']); cfg=smtp_config(); return {'host':cfg['host'],'port':cfg['port'],'user':cfg['user'],'from':cfg['from'],'tls':cfg['tls'],'password_configured':bool(cfg['password'])}
+
+@app.post('/api/email/test')
+async def email_test(req:Request):
+    require_user(req,['ADMIN']); p=await req.json(); to=(p.get('email') or '').strip()
+    if '@' not in to: raise HTTPException(400,'請輸入測試收件信箱')
+    try: smtp_send('圖書物流系統 SMTP 測試','Google Workspace SMTP 已成功連線。\n\n寄件者：'+smtp_config()['from'],[to])
+    except Exception as e: raise HTTPException(500,str(e))
+    return {'ok':True,'message':'測試郵件已寄出'}
+
 @app.get('/api/email/recipients')
 def recipients(req:Request):
     require_user(req,['ADMIN','SECRETARY']); c=db(); rows=[dict(x) for x in c.execute('SELECT * FROM email_recipients ORDER BY id').fetchall()]; c.close(); return rows
 @app.post('/api/email/recipients')
 async def add_recipient(req:Request):
-    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); email=(p.get('email') or '').strip()
+    u=require_user(req,['ADMIN']); p=await req.json(); email=(p.get('email') or '').strip(); typ=(p.get('recipient_type') or 'TO').upper()
     if '@' not in email: raise HTTPException(400,'Email格式錯誤')
-    c=db(); c.execute('INSERT INTO email_recipients(email,recipient_type,active,created_at) VALUES(?,?,1,?)',(email,p.get('recipient_type','TO'),now())); rid=c.execute('SELECT last_insert_rowid()').fetchone()[0]; audit(c,'USER',u['id'],u['role'],'ADD_EMAIL_RECIPIENT','EMAIL_RECIPIENT',rid); c.commit(); c.close(); return {'ok':True}
+    if typ not in ('TO','CC'): raise HTTPException(400,'收件類型錯誤')
+    c=db(); c.execute('INSERT INTO email_recipients(email,recipient_type,active,created_at) VALUES(?,?,1,?)',(email,typ,now())); rid=c.execute('SELECT last_insert_rowid()').fetchone()[0]; audit(c,'USER',u['id'],u['role'],'ADD_EMAIL_RECIPIENT','EMAIL_RECIPIENT',rid); c.commit(); c.close(); return {'ok':True}
 @app.post('/api/email/recipients/{rid}/toggle')
 async def toggle_recipient(req:Request,rid:int):
-    u=require_user(req,['ADMIN','SECRETARY']); c=db(); c.execute('UPDATE email_recipients SET active=CASE active WHEN 1 THEN 0 ELSE 1 END WHERE id=?',(rid,)); audit(c,'USER',u['id'],u['role'],'TOGGLE_EMAIL_RECIPIENT','EMAIL_RECIPIENT',rid); c.commit(); c.close(); return {'ok':True}
+    u=require_user(req,['ADMIN']); c=db(); c.execute('UPDATE email_recipients SET active=CASE active WHEN 1 THEN 0 ELSE 1 END WHERE id=?',(rid,)); audit(c,'USER',u['id'],u['role'],'TOGGLE_EMAIL_RECIPIENT','EMAIL_RECIPIENT',rid); c.commit(); c.close(); return {'ok':True}
+@app.delete('/api/email/recipients/{rid}')
+def delete_recipient(req:Request,rid:int):
+    u=require_user(req,['ADMIN']); c=db(); c.execute('DELETE FROM email_recipients WHERE id=?',(rid,)); audit(c,'USER',u['id'],u['role'],'DELETE_EMAIL_RECIPIENT','EMAIL_RECIPIENT',rid); c.commit(); c.close(); return {'ok':True}
 @app.get('/api/email/logs')
 def email_logs(req:Request):
     require_user(req,['ADMIN','SECRETARY']); c=db(); rows=[dict(x) for x in c.execute('SELECT * FROM email_logs ORDER BY id DESC LIMIT 100').fetchall()]; c.close(); return rows
+
+def build_report_email(report_type,period):
+    c=db()
+    if report_type=='MONTHLY':
+        a,b=month_range(period[:7]); rows=report_rows(c,a,b); c.close(); title=f'{period[:7]} 圖書物流配送月報'; x=xlsx_bytes(rows,title); p=pdf_bytes(rows,title); base=period[:7]+'_monthly'
+    else:
+        d=period[:10]; rows=report_rows(c,d,d); c.close(); title=f'{d} 圖書物流配送日報'; x=xlsx_bytes(rows,title); p=pdf_bytes(rows,title); base=d+'_daily'
+    return title,[(base+'.xlsx',x,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),(base+'.pdf',p,'application/pdf')]
+
 @app.post('/api/email/send-report')
 async def send_report(req:Request):
-    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); period=p.get('period') or today(); typ=p.get('report_type','DAILY'); c=db(); rec=[x['email'] for x in c.execute('SELECT email FROM email_recipients WHERE active=1').fetchall()]
+    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); period=p.get('period') or today(); typ=(p.get('report_type') or 'DAILY').upper(); c=db(); rec=[dict(x) for x in c.execute('SELECT email,recipient_type FROM email_recipients WHERE active=1 ORDER BY id').fetchall()]
     if not rec: c.close(); raise HTTPException(409,'尚未設定Email收件人')
-    c.execute('INSERT INTO email_logs(report_type,period,recipients,status,sent_at,created_at) VALUES(?,?,?,?,?,?)',(typ,period,','.join(rec),'DEMO_SENT',now(),now())); lid=c.execute('SELECT last_insert_rowid()').fetchone()[0]; audit(c,'USER',u['id'],u['role'],'SEND_REPORT_EMAIL','EMAIL_LOG',lid,after={'recipients':rec}); c.commit(); c.close(); return {'ok':True,'status':'DEMO_SENT','recipients':rec}
+    to=[x['email'] for x in rec if x['recipient_type']=='TO']; cc=[x['email'] for x in rec if x['recipient_type']=='CC'];
+    if not to and cc: to=[cc.pop(0)]
+    cur=c.execute('INSERT INTO email_logs(report_type,period,recipients,status,created_at) VALUES(?,?,?,?,?)',(typ,period,','.join([x['email'] for x in rec]),'SENDING',now())); lid=cur.lastrowid; c.commit(); c.close()
+    try:
+        title,atts=build_report_email(typ,period); smtp_send(title,f'附件為 {period} 圖書物流報表。\n\n寄件者：{smtp_config()["from"]}',to,cc,atts)
+        c=db(); c.execute("UPDATE email_logs SET status='SENT',sent_at=?,error_message=NULL WHERE id=?",(now(),lid)); audit(c,'USER',u['id'],u['role'],'SEND_REPORT_EMAIL','EMAIL_LOG',lid,after={'recipients':[x['email'] for x in rec]}); c.commit(); c.close(); return {'ok':True,'status':'SENT','recipients':[x['email'] for x in rec]}
+    except Exception as e:
+        c=db(); c.execute("UPDATE email_logs SET status='FAILED',error_message=? WHERE id=?",(str(e),lid)); c.commit(); c.close(); raise HTTPException(500,str(e))
 @app.post('/api/email/logs/{lid}/resend')
 async def resend_email(req:Request,lid:int):
-    u=require_user(req,['ADMIN','SECRETARY']); c=db(); old=c.execute('SELECT * FROM email_logs WHERE id=?',(lid,)).fetchone()
-    if not old: c.close(); raise HTTPException(404)
-    c.execute('INSERT INTO email_logs(report_type,period,recipients,status,sent_at,created_at) VALUES(?,?,?,?,?,?)',(old['report_type'],old['period'],old['recipients'],'DEMO_RESENT',now(),now())); audit(c,'USER',u['id'],u['role'],'RESEND_REPORT_EMAIL','EMAIL_LOG',lid); c.commit(); c.close(); return {'ok':True}
+    u=require_user(req,['ADMIN','SECRETARY']); c=db(); old=c.execute('SELECT * FROM email_logs WHERE id=?',(lid,)).fetchone(); c.close()
+    if not old: raise HTTPException(404)
+    rec=[x.strip() for x in (old['recipients'] or '').split(',') if x.strip()];
+    if not rec: raise HTTPException(409,'原寄送紀錄沒有收件人')
+    try:
+        title,atts=build_report_email(old['report_type'],old['period']); smtp_send(title,f'重新寄送：附件為 {old["period"]} 圖書物流報表。',[rec[0]],rec[1:],atts)
+        c=db(); c.execute("UPDATE email_logs SET status='SENT',sent_at=?,error_message=NULL WHERE id=?",(now(),lid)); audit(c,'USER',u['id'],u['role'],'RESEND_REPORT_EMAIL','EMAIL_LOG',lid); c.commit(); c.close(); return {'ok':True,'status':'SENT'}
+    except Exception as e:
+        c=db(); c.execute("UPDATE email_logs SET status='FAILED',error_message=? WHERE id=?",(str(e),lid)); c.commit(); c.close(); raise HTTPException(500,str(e))
 
 @app.get('/api/events')
 async def events(req:Request):
