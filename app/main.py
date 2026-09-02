@@ -47,8 +47,7 @@ def pg_pool():
             max_idle=60,
             kwargs={
                 'row_factory': dict_row,
-                'connect_timeout': 5,
-                'options': '-c statement_timeout=10000'
+                'connect_timeout': 5
             },
             open=True
         )
@@ -141,6 +140,15 @@ class _PgCompat:
         self.pool=pg_pool()
         self.con=self.pool.getconn(timeout=8)
         self.con.row_factory=dict_row
+        # Neon pooler rejects statement_timeout as a startup parameter.
+        # Apply it only after a connection is acquired.
+        try:
+            with self.con.cursor() as cur:
+                cur.execute("SET statement_timeout TO '10s'")
+        except Exception:
+            # Timeout configuration must never prevent the app from starting.
+            try: self.con.rollback()
+            except Exception: pass
     def _q(self, sql):
         # Application SQL uses sqlite qmark parameters; psycopg uses %s.
         return sql.replace('?', '%s')
@@ -180,6 +188,12 @@ class _PgCompat:
     def close(self):
         if getattr(self,'con',None) is not None:
             try:
+                # Never return an aborted transaction to the pool.
+                try:
+                    if self.con.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+                        self.con.rollback()
+                except Exception:
+                    pass
                 self.pool.putconn(self.con)
             finally:
                 self.con=None
@@ -188,10 +202,16 @@ def db():
     if USE_POSTGRES:
         if psycopg is None or ConnectionPool is None:
             raise RuntimeError('DATABASE_URL 已設定，但 PostgreSQL driver/pool 尚未安裝')
-        try:
-            return _PgCompat(DATABASE_URL)
-        except Exception as e:
-            raise RuntimeError(f'PostgreSQL 暫時無法連線：{type(e).__name__}: {e}')
+        last=None
+        for attempt in range(3):
+            try:
+                return _PgCompat(DATABASE_URL)
+            except Exception as e:
+                last=e
+                if attempt < 2:
+                    import time
+                    time.sleep(2)
+        raise RuntimeError(f'PostgreSQL 暫時無法連線：{type(last).__name__}: {last}')
     # Local development fallback only.
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     con=sqlite3.connect(DB, timeout=30); con.row_factory=sqlite3.Row
