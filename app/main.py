@@ -3,6 +3,12 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, Fil
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import sqlite3, os, secrets, hashlib, hmac, base64, io, json, asyncio, csv, smtplib, ssl
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except Exception:
+    psycopg=None
+
 from email.message import EmailMessage
 from datetime import datetime, timedelta, date, timezone
 from zoneinfo import ZoneInfo
@@ -18,6 +24,8 @@ from reportlab.lib.utils import ImageReader
 BASE = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
 DB = DATA_DIR / 'app.db'
+DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
+USE_POSTGRES = bool(DATABASE_URL)
 APP_ENV = os.getenv('APP_ENV','development').lower()
 APP_BASE_URL = os.getenv('APP_BASE_URL','https://lib.moving-match.com').rstrip('/')
 DEMO_RESET_LINKS = os.getenv('DEMO_RESET_LINKS','false').lower() == 'true'
@@ -26,6 +34,10 @@ DEMO_ACTIVE_BRANCHES = int(os.getenv('DEMO_ACTIVE_BRANCHES','3'))
 ADMIN_USERNAME = os.getenv('ADMIN_USERNAME','moving')
 SECRETARY_USERNAME = os.getenv('SECRETARY_USERNAME','lib')
 RESET_EMAIL = os.getenv('RESET_EMAIL','lib@moving-match.com')
+
+# V18.3 PostgreSQL Edition official roster
+OFFICIAL_ROSTER = {1: [('K14', '李科永'), ('K13S', '士林替'), ('KOB2', '社子島'), ('L32', '關渡宮'), ('L12', '稻香'), ('L23', '秀山'), ('L11', '北投'), ('L14', '清江'), ('L15', '吉利'), ('L21', '永明'), ('L13', '石牌'), ('K12', '天母'), ('K11', '葫蘆堵'), ('F12', '大同'), ('KOB', '百齡智慧'), ('A13', '三民')], 2: [('AFB2', '小巨蛋'), ('DFB', '行天宮'), ('COB', '東區地下街智慧圖書館'), ('A14', '中崙'), ('E12', '城中'), ('C23', '龍安'), ('E11', '王貫英'), ('EOB2', '古亭智慧'), ('E31', '南機場'), ('GOB', '太陽圖書'), ('EFB2', '小南門'), ('F11', '延平'), ('F13', '建成'), ('D12', '長安'), ('F21', '蘭州'), ('AOB', '松山機場')], 3: [('C01', '總館'), ('C01M', '視聽室'), ('B11', '永春'), ('BFB', '臺北市政府'), ('B13', '六合'), ('B12', '三興'), ('EFB', '臺北車站'), ('D11', '中山'), ('D21', '恆安'), ('A12', '民生'), ('A15', '啟明'), ('A11', '松山替'), ('AFB', '松山車站')], 4: [('B14', '廣慈'), ('I21', '龍華'), ('I31', '北原'), ('I11', '南港'), ('IFB', '南港車站'), ('I22', '親子美育'), ('I12', '舊莊'), ('J12', '東湖'), ('J11', '內湖'), ('J13', '西湖'), ('J14', '西中'), ('D13', '大直')], 5: [('H23', '萬芳'), ('H14', '萬興'), ('H12', '木柵'), ('H22', '安康'), ('H16', '力行'), ('H15', '文山'), ('H17', '景新'), ('H11', '景美'), ('C11', '道藩'), ('C22', '成功'), ('CFB', '信義安和'), ('C21', '延吉')], 6: [('G14', '萬華'), ('G13', '西園'), ('G11', '龍山'), ('G21', '柳鄉'), ('G12', '東園')]}
+OFFICIAL_BRANCH_CODES = {c for stops in OFFICIAL_ROSTER.values() for c,_ in stops}
 
 def initial_secret(name, development_default):
     value=os.getenv(name)
@@ -66,9 +78,78 @@ def report_time(v):
         return str(v)
 
 def today(): return date.today().isoformat()
+class _PgCursor:
+    def __init__(self, cur):
+        self.cur=cur
+        self._lastrowid=None
+    def fetchone(self):
+        r=self.cur.fetchone()
+        if r and isinstance(r,dict) and len(r)==1 and 'id' in r:
+            self._lastrowid=r['id']
+        return r
+    def fetchall(self): return self.cur.fetchall()
+    @property
+    def rowcount(self): return self.cur.rowcount
+    @property
+    def lastrowid(self):
+        if self._lastrowid is None:
+            r=self.cur.fetchone()
+            if r:
+                self._lastrowid=(r.get('id') if isinstance(r,dict) else r[0])
+        return self._lastrowid
+    def __iter__(self): return iter(self.cur)
+
+class _PgCompat:
+    def __init__(self, url):
+        self.con=psycopg.connect(url, row_factory=dict_row)
+    def _q(self, sql):
+        # Application SQL uses sqlite qmark parameters; psycopg uses %s.
+        return sql.replace('?', '%s')
+    def execute(self, sql, params=()):
+        st=sql.strip()
+        if st.upper().startswith('PRAGMA '):
+            class Empty:
+                rowcount=0
+                lastrowid=None
+                def fetchone(self): return None
+                def fetchall(self): return []
+                def __iter__(self): return iter([])
+            return Empty()
+        if st.upper()=='BEGIN IMMEDIATE':
+            st='BEGIN'
+        cur=self.con.cursor()
+        # Auto-return generated identity id where application asks for lastrowid.
+        m=re.match(r'\s*INSERT\s+INTO\s+([A-Za-z_][A-Za-z0-9_]*)',st,re.I)
+        identity_tables={'users','password_resets','drivers','driver_devices','driver_activation_tokens',
+          'branches','daily_routes','deliveries','corrections','audit_logs','daily_reports',
+          'email_recipients','email_logs','delivery_exceptions','global_closures','route_handoffs',
+          'delivery_driver_assignments','route_segment_signatures','routes'}
+        if m and m.group(1).lower() in identity_tables and ' RETURNING ' not in st.upper():
+            st=st.rstrip().rstrip(';')+' RETURNING id'
+        cur.execute(self._q(st), params)
+        return _PgCursor(cur)
+    def executescript(self, script):
+        # Convert the SQLite bootstrap DDL to PostgreSQL identity columns.
+        script=re.sub(r'\bid INTEGER PRIMARY KEY\b',
+                      'id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY',
+                      script)
+        for stmt in script.split(';'):
+            if stmt.strip():
+                self.execute(stmt)
+    def commit(self): self.con.commit()
+    def rollback(self): self.con.rollback()
+    def close(self): self.con.close()
+
 def db():
+    if USE_POSTGRES:
+        if psycopg is None:
+            raise RuntimeError('DATABASE_URL 已設定，但尚未安裝 psycopg')
+        return _PgCompat(DATABASE_URL)
+    # Local development fallback only.
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    con=sqlite3.connect(DB, timeout=30); con.row_factory=sqlite3.Row; con.execute('PRAGMA foreign_keys=ON'); con.execute('PRAGMA journal_mode=WAL'); return con
+    con=sqlite3.connect(DB, timeout=30); con.row_factory=sqlite3.Row
+    con.execute('PRAGMA foreign_keys=ON'); con.execute('PRAGMA journal_mode=WAL')
+    return con
 
 def public_base_url(req: Request):
     if APP_BASE_URL:
@@ -183,7 +264,7 @@ def init_db():
         branch_pin=initial_secret('DEMO_BRANCH_PIN','1234')
         c.execute('INSERT INTO users(username,password_hash,role,email) VALUES(?,?,?,?)',(ADMIN_USERNAME,hash_secret(admin_password),'ADMIN',RESET_EMAIL))
         c.execute('INSERT INTO users(username,password_hash,role,email) VALUES(?,?,?,?)',(SECRETARY_USERNAME,hash_secret(secretary_password),'SECRETARY',RESET_EMAIL))
-        for i,code in enumerate('ABCDEF',1): c.execute('INSERT INTO routes(id,code,name) VALUES(?,?,?)',(i,code,f'{code}線'))
+        for i in range(1,7): c.execute('INSERT INTO routes(id,code,name) VALUES(?,?,?)',(i,str(i),f'路線{i}'))
         for n in ['王先生','李先生','陳先生','林先生','張先生']: c.execute('INSERT INTO drivers(name) VALUES(?)',(n,))
         names=['松山分館','民生分館','中山分館','北投分館','石牌分館','大安分館','士林分館','萬華分館','信義分館','內湖分館','南港分館','文山分館']
         for i in range(1,81):
@@ -196,20 +277,30 @@ def init_db():
         c.commit()
     migrate_corrections_for_repeat_requests(c)
     migrate_route_secretary_signatures(c)
+    migrate_official_routes_and_branches(c)
+    if USE_POSTGRES:
+        # Explicit seed IDs 1..6 must advance identity sequences before later inserts.
+        for tbl in ('routes','users','drivers','branches'):
+            c.execute("SELECT setval(pg_get_serial_sequence(?, 'id'), COALESCE((SELECT MAX(id) FROM "+tbl+"),1), true)",(tbl,))
+        c.commit()
     apply_demo_branch_limit(c)
     ensure_today(c)
     reset_test_day_once(c)
     c.close()
 
 def migrate_route_secretary_signatures(c):
-    cols={r['name'] for r in c.execute("PRAGMA table_info(daily_routes)").fetchall()}
-    if 'secretary_signature' not in cols:
-        c.execute('ALTER TABLE daily_routes ADD COLUMN secretary_signature TEXT')
-    if 'secretary_signed_at' not in cols:
-        c.execute('ALTER TABLE daily_routes ADD COLUMN secretary_signed_at TEXT')
+    if USE_POSTGRES:
+        c.execute('ALTER TABLE daily_routes ADD COLUMN IF NOT EXISTS secretary_signature TEXT')
+        c.execute('ALTER TABLE daily_routes ADD COLUMN IF NOT EXISTS secretary_signed_at TEXT')
+    else:
+        cols={r['name'] for r in c.execute("PRAGMA table_info(daily_routes)").fetchall()}
+        if 'secretary_signature' not in cols: c.execute('ALTER TABLE daily_routes ADD COLUMN secretary_signature TEXT')
+        if 'secretary_signed_at' not in cols: c.execute('ALTER TABLE daily_routes ADD COLUMN secretary_signed_at TEXT')
     c.commit()
 
 def migrate_corrections_for_repeat_requests(c):
+    if USE_POSTGRES:
+        return
     row=c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='corrections'").fetchone()
     sql=(row['sql'] or '') if row else ''
     if 'delivery_id INTEGER UNIQUE' in sql or 'UNIQUE' in sql.upper():
@@ -219,7 +310,32 @@ def migrate_corrections_for_repeat_requests(c):
         c.execute('DROP TABLE corrections_old')
         c.commit()
 
+def migrate_official_routes_and_branches(c):
+    branch_pin=os.getenv('DEMO_BRANCH_PIN') or ('1234' if APP_ENV!='production' else None)
+    for rid in range(1,7):
+        row=c.execute('SELECT id FROM routes WHERE id=?',(rid,)).fetchone()
+        if row: c.execute('UPDATE routes SET code=?,name=?,active=1 WHERE id=?',(str(rid),f'路線{rid}',rid))
+        else: c.execute('INSERT INTO routes(id,code,name,active) VALUES(?,?,?,1)',(rid,str(rid),f'路線{rid}'))
+    for rid,stops in OFFICIAL_ROSTER.items():
+        for order,(code,name) in enumerate(stops,1):
+            row=c.execute('SELECT id FROM branches WHERE code=?',(code,)).fetchone()
+            if row:
+                c.execute('UPDATE branches SET name=?,route_id=?,stop_order=?,active=1 WHERE id=?',(name,rid,order,row['id']))
+            else:
+                if not branch_pin: raise RuntimeError('Missing required production environment variable: DEMO_BRANCH_PIN')
+                raw=secrets.token_urlsafe(24)
+                cur=c.execute('INSERT INTO branches(code,name,route_id,stop_order,active,pin_hash,access_token_hash,qr_created_at) VALUES(?,?,?,?,1,?,?,?)',
+                              (code,name,rid,order,hash_secret(branch_pin),thash(raw),now()))
+                bid=cur.lastrowid
+                c.execute('INSERT INTO audit_logs(actor_type,role,action,entity_type,entity_id,after_json,created_at) VALUES(?,?,?,?,?,?,?)',
+                          ('SYSTEM','SYSTEM','SEED_OFFICIAL_BRANCH_TOKEN','BRANCH',str(bid),json.dumps({'token':raw},ensure_ascii=False),now()))
+    # Old B001-B080 demo branches are disabled, never deleted.
+    c.execute("UPDATE branches SET active=0 WHERE code LIKE 'B___' AND length(code)=4")
+    c.execute("INSERT INTO app_settings(key,value) VALUES('OFFICIAL_ROSTER_V183_PG',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(now(),))
+    c.commit()
+
 def apply_demo_branch_limit(c):
+    if c.execute("SELECT 1 FROM app_settings WHERE key='OFFICIAL_ROSTER_V183_PG'").fetchone(): return
     # Apply the 3-branch demo preset once only. After that, admin enable/disable choices are respected.
     key='DEMO_BRANCH_LIMIT_INITIALIZED_V5'
     if c.execute('SELECT 1 FROM app_settings WHERE key=?',(key,)).fetchone():
@@ -270,8 +386,9 @@ def rebuild_service_date(c, service_date):
         dr=c.execute('SELECT * FROM daily_routes WHERE service_date=? AND route_id=?',(service_date,r['id'])).fetchone()
         if not dr:
             driver=((r['id']-1)%5)+1
-            c.execute('INSERT INTO daily_routes(service_date,route_id,driver_id) VALUES(?,?,?)',(service_date,r['id'],driver))
-            dr=c.execute('SELECT * FROM daily_routes WHERE id=last_insert_rowid()').fetchone()
+            cur=c.execute('INSERT INTO daily_routes(service_date,route_id,driver_id) VALUES(?,?,?)',(service_date,r['id'],driver))
+            new_id=cur.lastrowid
+            dr=c.execute('SELECT * FROM daily_routes WHERE id=?',(new_id,)).fetchone()
         route_map[r['id']]=dr['id']
     for b in c.execute('SELECT * FROM branches ORDER BY id').fetchall():
         expected=branch_expected_on(c,b,service_date)
@@ -766,7 +883,7 @@ def list_routes(req:Request):
     require_user(req,['ADMIN','SECRETARY']); c=db(); rows=[dict(x) for x in c.execute('SELECT * FROM routes ORDER BY code').fetchall()]; c.close(); return rows
 @app.post('/api/routes')
 async def create_route(req:Request):
-    u=require_user(req,['ADMIN']); p=await req.json(); c=db(); c.execute('INSERT INTO routes(code,name,active) VALUES(?,?,1)',((p.get('code') or '').strip(),(p.get('name') or '').strip())); rid=c.execute('SELECT last_insert_rowid()').fetchone()[0]; audit(c,'USER',u['id'],u['role'],'CREATE_ROUTE','ROUTE',rid); c.commit(); c.close(); return {'ok':True}
+    u=require_user(req,['ADMIN']); p=await req.json(); c=db(); cur=c.execute('INSERT INTO routes(code,name,active) VALUES(?,?,1)',((p.get('code') or '').strip(),(p.get('name') or '').strip())); rid=cur.lastrowid; audit(c,'USER',u['id'],u['role'],'CREATE_ROUTE','ROUTE',rid); c.commit(); c.close(); return {'ok':True}
 @app.patch('/api/routes/{rid}')
 async def update_route(req:Request,rid:int):
     u=require_user(req,['ADMIN']); p=await req.json(); c=db(); vals={k:p[k] for k in ['code','name','active'] if k in p}
@@ -777,7 +894,7 @@ async def update_route(req:Request,rid:int):
 async def create_driver(req:Request):
     u=require_user(req,['ADMIN']); p=await req.json(); name=(p.get('name') or '').strip()
     if not name: raise HTTPException(400,'司機姓名必填')
-    c=db(); c.execute('INSERT INTO drivers(name,active) VALUES(?,1)',(name,)); did=c.execute('SELECT last_insert_rowid()').fetchone()[0]; audit(c,'USER',u['id'],u['role'],'CREATE_DRIVER','DRIVER',did); c.commit(); c.close(); return {'ok':True,'id':did}
+    c=db(); cur=c.execute('INSERT INTO drivers(name,active) VALUES(?,1)',(name,)); did=cur.lastrowid; audit(c,'USER',u['id'],u['role'],'CREATE_DRIVER','DRIVER',did); c.commit(); c.close(); return {'ok':True,'id':did}
 @app.patch('/api/drivers/{did}')
 async def update_driver(req:Request,did:int):
     u=require_user(req,['ADMIN']); p=await req.json(); c=db(); vals={k:p[k] for k in ['name','active'] if k in p}
@@ -963,7 +1080,7 @@ async def add_recipient(req:Request):
     u=require_user(req,['ADMIN']); p=await req.json(); email=(p.get('email') or '').strip(); typ=(p.get('recipient_type') or 'TO').upper()
     if '@' not in email: raise HTTPException(400,'Email格式錯誤')
     if typ not in ('TO','CC'): raise HTTPException(400,'收件類型錯誤')
-    c=db(); c.execute('INSERT INTO email_recipients(email,recipient_type,active,created_at) VALUES(?,?,1,?)',(email,typ,now())); rid=c.execute('SELECT last_insert_rowid()').fetchone()[0]; audit(c,'USER',u['id'],u['role'],'ADD_EMAIL_RECIPIENT','EMAIL_RECIPIENT',rid); c.commit(); c.close(); return {'ok':True}
+    c=db(); cur=c.execute('INSERT INTO email_recipients(email,recipient_type,active,created_at) VALUES(?,?,1,?)',(email,typ,now())); rid=cur.lastrowid; audit(c,'USER',u['id'],u['role'],'ADD_EMAIL_RECIPIENT','EMAIL_RECIPIENT',rid); c.commit(); c.close(); return {'ok':True}
 @app.post('/api/email/recipients/{rid}/toggle')
 async def toggle_recipient(req:Request,rid:int):
     u=require_user(req,['ADMIN']); c=db(); c.execute('UPDATE email_recipients SET active=CASE active WHEN 1 THEN 0 ELSE 1 END WHERE id=?',(rid,)); audit(c,'USER',u['id'],u['role'],'TOGGLE_EMAIL_RECIPIENT','EMAIL_RECIPIENT',rid); c.commit(); c.close(); return {'ok':True}
@@ -1030,7 +1147,7 @@ async def route_handoff(rid:int,req:Request):
     c=db(); dr=c.execute('SELECT * FROM daily_routes WHERE id=?',(rid,)).fetchone(); start=c.execute('SELECT x.*,b.stop_order FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.id=? AND x.daily_route_id=?',(start_id,rid)).fetchone()
     if not dr or not start: c.close(); raise HTTPException(404,'找不到路線或起始分館')
     if start['status']=='STOP_COMPLETED': c.close(); raise HTTPException(409,'只能從尚未完成的分館開始交接')
-    htime=now(); c.execute('INSERT INTO route_handoffs(service_date,daily_route_id,from_driver_id,to_driver_id,start_delivery_id,reason,note,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)',(dr['service_date'],rid,dr['driver_id'],to_driver,start_id,reason,note,u['id'],htime)); hid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+    htime=now(); cur=c.execute('INSERT INTO route_handoffs(service_date,daily_route_id,from_driver_id,to_driver_id,start_delivery_id,reason,note,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)',(dr['service_date'],rid,dr['driver_id'],to_driver,start_id,reason,note,u['id'],htime)); hid=cur.lastrowid
     targets=c.execute("SELECT x.id FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.daily_route_id=? AND b.stop_order>=? AND x.status!='STOP_COMPLETED' ORDER BY b.stop_order",(rid,start['stop_order'])).fetchall()
     for x in targets: c.execute('INSERT INTO delivery_driver_assignments(delivery_id,driver_id,assigned_at,handoff_id) VALUES(?,?,?,?) ON CONFLICT(delivery_id) DO UPDATE SET driver_id=excluded.driver_id,assigned_at=excluded.assigned_at,handoff_id=excluded.handoff_id',(x['id'],to_driver,htime,hid))
     audit(c,'USER',u['id'],u['role'],'DRIVER_HANDOFF','DAILY_ROUTE',rid,after={'from_driver_id':dr['driver_id'],'to_driver_id':to_driver,'start_delivery_id':start_id,'count':len(targets),'reason':reason,'note':note});c.commit();c.close();await publish({'type':'route.handoff','id':rid});return {'ok':True,'reassigned':len(targets)}
