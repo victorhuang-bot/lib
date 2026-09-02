@@ -2,12 +2,18 @@ from fastapi import FastAPI, Request, Response, HTTPException, Form
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
-import sqlite3, os, secrets, hashlib, hmac, base64, io, json, asyncio, csv
+import sqlite3, os, secrets, hashlib, hmac, base64, io, json, asyncio, csv, smtplib, ssl
+from email.message import EmailMessage
 from datetime import datetime, timedelta, date, timezone
 from zoneinfo import ZoneInfo
 import qrcode
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as XLImage
+from reportlab.pdfgen import canvas
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.lib.utils import ImageReader
 
 BASE = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
@@ -19,6 +25,7 @@ DEMO_ACTIVE_BRANCHES = int(os.getenv('DEMO_ACTIVE_BRANCHES','3'))
 
 ADMIN_USERNAME = os.getenv('ADMIN_USERNAME','moving')
 SECRETARY_USERNAME = os.getenv('SECRETARY_USERNAME','lib')
+RESET_EMAIL = os.getenv('RESET_EMAIL','lib@moving-match.com')
 
 def initial_secret(name, development_default):
     value=os.getenv(name)
@@ -82,19 +89,65 @@ def verify_secret(s, stored):
         got=hashlib.pbkdf2_hmac('sha256', s.encode(), salt, 120000)
         return hmac.compare_digest(exp,got)
     except: return False
-
-def verify_legacy_v18_secret(s, stored):
-    """Compatibility with V18 system_accounts password hashes."""
-    try:
-        if not stored or not str(stored).startswith('pbkdf2_sha256$'):
-            return False
-        _, rounds, salt_hex, digest_hex = str(stored).split('$', 3)
-        got = hashlib.pbkdf2_hmac('sha256', s.encode('utf-8'), bytes.fromhex(salt_hex), int(rounds))
-        return hmac.compare_digest(got.hex(), digest_hex)
-    except Exception:
-        return False
 def thash(s): return hashlib.sha256(s.encode()).hexdigest()
 
+def smtp_config():
+    # V18.2: non-secret Google Workspace defaults are safe fallbacks.
+    # Render only needs to hold SMTP_PASSWORD as a secret; every value can still be overridden.
+    raw_port=(os.getenv('SMTP_PORT') or '587').strip() or '587'
+    try: port=int(raw_port)
+    except ValueError: port=587
+    user=(os.getenv('SMTP_USER') or 'victor.huang@moving-match.com').strip()
+    sender=(os.getenv('SMTP_FROM') or 'lib@moving-match.com').strip()
+    return {
+        'host': (os.getenv('SMTP_HOST') or 'smtp.gmail.com').strip(),
+        'port': port,
+        'user': user,
+        'password': os.getenv('SMTP_PASSWORD','').strip(),
+        'from': sender or user,
+        'tls': (os.getenv('SMTP_TLS') or 'true').lower() not in ('0','false','no'),
+    }
+
+def smtp_diagnostics():
+    cfg=smtp_config()
+    # Port/TLS and the non-secret Workspace values have application defaults.
+    # Only fields required by the effective runtime config are reported missing.
+    checks={
+        'SMTP_HOST': bool(cfg['host']),
+        'SMTP_PORT': bool(cfg['port']),
+        'SMTP_USER': bool(cfg['user']),
+        'SMTP_PASSWORD': bool(cfg['password']),
+        'SMTP_FROM': bool(cfg['from']),
+        'SMTP_TLS': isinstance(cfg['tls'], bool),
+    }
+    source={
+        'SMTP_HOST': 'Render' if os.getenv('SMTP_HOST') else '系統預設',
+        'SMTP_PORT': 'Render' if os.getenv('SMTP_PORT') else '系統預設',
+        'SMTP_USER': 'Render' if os.getenv('SMTP_USER') else '系統預設',
+        'SMTP_PASSWORD': 'Render' if os.getenv('SMTP_PASSWORD') else '未設定',
+        'SMTP_FROM': 'Render' if os.getenv('SMTP_FROM') else '系統預設',
+        'SMTP_TLS': 'Render' if os.getenv('SMTP_TLS') else '系統預設',
+    }
+    return {'checks':checks,'source':source,'missing':[k for k,v in checks.items() if not v]}
+
+def smtp_send(subject, body, to_list, cc_list=None, attachments=None):
+    cfg=smtp_config(); cc_list=cc_list or []; attachments=attachments or []
+    if not cfg['host'] or not cfg['from'] or not cfg['password']:
+        raise RuntimeError('SMTP 尚未完整設定：'+', '.join(smtp_diagnostics()['missing']))
+    msg=EmailMessage(); msg['Subject']=subject; msg['From']=cfg['from']; msg['To']=', '.join(to_list)
+    if cc_list: msg['Cc']=', '.join(cc_list)
+    msg.set_content(body)
+    for filename,data,mime in attachments:
+        maintype,subtype=mime.split('/',1); msg.add_attachment(data,maintype=maintype,subtype=subtype,filename=filename)
+    if cfg['port']==465:
+        with smtplib.SMTP_SSL(cfg['host'],cfg['port'],context=ssl.create_default_context(),timeout=30) as x:
+            if cfg['user']: x.login(cfg['user'],cfg['password'])
+            x.send_message(msg)
+    else:
+        with smtplib.SMTP(cfg['host'],cfg['port'],timeout=30) as x:
+            if cfg['tls']: x.starttls(context=ssl.create_default_context())
+            if cfg['user']: x.login(cfg['user'],cfg['password'])
+            x.send_message(msg)
 
 def init_db():
     DB.parent.mkdir(parents=True, exist_ok=True)
@@ -124,76 +177,29 @@ def init_db():
     CREATE TABLE IF NOT EXISTS delivery_driver_assignments(id INTEGER PRIMARY KEY, delivery_id INTEGER UNIQUE, driver_id INTEGER, assigned_at TEXT, handoff_id INTEGER);
     CREATE TABLE IF NOT EXISTS route_segment_signatures(id INTEGER PRIMARY KEY, service_date TEXT, daily_route_id INTEGER, driver_id INTEGER, signature TEXT, signed_at TEXT, UNIQUE(service_date,daily_route_id,driver_id));
     ''')
-    # V19.1: ensure ADMIN and SECRETARY independently.  A partially migrated DB
-    # must not prevent either login account from being created.
-    admin_password=initial_secret('ADMIN_INITIAL_PASSWORD','85017306')
-    secretary_password=initial_secret('SECRETARY_INITIAL_PASSWORD','03751080')
-    if not c.execute('SELECT 1 FROM users WHERE username=?',(ADMIN_USERNAME,)).fetchone():
-        c.execute('INSERT INTO users(username,password_hash,role,email,is_active) VALUES(?,?,?,?,1)',(ADMIN_USERNAME,hash_secret(admin_password),'ADMIN',''))
-    if not c.execute('SELECT 1 FROM users WHERE username=?',(SECRETARY_USERNAME,)).fetchone():
-        c.execute('INSERT INTO users(username,password_hash,role,email,is_active) VALUES(?,?,?,?,1)',(SECRETARY_USERNAME,hash_secret(secretary_password),'SECRETARY',''))
-
-    # Seed demo master data only when routes/branches are genuinely empty.
-    if not c.execute('SELECT 1 FROM routes').fetchone():
-        for i in range(1,7): c.execute('INSERT INTO routes(id,code,name) VALUES(?,?,?)',(i,str(i),f'路線{i}'))
-    if not c.execute('SELECT 1 FROM drivers').fetchone():
-        for n in ['王先生','李先生','陳先生','林先生','張先生']: c.execute('INSERT INTO drivers(name) VALUES(?)',(n,))
-    if not c.execute('SELECT 1 FROM branches').fetchone():
+    if not c.execute('SELECT 1 FROM users').fetchone():
+        admin_password=initial_secret('ADMIN_INITIAL_PASSWORD','85017306')
+        secretary_password=initial_secret('SECRETARY_INITIAL_PASSWORD','03751080')
         branch_pin=initial_secret('DEMO_BRANCH_PIN','1234')
+        c.execute('INSERT INTO users(username,password_hash,role,email) VALUES(?,?,?,?)',(ADMIN_USERNAME,hash_secret(admin_password),'ADMIN',RESET_EMAIL))
+        c.execute('INSERT INTO users(username,password_hash,role,email) VALUES(?,?,?,?)',(SECRETARY_USERNAME,hash_secret(secretary_password),'SECRETARY',RESET_EMAIL))
+        for i,code in enumerate('ABCDEF',1): c.execute('INSERT INTO routes(id,code,name) VALUES(?,?,?)',(i,code,f'{code}線'))
+        for n in ['王先生','李先生','陳先生','林先生','張先生']: c.execute('INSERT INTO drivers(name) VALUES(?)',(n,))
         names=['松山分館','民生分館','中山分館','北投分館','石牌分館','大安分館','士林分館','萬華分館','信義分館','內湖分館','南港分館','文山分館']
         for i in range(1,81):
             name=names[i-1] if i<=len(names) else f'示範分館{i:02d}'
             route=((i-1)%6)+1; order=((i-1)//6)+1; tok=secrets.token_urlsafe(24)
             active=1 if i<=DEMO_ACTIVE_BRANCHES else 0
             c.execute('INSERT INTO branches(code,name,route_id,stop_order,active,pin_hash,access_token_hash,qr_created_at) VALUES(?,?,?,?,?,?,?,?)',(f'B{i:03d}',name,route,order,active,hash_secret(branch_pin),thash(tok),now()))
+            # raw bootstrap token only for demo retrieval is derived by rotation endpoint; initial QR regenerated below through helper table impossible, so store demo token in audit
             c.execute('INSERT INTO audit_logs(actor_type,role,action,entity_type,entity_id,after_json,created_at) VALUES(?,?,?,?,?,?,?)',('SYSTEM','SYSTEM','SEED_BRANCH_TOKEN','BRANCH',str(i),json.dumps({'token':tok}),now()))
-    c.commit()
+        c.commit()
     migrate_corrections_for_repeat_requests(c)
     migrate_route_secretary_signatures(c)
     apply_demo_branch_limit(c)
-    migrate_v19_routes_and_branches(c)
     ensure_today(c)
     reset_test_day_once(c)
     c.close()
-
-
-def migrate_v19_routes_and_branches(c):
-    """One-time V19 migration: route codes 1-6 and the current branch roster supplied by operations."""
-    key='V19_ROUTE_BRANCH_ROSTER_20260902'
-    if c.execute('SELECT 1 FROM app_settings WHERE key=?',(key,)).fetchone():
-        return
-    roster = [('1', 'K14', '李科永'), ('1', 'K13S', '士林替'), ('1', 'KOB2', '社子島'), ('1', 'L32', '關渡宮'), ('1', 'L12', '稻香'), ('1', 'L23', '秀山'), ('1', 'L11', '北投'), ('1', 'L14', '清江'), ('1', 'L15', '吉利'), ('1', 'L21', '永明'), ('1', 'L13', '石牌'), ('1', 'K12', '天母'), ('1', 'K11', '葫蘆堵'), ('1', 'F12', '大同'), ('1', 'KOB', '百齡智慧'), ('1', 'A13', '三民'), ('2', 'AFB2', '小巨蛋'), ('2', 'DFB', '行天宮'), ('2', 'COB', '東區地下街智慧圖書館'), ('2', 'A14', '中崙'), ('2', 'E12', '城中'), ('2', 'C23', '龍安'), ('2', 'E11', '王貫英'), ('2', 'EOB2', '古亭智慧'), ('2', 'E31', '南機場'), ('2', 'GOB', '太陽圖書'), ('2', 'EFB2', '小南門'), ('2', 'F11', '延平'), ('2', 'F13', '建成'), ('2', 'D12', '長安'), ('2', 'F21', '蘭州'), ('2', 'AOB', '松山機場'), ('3', 'C01', '總館'), ('3', 'C01M', '視聽室'), ('3', 'B11', '永春'), ('3', 'BFB', '臺北市政府'), ('3', 'B13', '六合'), ('3', 'B12', '三興'), ('3', 'EFB', '臺北車站'), ('3', 'D11', '中山'), ('3', 'D21', '恆安'), ('3', 'A12', '民生'), ('3', 'A15', '啟明'), ('3', 'A11', '松山替'), ('3', 'AFB', '松山車站'), ('4', 'B14', '廣慈'), ('4', 'I21', '龍華'), ('4', 'I31', '北原'), ('4', 'I11', '南港'), ('4', 'IFB', '南港車站'), ('4', 'I22', '親子美育'), ('4', 'I12', '舊莊'), ('4', 'J12', '東湖'), ('4', 'J11', '內湖'), ('4', 'J13', '西湖'), ('4', 'J14', '西中'), ('4', 'D13', '大直'), ('5', 'H23', '萬芳'), ('5', 'H14', '萬興'), ('5', 'H12', '木柵'), ('5', 'H22', '安康'), ('5', 'H16', '力行'), ('5', 'H15', '文山'), ('5', 'H17', '景新'), ('5', 'H11', '景美'), ('5', 'C11', '道藩'), ('5', 'C22', '成功'), ('5', 'CFB', '信義安和'), ('5', 'C21', '延吉'), ('6', 'G14', '萬華'), ('6', 'G13', '西園'), ('6', 'G11', '龍山'), ('6', 'G21', '柳鄉'), ('6', 'G12', '東園')]
-    # Normalize the six canonical routes while preserving route IDs/history.
-    for rid in range(1,7):
-        c.execute('UPDATE routes SET code=?,name=?,active=1 WHERE id=?',(f'__V19_ROUTE_{rid}__',f'路線{rid}',rid))
-    for rid in range(1,7):
-        c.execute('UPDATE routes SET code=?,name=?,active=1 WHERE id=?',(str(rid),f'路線{rid}',rid))
-    # Ensure at least one row exists for every roster entry. Reuse the first 74 existing branch rows
-    # so historical foreign keys remain intact; use temporary codes to avoid UNIQUE collisions.
-    existing=[r['id'] for r in c.execute('SELECT id FROM branches ORDER BY id').fetchall()]
-    branch_pin=initial_secret('DEMO_BRANCH_PIN','1234')
-    while len(existing) < len(roster):
-        tok=secrets.token_urlsafe(24)
-        c.execute('INSERT INTO branches(code,name,route_id,stop_order,active,pin_hash,access_token_hash,qr_created_at) VALUES(?,?,?,?,1,?,?,?)',
-                  (f'__V19_NEW_{len(existing)+1}__','待設定',1,999,hash_secret(branch_pin),thash(tok),now()))
-        bid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
-        existing.append(bid)
-        audit(c,'SYSTEM',None,'SYSTEM','SEED_BRANCH_TOKEN','BRANCH',bid,after={'token':tok})
-    target_ids=existing[:len(roster)]
-    for i,bid in enumerate(target_ids,1):
-        c.execute('UPDATE branches SET code=? WHERE id=?',(f'__V19_BRANCH_{i}__',bid))
-    route_ids={r['code']:r['id'] for r in c.execute("SELECT id,code FROM routes WHERE code IN ('1','2','3','4','5','6')").fetchall()}
-    orders={str(i):0 for i in range(1,7)}
-    for bid,(rcode,bcode,bname) in zip(target_ids,roster):
-        orders[rcode]+=1
-        c.execute('UPDATE branches SET code=?,name=?,route_id=?,stop_order=?,active=1 WHERE id=?',
-                  (bcode,bname,route_ids[rcode],orders[rcode],bid))
-    # Extra old demo rows are kept for history but removed from current operations.
-    if len(existing)>len(roster):
-        q=','.join('?'*len(existing[len(roster):]))
-        c.execute(f'UPDATE branches SET active=0 WHERE id IN ({q})',existing[len(roster):])
-    c.execute('INSERT INTO app_settings(key,value) VALUES(?,?)',(key,now()))
-    c.commit()
 
 def migrate_route_secretary_signatures(c):
     cols={r['name'] for r in c.execute("PRAGMA table_info(daily_routes)").fetchall()}
@@ -323,46 +329,10 @@ def reset_page(): return (STATIC/'reset.html').read_text(encoding='utf-8')
 
 @app.post('/api/auth/login')
 async def login(req:Request):
-    p=await req.json(); username=(p.get('username') or '').strip(); password=p.get('password','')
-    c=db(); u=c.execute('SELECT * FROM users WHERE username=? AND is_active=1',(username,)).fetchone()
-    ok = bool(u and verify_secret(password,u['password_hash']))
-
-    # V19.1 compatibility: V18 stored changed ADMIN/SECRETARY passwords in
-    # system_accounts using a different PBKDF2 serialization. If such a row exists,
-    # verify it once and migrate the successful password into the canonical users table.
-    if u and not ok:
-        try:
-            has_legacy = c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='system_accounts'").fetchone()
-            if has_legacy:
-                legacy = c.execute('SELECT password_hash FROM system_accounts WHERE username=?',(username,)).fetchone()
-                if legacy and verify_legacy_v18_secret(password, legacy['password_hash']):
-                    c.execute('UPDATE users SET password_hash=?, failed_count=0, locked_until=NULL WHERE id=?',(hash_secret(password),u['id']))
-                    audit(c,'SYSTEM','V19.1','SYSTEM','MIGRATE_LOGIN_PASSWORD','USER',u['id'])
-                    c.commit(); ok=True
-        except Exception:
-            pass
-
-    if not u or not ok:
-        c.close(); raise HTTPException(401,'帳號或密碼錯誤')
+    p=await req.json(); c=db(); u=c.execute('SELECT * FROM users WHERE username=? AND is_active=1',(p.get('username',''),)).fetchone()
+    if not u or not verify_secret(p.get('password',''),u['password_hash']): c.close(); raise HTTPException(401,'帳號或密碼錯誤')
     tok=secrets.token_urlsafe(32); c.execute('INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)',(thash(tok),u['id'],future_iso(hours=12))); audit(c,'USER',u['id'],u['role'],'LOGIN','USER',u['id']); c.commit(); c.close()
     r=JSONResponse({'ok':True,'role':u['role'],'token':tok}); r.set_cookie('session',tok,httponly=True,samesite='lax',secure=(APP_ENV=='production'),max_age=43200); return r
-@app.post('/api/auth/admin-recovery')
-async def admin_recovery(req:Request):
-    """Emergency recovery, disabled by default. Set ADMIN_LOGIN_RECOVERY=true temporarily in Render."""
-    if os.getenv('ADMIN_LOGIN_RECOVERY','false').lower() != 'true':
-        raise HTTPException(404,'Not found')
-    p=await req.json(); supplied=p.get('password','')
-    env_password=initial_secret('ADMIN_INITIAL_PASSWORD','85017306')
-    if not hmac.compare_digest(supplied,env_password):
-        raise HTTPException(401,'管理者修復密碼錯誤')
-    c=db(); u=c.execute('SELECT * FROM users WHERE username=?',(ADMIN_USERNAME,)).fetchone()
-    if not u:
-        c.execute('INSERT INTO users(username,password_hash,role,email,is_active) VALUES(?,?,?,?,1)',(ADMIN_USERNAME,hash_secret(env_password),'ADMIN',''))
-    else:
-        c.execute('UPDATE users SET password_hash=?,is_active=1,failed_count=0,locked_until=NULL WHERE id=?',(hash_secret(env_password),u['id']))
-        c.execute('DELETE FROM sessions WHERE user_id=?',(u['id'],))
-    c.commit(); c.close(); return {'ok':True,'message':'管理者登入已修復；請立即關閉 ADMIN_LOGIN_RECOVERY'}
-
 @app.post('/api/auth/logout')
 def logout(req:Request):
     auth=req.headers.get('Authorization',''); tok=auth[7:] if auth.startswith('Bearer ') else req.cookies.get('session'); c=db();
@@ -373,7 +343,16 @@ def me(req:Request):
     u=current_user(req); return {'user': {'username':u['username'],'role':u['role']} if u else None}
 @app.post('/api/auth/password/forgot')
 async def forgot(req:Request):
-    raise HTTPException(410,'Email 功能已移除。秘書忘記密碼請由管理者在「帳號與安全性」重設；管理者請依系統管理流程處理。')
+    p=await req.json(); username=(p.get('username') or '').strip(); c=db(); u=c.execute('SELECT * FROM users WHERE username=?',(username,)).fetchone(); demo=None
+    if u:
+        raw=secrets.token_urlsafe(32); c.execute('INSERT INTO password_resets(user_id,token_hash,expires_at,created_at) VALUES(?,?,?,?)',(u['id'],thash(raw),future_iso(minutes=30),now())); c.commit()
+        reset_url=APP_BASE_URL+f'/reset-password?token={raw}'
+        if APP_ENV!='production' or DEMO_RESET_LINKS: demo=reset_url
+        try:
+            smtp_send('圖書物流系統密碼重設',f'帳號：{username}\n\n請於 30 分鐘內使用以下連結重設密碼：\n{reset_url}\n\n若非本人操作，請忽略此信。',[RESET_EMAIL])
+        except Exception as e:
+            c.close(); raise HTTPException(500,'密碼重設信寄送失敗：'+str(e))
+    c.close(); return {'ok':True,'message':'若帳號存在，系統已寄送重設連結。','demo_reset_url':demo}
 @app.post('/api/auth/password/reset')
 async def reset(req:Request):
     p=await req.json(); c=db(); r=c.execute('SELECT * FROM password_resets WHERE token_hash=? AND used_at IS NULL AND expires_at>?',(thash(p.get('token','')),now())).fetchone()
@@ -900,13 +879,132 @@ def official_xlsx(payload,d):
     bio=io.BytesIO(); wb.save(bio); return bio.getvalue()
 
 
+def register_pdf_zh_font():
+    # Prefer an embedded Traditional-Chinese TrueType font so downloaded PDFs render
+    # correctly in Safari/Preview/Chrome instead of relying on viewer CID substitution.
+    candidates=[
+        '/usr/share/fonts/truetype/arphic/uming.ttc',
+        '/usr/share/fonts/truetype/arphic-bkai00mp/bkai00mp.ttf',
+    ]
+    for fp in candidates:
+        if os.path.exists(fp):
+            try:
+                pdfmetrics.registerFont(TTFont('ReportZH',fp,subfontIndex=0))
+                return 'ReportZH'
+            except Exception:
+                pass
+    pdfmetrics.registerFont(UnicodeCIDFont('MSung-Light'))
+    return 'MSung-Light'
+
+def pdf_bytes(rows,title):
+    bio=io.BytesIO(); zh=register_pdf_zh_font(); cv=canvas.Canvas(bio,pagesize=(842,595)); cv.setFont(zh,16); cv.drawString(30,565,title); y=540; cv.setFont(zh,7.3)
+    for r in rows:
+        line=f"{r['日期']}  {r['路線']}線  {r['分館代碼']} {r['分館']}  公文:{r['公文'] or 0}  送出:{r['圖書送出'] or 0}  收回:{r['圖書收回'] or 0}  簽收:{r['簽收人'] or '—'}  更正:{r['是否更正']}"; cv.drawString(25,y,line[:150]); y-=12
+        extra=f"備註:{r['備註'] or '—'}  簽收時間:{r['簽收時間'] or '—'}  更正原因:{r['更正原因'] or '—'}"; cv.drawString(40,y,extra[:160]); y-=14
+        if y<30: cv.showPage(); cv.setFont(zh,7.3); y=565
+    cv.save(); return bio.getvalue()
+
+def official_pdf(payload,d):
+    bio=io.BytesIO(); zh=register_pdf_zh_font(); cv=canvas.Canvas(bio,pagesize=(842,595))
+    cv.setFont(zh,16); cv.drawString(30,565,f'{d} 圖書物流配送暨電子簽收日報'); y=538
+    for r in payload['routes']:
+        if y<110: cv.showPage(); y=565
+        cv.setFont(zh,12); cv.drawString(30,y,f"{r['code']}線｜司機 {r['driver_name'] or '—'}"); y-=18; cv.setFont(zh,8)
+        for x in r['stops']:
+            cv.drawString(42,y,f"{x['branch_name']}  公文 {x['document_final'] or 0}｜送出 {x['outbound_final'] or 0}｜收回 {x['inbound_final'] or 0}｜簽收 {x['correction_signer_name'] or x['signer_name'] or '—'}"); y-=13
+            if y<90: cv.showPage(); cv.setFont(zh,8); y=565
+        cv.setFont(zh,9); cv.drawString(42,y,f"路線合計：公文 {r['totals']['document']}｜送出 {r['totals']['outbound']}｜收回 {r['totals']['inbound']}"); y-=16
+        data=decode_data_url(r.get('driver_signature'))
+        if data:
+            try:
+                cv.drawImage(ImageReader(io.BytesIO(data)),42,y-45,width=150,height=42,mask='auto'); cv.drawString(200,y-22,f"司機簽名 {r['driver_signed_at'] or ''}"); y-=55
+            except: pass
+    if y<110: cv.showPage(); y=565
+    cv.setFont(zh,11); cv.drawString(30,y,f"全部總計：公文 {payload['grand']['document']}｜送出 {payload['grand']['outbound']}｜收回 {payload['grand']['inbound']}"); y-=22
+    rep=payload['report'] or {}; data=decode_data_url(rep.get('secretary_signature'))
+    if data:
+        try: cv.drawImage(ImageReader(io.BytesIO(data)),30,y-55,width=180,height=50,mask='auto')
+        except: pass
+    cv.setFont(zh,9); cv.drawString(225,y-28,f"總館秘書最終簽名 {rep.get('secretary_signed_at') or ''}")
+    cv.save(); return bio.getvalue()
+
 @app.get('/api/reports/daily.xlsx')
 def daily_xlsx(req:Request,service_date:str|None=None):
     require_user(req,['ADMIN','SECRETARY']); d=service_date or today(); c=db(); rows=report_rows(c,d,d); c.close(); return Response(xlsx_bytes(rows,f'{d} 圖書物流配送日報'),media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':f'attachment; filename="{d}_daily.xlsx"'})
-
+@app.get('/api/reports/daily.pdf')
+def daily_pdf(req:Request,service_date:str|None=None):
+    require_user(req,['ADMIN','SECRETARY']); d=service_date or today(); c=db(); rows=report_rows(c,d,d); c.close(); return Response(pdf_bytes(rows,f'{d} 圖書物流配送日報'),media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="{d}_daily.pdf"'})
+def month_range(m):
+    start=m+'-01'; y=int(m[:4]); mo=int(m[5:7]); nxt=f'{y+1}-01-01' if mo==12 else f'{y}-{mo+1:02d}-01'; end=(datetime.fromisoformat(nxt)-timedelta(days=1)).date().isoformat(); return start,end
 @app.get('/api/reports/monthly.xlsx')
 def monthly_xlsx(req:Request,month:str|None=None):
     require_user(req,['ADMIN','SECRETARY']); m=month or today()[:7]; a,b=month_range(m); c=db(); rows=report_rows(c,a,b); c.close(); return Response(xlsx_bytes(rows,f'{m} 圖書物流配送月報'),media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':f'attachment; filename="{m}_monthly.xlsx"'})
+@app.get('/api/reports/monthly.pdf')
+def monthly_pdf(req:Request,month:str|None=None):
+    require_user(req,['ADMIN','SECRETARY']); m=month or today()[:7]; a,b=month_range(m); c=db(); rows=report_rows(c,a,b); c.close(); return Response(pdf_bytes(rows,f'{m} 圖書物流配送月報'),media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="{m}_monthly.pdf"'})
+
+@app.get('/api/email/settings')
+def email_settings(req:Request):
+    require_user(req,['ADMIN']); cfg=smtp_config(); diag=smtp_diagnostics(); return {'host':cfg['host'],'port':cfg['port'],'user':cfg['user'],'from':cfg['from'],'tls':cfg['tls'],'password_configured':bool(cfg['password']),'checks':diag['checks'],'source':diag['source'],'missing':diag['missing'],'configured':not bool(diag['missing'])}
+
+@app.post('/api/email/test')
+async def email_test(req:Request):
+    require_user(req,['ADMIN']); p=await req.json(); to=(p.get('email') or '').strip()
+    if '@' not in to: raise HTTPException(400,'請輸入測試收件信箱')
+    try: smtp_send('圖書物流系統 SMTP 測試','Google Workspace SMTP 已成功連線。\n\n寄件者：'+smtp_config()['from'],[to])
+    except Exception as e: raise HTTPException(500,str(e))
+    return {'ok':True,'message':'測試郵件已寄出'}
+
+@app.get('/api/email/recipients')
+def recipients(req:Request):
+    require_user(req,['ADMIN','SECRETARY']); c=db(); rows=[dict(x) for x in c.execute('SELECT * FROM email_recipients ORDER BY id').fetchall()]; c.close(); return rows
+@app.post('/api/email/recipients')
+async def add_recipient(req:Request):
+    u=require_user(req,['ADMIN']); p=await req.json(); email=(p.get('email') or '').strip(); typ=(p.get('recipient_type') or 'TO').upper()
+    if '@' not in email: raise HTTPException(400,'Email格式錯誤')
+    if typ not in ('TO','CC'): raise HTTPException(400,'收件類型錯誤')
+    c=db(); c.execute('INSERT INTO email_recipients(email,recipient_type,active,created_at) VALUES(?,?,1,?)',(email,typ,now())); rid=c.execute('SELECT last_insert_rowid()').fetchone()[0]; audit(c,'USER',u['id'],u['role'],'ADD_EMAIL_RECIPIENT','EMAIL_RECIPIENT',rid); c.commit(); c.close(); return {'ok':True}
+@app.post('/api/email/recipients/{rid}/toggle')
+async def toggle_recipient(req:Request,rid:int):
+    u=require_user(req,['ADMIN']); c=db(); c.execute('UPDATE email_recipients SET active=CASE active WHEN 1 THEN 0 ELSE 1 END WHERE id=?',(rid,)); audit(c,'USER',u['id'],u['role'],'TOGGLE_EMAIL_RECIPIENT','EMAIL_RECIPIENT',rid); c.commit(); c.close(); return {'ok':True}
+@app.delete('/api/email/recipients/{rid}')
+def delete_recipient(req:Request,rid:int):
+    u=require_user(req,['ADMIN']); c=db(); c.execute('DELETE FROM email_recipients WHERE id=?',(rid,)); audit(c,'USER',u['id'],u['role'],'DELETE_EMAIL_RECIPIENT','EMAIL_RECIPIENT',rid); c.commit(); c.close(); return {'ok':True}
+@app.get('/api/email/logs')
+def email_logs(req:Request):
+    require_user(req,['ADMIN','SECRETARY']); c=db(); rows=[dict(x) for x in c.execute('SELECT * FROM email_logs ORDER BY id DESC LIMIT 100').fetchall()]; c.close(); return rows
+
+def build_report_email(report_type,period):
+    c=db()
+    if report_type=='MONTHLY':
+        a,b=month_range(period[:7]); rows=report_rows(c,a,b); c.close(); title=f'{period[:7]} 圖書物流配送月報'; x=xlsx_bytes(rows,title); p=pdf_bytes(rows,title); base=period[:7]+'_monthly'
+    else:
+        d=period[:10]; rows=report_rows(c,d,d); c.close(); title=f'{d} 圖書物流配送日報'; x=xlsx_bytes(rows,title); p=pdf_bytes(rows,title); base=d+'_daily'
+    return title,[(base+'.xlsx',x,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),(base+'.pdf',p,'application/pdf')]
+
+@app.post('/api/email/send-report')
+async def send_report(req:Request):
+    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); period=p.get('period') or today(); typ=(p.get('report_type') or 'DAILY').upper(); c=db(); rec=[dict(x) for x in c.execute('SELECT email,recipient_type FROM email_recipients WHERE active=1 ORDER BY id').fetchall()]
+    if not rec: c.close(); raise HTTPException(409,'尚未設定Email收件人')
+    to=[x['email'] for x in rec if x['recipient_type']=='TO']; cc=[x['email'] for x in rec if x['recipient_type']=='CC'];
+    if not to and cc: to=[cc.pop(0)]
+    cur=c.execute('INSERT INTO email_logs(report_type,period,recipients,status,created_at) VALUES(?,?,?,?,?)',(typ,period,','.join([x['email'] for x in rec]),'SENDING',now())); lid=cur.lastrowid; c.commit(); c.close()
+    try:
+        title,atts=build_report_email(typ,period); smtp_send(title,f'附件為 {period} 圖書物流報表。\n\n寄件者：{smtp_config()["from"]}',to,cc,atts)
+        c=db(); c.execute("UPDATE email_logs SET status='SENT',sent_at=?,error_message=NULL WHERE id=?",(now(),lid)); audit(c,'USER',u['id'],u['role'],'SEND_REPORT_EMAIL','EMAIL_LOG',lid,after={'recipients':[x['email'] for x in rec]}); c.commit(); c.close(); return {'ok':True,'status':'SENT','recipients':[x['email'] for x in rec]}
+    except Exception as e:
+        c=db(); c.execute("UPDATE email_logs SET status='FAILED',error_message=? WHERE id=?",(str(e),lid)); c.commit(); c.close(); raise HTTPException(500,str(e))
+@app.post('/api/email/logs/{lid}/resend')
+async def resend_email(req:Request,lid:int):
+    u=require_user(req,['ADMIN','SECRETARY']); c=db(); old=c.execute('SELECT * FROM email_logs WHERE id=?',(lid,)).fetchone(); c.close()
+    if not old: raise HTTPException(404)
+    rec=[x.strip() for x in (old['recipients'] or '').split(',') if x.strip()];
+    if not rec: raise HTTPException(409,'原寄送紀錄沒有收件人')
+    try:
+        title,atts=build_report_email(old['report_type'],old['period']); smtp_send(title,f'重新寄送：附件為 {old["period"]} 圖書物流報表。',[rec[0]],rec[1:],atts)
+        c=db(); c.execute("UPDATE email_logs SET status='SENT',sent_at=?,error_message=NULL WHERE id=?",(now(),lid)); audit(c,'USER',u['id'],u['role'],'RESEND_REPORT_EMAIL','EMAIL_LOG',lid); c.commit(); c.close(); return {'ok':True,'status':'SENT'}
+    except Exception as e:
+        c=db(); c.execute("UPDATE email_logs SET status='FAILED',error_message=? WHERE id=?",(str(e),lid)); c.commit(); c.close(); raise HTTPException(500,str(e))
 
 @app.get('/api/events')
 async def events(req:Request):
@@ -920,7 +1018,7 @@ async def events(req:Request):
     return StreamingResponse(gen(),media_type='text/event-stream')
 
 
-# V17 臨時交接 / 分段簽名
+# V17 臨時交接 / 分段簽名 / SMTP
 @app.get('/api/route-handoffs')
 def route_handoffs(req:Request, service_date:str|None=None):
     require_user(req,['ADMIN','SECRETARY']); d=service_date or today(); c=db(); rows=[dict(x) for x in c.execute("SELECT h.*,r.code route_code,fd.name from_driver,td.name to_driver,b.name start_branch FROM route_handoffs h JOIN daily_routes dr ON dr.id=h.daily_route_id JOIN routes r ON r.id=dr.route_id JOIN drivers fd ON fd.id=h.from_driver_id JOIN drivers td ON td.id=h.to_driver_id JOIN deliveries x ON x.id=h.start_delivery_id JOIN branches b ON b.id=x.branch_id WHERE h.service_date=? ORDER BY h.id DESC",(d,)).fetchall()];c.close();return rows
@@ -953,3 +1051,10 @@ async def segment_sign(rid:int,req:Request):
     if not assigned or not assigned['n'] or assigned['done']<assigned['n']: c.close(); raise HTTPException(409,'您的配送區段尚未全部完成')
     c.execute('INSERT INTO route_segment_signatures(service_date,daily_route_id,driver_id,signature,signed_at) VALUES(?,?,?,?,?) ON CONFLICT(service_date,daily_route_id,driver_id) DO UPDATE SET signature=excluded.signature,signed_at=excluded.signed_at',(today(),rid,s['driver_id'],sig,now()));audit(c,'DRIVER',s['driver_id'],'DRIVER','DRIVER_SEGMENT_SIGN','DAILY_ROUTE',rid);c.commit();c.close();return {'ok':True}
 
+@app.post('/api/email/smtp-test')
+async def smtp_test(req:Request):
+    require_user(req,['ADMIN']);p=await req.json();email=(p.get('email') or '').strip()
+    if '@' not in email: raise HTTPException(400,'Email格式錯誤')
+    try:smtp_send('圖書物流系統 SMTP 測試','lib.moving-match.com SMTP 郵件服務測試成功。',[email])
+    except Exception as e:raise HTTPException(500,str(e))
+    return {'ok':True}

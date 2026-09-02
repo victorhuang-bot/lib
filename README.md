@@ -103,15 +103,3 @@ Production 版密碼不寫入 GitHub，必須由 Hosting Provider 的 Secret Env
 
 ## V16 正式子網域
 正式網址：`https://lib.moving-match.com`。新產生的分館固定 QR 與司機裝置啟用 QR 均使用此網址。
-
-
-## V19
-- Email/SMTP 已移除。
-- PDF 報表已移除，只保留 Excel。
-- 路線改為 1～6，並匯入正式分館名冊。
-
-
-## V19.1 登入修正
-部署後先直接使用既有 moving / lib 密碼登入。若帳號曾在 V18「帳號與安全性」修改密碼，系統會自動兼容並遷移。
-
-若 moving 仍無法登入，可在 Render Environment 暫時新增 `ADMIN_LOGIN_RECOVERY=true`，以 `ADMIN_INITIAL_PASSWORD` 呼叫管理者修復流程；修復完成後必須刪除或改回 false。
