@@ -288,7 +288,7 @@ def init_db():
     migrate_route_secretary_signatures(c)
     migrate_official_routes_and_branches(c)
     migrate_default_route_drivers(c)
-    cleanup_legacy_demo_drivers(c)
+    stabilize_accounts_and_today_drivers(c)
     if USE_POSTGRES:
         # Explicit seed IDs 1..6 must advance identity sequences before later inserts.
         for tbl in ('routes','users','drivers','branches'):
@@ -391,59 +391,53 @@ def migrate_default_route_drivers(c):
     c.commit()
 
 
-def cleanup_legacy_demo_drivers(c):
-    """Remove V18 demo drivers from a fresh/unused DB; if historical use exists, deactivate instead."""
+def stabilize_accounts_and_today_drivers(c):
+    """
+    V18.3.4 startup-safe migration:
+    - Ensure both ADMIN / SECRETARY accounts exist without overwriting existing passwords.
+    - One-time force today's 6 routes to the requested official default drivers.
+    - Deactivate old demo/test drivers instead of deleting them, preserving historical references.
+    """
+    # Core accounts: create only when missing.
+    admin=c.execute("SELECT id FROM users WHERE username=?",(ADMIN_USERNAME,)).fetchone()
+    if not admin:
+        pw=initial_secret('ADMIN_INITIAL_PASSWORD','85017306')
+        c.execute(
+            'INSERT INTO users(username,password_hash,role,email,is_active) VALUES(?,?,?,?,1)',
+            (ADMIN_USERNAME,hash_secret(pw),'ADMIN',RESET_EMAIL)
+        )
+    sec=c.execute("SELECT id FROM users WHERE username=?",(SECRETARY_USERNAME,)).fetchone()
+    if not sec:
+        pw=initial_secret('SECRETARY_INITIAL_PASSWORD','03751080')
+        c.execute(
+            'INSERT INTO users(username,password_hash,role,email,is_active) VALUES(?,?,?,?,1)',
+            (SECRETARY_USERNAME,hash_secret(pw),'SECRETARY',RESET_EMAIL)
+        )
+
+    # One-time correction for the already-created current day.
+    # This intentionally fixes today's old 王/李/陳/林/張 assignment.
+    key='FORCE_TODAY_DEFAULT_DRIVERS_V1834'
+    if not c.execute('SELECT 1 FROM app_settings WHERE key=?',(key,)).fetchone():
+        d=today()
+        for rid in range(1,7):
+            did=default_driver_id(c,rid)
+            dr=c.execute(
+                'SELECT id FROM daily_routes WHERE service_date=? AND route_id=?',
+                (d,rid)
+            ).fetchone()
+            if dr:
+                c.execute('UPDATE daily_routes SET driver_id=? WHERE id=?',(did,dr['id']))
+        c.execute(
+            'INSERT INTO app_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+            (key,now())
+        )
+
+    # Keep historical integrity: old demo/test drivers are only deactivated.
     legacy_names=('王先生','李先生','陳先生','林先生','張先生','測試司機')
     placeholders=','.join('?' for _ in legacy_names)
-    rows=c.execute(
-        f"SELECT id,name FROM drivers WHERE name IN ({placeholders}) ORDER BY id",
-        legacy_names
-    ).fetchall()
-
-    for row in rows:
-        did=row['id']
-
-        # Any unstarted daily route still pointing at a legacy/test driver is moved
-        # to that route's configured official default driver.
-        drs=c.execute(
-            'SELECT id,route_id,driver_signed_at FROM daily_routes WHERE driver_id=?',
-            (did,)
-        ).fetchall()
-        for dr in drs:
-            started=c.execute(
-                """SELECT 1 FROM deliveries
-                   WHERE daily_route_id=? AND
-                     (document_original IS NOT NULL OR outbound_original IS NOT NULL OR
-                      branch_signed_at IS NOT NULL OR driver_confirmed_at IS NOT NULL)
-                   LIMIT 1""",
-                (dr['id'],)
-            ).fetchone()
-            if not started and not dr['driver_signed_at']:
-                target=default_driver_id(c,dr['route_id'])
-                if target != did:
-                    c.execute('UPDATE daily_routes SET driver_id=? WHERE id=?',(target,dr['id']))
-
-        # Preserve genuine historical attribution. If anything meaningful still
-        # references the driver, deactivate instead of corrupting history.
-        used=c.execute('SELECT 1 FROM daily_routes WHERE driver_id=? LIMIT 1',(did,)).fetchone()
-        used=used or c.execute('SELECT 1 FROM route_handoffs WHERE from_driver_id=? OR to_driver_id=? LIMIT 1',(did,did)).fetchone()
-        used=used or c.execute('SELECT 1 FROM delivery_driver_assignments WHERE driver_id=? LIMIT 1',(did,)).fetchone()
-        used=used or c.execute('SELECT 1 FROM route_segment_signatures WHERE driver_id=? LIMIT 1',(did,)).fetchone()
-        used=used or c.execute('SELECT 1 FROM corrections WHERE requested_by_driver_id=? LIMIT 1',(did,)).fetchone()
-
-        if used:
-            c.execute('UPDATE drivers SET active=0 WHERE id=?',(did,))
-        else:
-            # Test/demo device credentials have no business value.
-            c.execute('DELETE FROM driver_sessions WHERE driver_id=?',(did,))
-            c.execute('DELETE FROM driver_activation_tokens WHERE driver_id=?',(did,))
-            c.execute('DELETE FROM driver_devices WHERE driver_id=?',(did,))
-            c.execute('DELETE FROM drivers WHERE id=?',(did,))
-
     c.execute(
-        "INSERT INTO app_settings(key,value) VALUES('CLEAN_LEGACY_DRIVERS_V1833',?) "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        (now(),)
+        f"UPDATE drivers SET active=0 WHERE name IN ({placeholders})",
+        legacy_names
     )
     c.commit()
 
@@ -534,7 +528,7 @@ def rebuild_service_date(c, service_date):
         expected=branch_expected_on(c,b,service_date)
         existing=c.execute('SELECT * FROM deliveries WHERE service_date=? AND branch_id=?',(service_date,b['id'])).fetchone()
         if expected and not existing and b['route_id'] in route_map:
-            c.execute('INSERT INTO deliveries(service_date,daily_route_id,branch_id,status,document_original,document_final) VALUES(?,?,?,?,0,0)',(service_date,route_map[b['route_id']],b['id'],'WAITING_SECRETARY'))
+            c.execute('INSERT INTO deliveries(service_date,daily_route_id,branch_id,status) VALUES(?,?,?,?)',(service_date,route_map[b['route_id']],b['id'],'WAITING_SECRETARY'))
         elif not expected and existing:
             untouched=(existing['document_original'] is None and existing['outbound_original'] is None and existing['branch_signed_at'] is None and existing['driver_confirmed_at'] is None)
             if untouched:
