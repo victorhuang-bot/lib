@@ -829,12 +829,18 @@ async def branch_correct(req:Request):
     audit(c,'BRANCH',s['branch_id'],'BRANCH','BRANCH_CORRECT','DELIVERY',x['id'],before=before,after={'document':document,'outbound':outbound_qty,'inbound':inbound,'reason':p['reason'],'signer':p['signer']})
     c.commit();c.close();await publish({'type':'delivery.updated','id':x['id']});return {'ok':True}
 
-@app.get('/api/secretary/documents/next-day')
-def next_day_documents(req:Request):
+@app.get('/api/secretary/documents/prefill')
+def document_prefill(req:Request, service_date:str|None=None):
     require_user(req,['SECRETARY'])
-    d=next_service_date()
+    d=service_date or next_service_date()
+    try:
+        selected=date.fromisoformat(d)
+    except:
+        raise HTTPException(400,'日期格式錯誤')
+    if selected < date.fromisoformat(today()):
+        raise HTTPException(400,'公文預填只能選擇今天或未來日期')
     c=db()
-    # Build tomorrow independently from today's in-progress deliveries.
+    # Build the selected date independently from today's in-progress deliveries.
     # Fixed weekdays + CLOSED_ALL / STOP / ADD are respected by rebuild_service_date().
     rebuild_service_date(c,d)
     rows=[dict(x) for x in c.execute('''SELECT x.id,x.service_date,x.status,
