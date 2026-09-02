@@ -1,10 +1,10 @@
-# V16
+# V17 — 司機臨時交接 + SMTP 準備
 
-正式子網域部署版本。
-
-- `APP_BASE_URL` 預設為 `https://lib.moving-match.com`。
-- 新產生的分館固定 QR Code 使用 `https://lib.moving-match.com/branch/...`。
-- 新產生的司機裝置啟用 QR Code 使用 `https://lib.moving-match.com/activate-driver/...`。
-- Render Blueprint 設定 `APP_BASE_URL=https://lib.moving-match.com`。
-- 保留 V15：司機啟用 QR 10 分鐘有效、成功使用一次即失效、expiry 與 now() 統一使用 Asia/Taipei (+08:00)。
-- 舊版已印出的固定 QR 若仍含 `onrender.com`，V16 部署後請重新產生 / 重新列印。
+- 管理者可從指定「尚未完成分館」起，把後續未完成站點臨時交給另一位司機。
+- 已完成站點維持原司機，不覆寫責任歷史。
+- 接手司機手機顯示路線、原司機、接手起點、原因、剩餘站數。
+- 新增 route_handoffs、delivery_driver_assignments、route_segment_signatures。
+- Audit Log 記錄 DRIVER_HANDOFF。
+- Excel/PDF 報表新增「實際配送司機」。
+- SMTP 支援 587 STARTTLS / 465 SSL，密碼由 Render Environment 注入，不寫入 GitHub。
+- 正式網域：https://lib.moving-match.com

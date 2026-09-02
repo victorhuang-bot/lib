@@ -2,7 +2,8 @@ from fastapi import FastAPI, Request, Response, HTTPException, Form
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
-import sqlite3, os, secrets, hashlib, hmac, base64, io, json, asyncio, csv
+import sqlite3, os, secrets, hashlib, hmac, base64, io, json, asyncio, csv, smtplib, ssl
+from email.message import EmailMessage
 from datetime import datetime, timedelta, date, timezone
 from zoneinfo import ZoneInfo
 import qrcode
@@ -114,6 +115,9 @@ def init_db():
     CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, value TEXT);
     CREATE TABLE IF NOT EXISTS delivery_exceptions(id INTEGER PRIMARY KEY, service_date TEXT, branch_id INTEGER, exception_type TEXT, reason TEXT, created_by INTEGER, created_at TEXT, UNIQUE(service_date,branch_id));
     CREATE TABLE IF NOT EXISTS global_closures(id INTEGER PRIMARY KEY, service_date TEXT UNIQUE, reason TEXT, created_by INTEGER, created_at TEXT);
+    CREATE TABLE IF NOT EXISTS route_handoffs(id INTEGER PRIMARY KEY, service_date TEXT, daily_route_id INTEGER, from_driver_id INTEGER, to_driver_id INTEGER, start_delivery_id INTEGER, reason TEXT, note TEXT, created_by INTEGER, created_at TEXT);
+    CREATE TABLE IF NOT EXISTS delivery_driver_assignments(id INTEGER PRIMARY KEY, delivery_id INTEGER UNIQUE, driver_id INTEGER, assigned_at TEXT, handoff_id INTEGER);
+    CREATE TABLE IF NOT EXISTS route_segment_signatures(id INTEGER PRIMARY KEY, service_date TEXT, daily_route_id INTEGER, driver_id INTEGER, signature TEXT, signed_at TEXT, UNIQUE(service_date,daily_route_id,driver_id));
     ''')
     if not c.execute('SELECT 1 FROM users').fetchone():
         admin_password=initial_secret('ADMIN_INITIAL_PASSWORD','85017306')
@@ -372,12 +376,12 @@ def driver_auth(req):
     return dict(r)
 @app.get('/api/driver/today')
 def driver_today(req:Request):
-    s=driver_auth(req); c=db(); rows=[dict(x) for x in c.execute('''SELECT x.*,b.name branch_name,b.code branch_code,r.code route_code FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id WHERE x.service_date=? AND dr.driver_id=? AND b.active=1 ORDER BY r.code,b.stop_order''',(today(),s['driver_id'])).fetchall()];c.close();return rows
+    s=driver_auth(req); c=db(); rows=[dict(x) for x in c.execute('''SELECT x.*,b.name branch_name,b.code branch_code,r.code route_code FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id WHERE x.service_date=? AND COALESCE(dda.driver_id,dr.driver_id)=? AND b.active=1 ORDER BY r.code,b.stop_order''',(today(),s['driver_id'])).fetchall()];c.close();return rows
 @app.patch('/api/driver/deliveries/{did}/outbound')
 async def outbound(did:int,req:Request):
     s=driver_auth(req);p=await req.json();qty=int(p.get('qty',0));c=db();
     if is_report_locked(c): c.close(); raise HTTPException(409,'今日日報已鎖定')
-    x=c.execute('''SELECT x.*,dr.driver_id FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id WHERE x.id=?''',(did,)).fetchone()
+    x=c.execute('''SELECT x.*,COALESCE(dda.driver_id,dr.driver_id) driver_id FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id WHERE x.id=?''',(did,)).fetchone()
     if not x or x['driver_id']!=s['driver_id']:c.close();raise HTTPException(403)
     if x['status'] not in ('WAITING_DRIVER','WAITING_SECRETARY','WAITING_BRANCH'):c.close();raise HTTPException(409,'分館簽收後不可再修改送出數量')
     status='WAITING_BRANCH' if x['document_original'] is not None else 'WAITING_SECRETARY'; c.execute('UPDATE deliveries SET outbound_original=?,outbound_final=?,status=?,row_version=row_version+1 WHERE id=?',(qty,qty,status,did));audit(c,'DRIVER',s['driver_id'],'DRIVER','SET_OR_EDIT_OUTBOUND','DELIVERY',did,before={'qty':x['outbound_final']},after={'qty':qty});c.commit();c.close();await publish({'type':'delivery.updated','id':did});return {'ok':True}
@@ -385,7 +389,7 @@ async def outbound(did:int,req:Request):
 async def confirm(did:int,req:Request):
     s=driver_auth(req);c=db();
     if is_report_locked(c): c.close(); raise HTTPException(409,'今日日報已鎖定')
-    x=c.execute('''SELECT x.*,dr.driver_id FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id WHERE x.id=?''',(did,)).fetchone()
+    x=c.execute('''SELECT x.*,COALESCE(dda.driver_id,dr.driver_id) driver_id FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id WHERE x.id=?''',(did,)).fetchone()
     if not x or x['driver_id']!=s['driver_id']:c.close();raise HTTPException(403)
     if x['status'] not in ('WAITING_DRIVER_CONFIRM','WAITING_DRIVER_RECONFIRM'):c.close();raise HTTPException(409,'目前狀態不可完成本站')
     c.execute("UPDATE deliveries SET status='STOP_COMPLETED',driver_confirmed_at=?,row_version=row_version+1 WHERE id=?",(now(),did));audit(c,'DRIVER',s['driver_id'],'DRIVER','CONFIRM_STOP','DELIVERY',did);c.commit();c.close();await publish({'type':'delivery.updated','id':did});return {'ok':True}
@@ -393,7 +397,7 @@ async def confirm(did:int,req:Request):
 async def request_correction(did:int,req:Request):
     s=driver_auth(req); p=await req.json(); c=db();
     if is_report_locked(c): c.close(); raise HTTPException(409,'今日日報已鎖定')
-    x=c.execute('''SELECT x.*,dr.driver_id FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id WHERE x.id=?''',(did,)).fetchone()
+    x=c.execute('''SELECT x.*,COALESCE(dda.driver_id,dr.driver_id) driver_id FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id WHERE x.id=?''',(did,)).fetchone()
     if not x or x['driver_id']!=s['driver_id']:c.close();raise HTTPException(403)
     if x['status'] not in ('WAITING_DRIVER_CONFIRM','WAITING_DRIVER_RECONFIRM'):c.close();raise HTTPException(409,'目前狀態不可要求分館更正')
     if c.execute("SELECT 1 FROM corrections WHERE delivery_id=? AND status='PENDING'",(did,)).fetchone():c.close();raise HTTPException(409,'此筆已有待分館處理的更正要求')
@@ -725,7 +729,7 @@ def correction_list(req:Request):
     require_user(req,['ADMIN','SECRETARY']); c=db(); rows=[dict(x) for x in c.execute('''SELECT co.*,b.name branch_name,r.code route_code,d.name driver_name,x.document_final,x.outbound_final,x.inbound_final,x.note_final,x.correction_reason,x.correction_signer_name,x.corrected_at FROM corrections co JOIN deliveries x ON x.id=co.delivery_id JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id JOIN drivers d ON d.id=co.requested_by_driver_id ORDER BY co.id DESC''').fetchall()]; c.close(); return rows
 
 def report_rows(c,start_date,end_date):
-    rows=[dict(x) for x in c.execute("""SELECT x.service_date 日期,r.code 路線,b.code 分館代碼,b.name 分館,x.document_final 公文,x.outbound_final 圖書送出,x.inbound_final 圖書收回,COALESCE(x.note_final,'') 備註,COALESCE(x.correction_signer_name,x.signer_name,'') 簽收人,COALESCE(x.corrected_at,x.branch_signed_at,'') 簽收時間,CASE WHEN EXISTS(SELECT 1 FROM corrections co2 WHERE co2.delivery_id=x.id) THEN '是' ELSE '否' END 是否更正,COALESCE(x.correction_reason,'') 更正原因 FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id WHERE x.service_date BETWEEN ? AND ? ORDER BY x.service_date,r.code,b.stop_order""",(start_date,end_date)).fetchall()]
+    rows=[dict(x) for x in c.execute("""SELECT x.service_date 日期,r.code 路線,COALESCE(ad.name,dv.name,'') 實際配送司機,b.code 分館代碼,b.name 分館,x.document_final 公文,x.outbound_final 圖書送出,x.inbound_final 圖書收回,COALESCE(x.note_final,'') 備註,COALESCE(x.correction_signer_name,x.signer_name,'') 簽收人,COALESCE(x.corrected_at,x.branch_signed_at,'') 簽收時間,CASE WHEN EXISTS(SELECT 1 FROM corrections co2 WHERE co2.delivery_id=x.id) THEN '是' ELSE '否' END 是否更正,COALESCE(x.correction_reason,'') 更正原因 FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id LEFT JOIN drivers ad ON ad.id=dda.driver_id LEFT JOIN drivers dv ON dv.id=dr.driver_id WHERE x.service_date BETWEEN ? AND ? ORDER BY x.service_date,r.code,b.stop_order""",(start_date,end_date)).fetchall()]
     for r in rows: r['簽收時間']=report_time(r.get('簽收時間'))
     return rows
 
@@ -884,3 +888,60 @@ async def events(req:Request):
                 except asyncio.TimeoutError:yield 'event: ping\ndata: {}\n\n'
         finally:subscribers.discard(q)
     return StreamingResponse(gen(),media_type='text/event-stream')
+
+
+# V17 臨時交接 / 分段簽名 / SMTP
+@app.get('/api/route-handoffs')
+def route_handoffs(req:Request, service_date:str|None=None):
+    require_user(req,['ADMIN','SECRETARY']); d=service_date or today(); c=db(); rows=[dict(x) for x in c.execute("SELECT h.*,r.code route_code,fd.name from_driver,td.name to_driver,b.name start_branch FROM route_handoffs h JOIN daily_routes dr ON dr.id=h.daily_route_id JOIN routes r ON r.id=dr.route_id JOIN drivers fd ON fd.id=h.from_driver_id JOIN drivers td ON td.id=h.to_driver_id JOIN deliveries x ON x.id=h.start_delivery_id JOIN branches b ON b.id=x.branch_id WHERE h.service_date=? ORDER BY h.id DESC",(d,)).fetchall()];c.close();return rows
+
+@app.post('/api/daily-routes/{rid}/handoff')
+async def route_handoff(rid:int,req:Request):
+    u=require_user(req,['ADMIN']); p=await req.json(); to_driver=int(p.get('to_driver_id')); start_id=int(p.get('start_delivery_id')); reason=(p.get('reason') or '').strip(); note=(p.get('note') or '').strip()
+    if not reason: raise HTTPException(400,'交接原因必填')
+    c=db(); dr=c.execute('SELECT * FROM daily_routes WHERE id=?',(rid,)).fetchone(); start=c.execute('SELECT x.*,b.stop_order FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.id=? AND x.daily_route_id=?',(start_id,rid)).fetchone()
+    if not dr or not start: c.close(); raise HTTPException(404,'找不到路線或起始分館')
+    if start['status']=='STOP_COMPLETED': c.close(); raise HTTPException(409,'只能從尚未完成的分館開始交接')
+    htime=now(); c.execute('INSERT INTO route_handoffs(service_date,daily_route_id,from_driver_id,to_driver_id,start_delivery_id,reason,note,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)',(dr['service_date'],rid,dr['driver_id'],to_driver,start_id,reason,note,u['id'],htime)); hid=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+    targets=c.execute("SELECT x.id FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.daily_route_id=? AND b.stop_order>=? AND x.status!='STOP_COMPLETED' ORDER BY b.stop_order",(rid,start['stop_order'])).fetchall()
+    for x in targets: c.execute('INSERT INTO delivery_driver_assignments(delivery_id,driver_id,assigned_at,handoff_id) VALUES(?,?,?,?) ON CONFLICT(delivery_id) DO UPDATE SET driver_id=excluded.driver_id,assigned_at=excluded.assigned_at,handoff_id=excluded.handoff_id',(x['id'],to_driver,htime,hid))
+    audit(c,'USER',u['id'],u['role'],'DRIVER_HANDOFF','DAILY_ROUTE',rid,after={'from_driver_id':dr['driver_id'],'to_driver_id':to_driver,'start_delivery_id':start_id,'count':len(targets),'reason':reason,'note':note});c.commit();c.close();await publish({'type':'route.handoff','id':rid});return {'ok':True,'reassigned':len(targets)}
+
+@app.get('/api/driver/handoff-notices')
+def driver_handoff_notices(req:Request):
+    s=driver_auth(req);c=db();rows=[dict(x) for x in c.execute("SELECT h.*,r.code route_code,fd.name from_driver,b.name start_branch,(SELECT COUNT(*) FROM delivery_driver_assignments a JOIN deliveries x2 ON x2.id=a.delivery_id WHERE a.handoff_id=h.id AND x2.status!='STOP_COMPLETED') remaining FROM route_handoffs h JOIN daily_routes dr ON dr.id=h.daily_route_id JOIN routes r ON r.id=dr.route_id JOIN drivers fd ON fd.id=h.from_driver_id JOIN deliveries x ON x.id=h.start_delivery_id JOIN branches b ON b.id=x.branch_id WHERE h.service_date=? AND h.to_driver_id=? ORDER BY h.id DESC",(today(),s['driver_id'])).fetchall()];c.close();return rows
+
+@app.get('/api/daily-routes/{rid}/handoff-options')
+def handoff_options(rid:int,req:Request):
+    require_user(req,['ADMIN']);c=db();stops=[dict(x) for x in c.execute("SELECT x.id,b.code,b.name,b.stop_order,x.status FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.daily_route_id=? AND x.status!='STOP_COMPLETED' ORDER BY b.stop_order",(rid,)).fetchall()];drivers=[dict(x) for x in c.execute('SELECT id,name FROM drivers WHERE active=1 ORDER BY name').fetchall()];c.close();return {'stops':stops,'drivers':drivers}
+
+@app.post('/api/driver/routes/{rid}/segment-sign')
+async def segment_sign(rid:int,req:Request):
+    s=driver_auth(req);p=await req.json();sig=p.get('signature') or ''
+    if not sig: raise HTTPException(400,'請先簽名')
+    c=db(); assigned=c.execute("SELECT COUNT(*) n,SUM(CASE WHEN x.status='STOP_COMPLETED' THEN 1 ELSE 0 END) done FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id LEFT JOIN delivery_driver_assignments a ON a.delivery_id=x.id WHERE dr.id=? AND COALESCE(a.driver_id,dr.driver_id)=?",(rid,s['driver_id'])).fetchone()
+    if not assigned or not assigned['n'] or assigned['done']<assigned['n']: c.close(); raise HTTPException(409,'您的配送區段尚未全部完成')
+    c.execute('INSERT INTO route_segment_signatures(service_date,daily_route_id,driver_id,signature,signed_at) VALUES(?,?,?,?,?) ON CONFLICT(service_date,daily_route_id,driver_id) DO UPDATE SET signature=excluded.signature,signed_at=excluded.signed_at',(today(),rid,s['driver_id'],sig,now()));audit(c,'DRIVER',s['driver_id'],'DRIVER','DRIVER_SEGMENT_SIGN','DAILY_ROUTE',rid);c.commit();c.close();return {'ok':True}
+
+def smtp_send(to_list,subject,body,attachments=None):
+    host=os.getenv('SMTP_HOST','').strip();port=int(os.getenv('SMTP_PORT','587'));user=os.getenv('SMTP_USER','').strip();password=os.getenv('SMTP_PASSWORD','');sender=os.getenv('SMTP_FROM',user).strip();tls=os.getenv('SMTP_TLS','true').lower() not in ('0','false','no')
+    if not host or not sender: raise RuntimeError('SMTP 尚未設定')
+    m=EmailMessage();m['From']=sender;m['To']=', '.join(to_list);m['Subject']=subject;m.set_content(body)
+    for fn,data,mime in attachments or []: mt,st=mime.split('/',1);m.add_attachment(data,maintype=mt,subtype=st,filename=fn)
+    if port==465:
+        with smtplib.SMTP_SSL(host,port,context=ssl.create_default_context()) as x:
+            if user:x.login(user,password)
+            x.send_message(m)
+    else:
+        with smtplib.SMTP(host,port,timeout=30) as x:
+            if tls:x.starttls(context=ssl.create_default_context())
+            if user:x.login(user,password)
+            x.send_message(m)
+
+@app.post('/api/email/smtp-test')
+async def smtp_test(req:Request):
+    require_user(req,['ADMIN']);p=await req.json();email=(p.get('email') or '').strip()
+    if '@' not in email: raise HTTPException(400,'Email格式錯誤')
+    try:smtp_send([email],'圖書物流系統 SMTP 測試','lib.moving-match.com SMTP 郵件服務測試成功。')
+    except Exception as e:raise HTTPException(500,str(e))
+    return {'ok':True}
