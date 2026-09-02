@@ -92,30 +92,43 @@ def verify_secret(s, stored):
 def thash(s): return hashlib.sha256(s.encode()).hexdigest()
 
 def smtp_config():
-    raw_port=os.getenv('SMTP_PORT','587').strip() or '587'
+    # V18.2: non-secret Google Workspace defaults are safe fallbacks.
+    # Render only needs to hold SMTP_PASSWORD as a secret; every value can still be overridden.
+    raw_port=(os.getenv('SMTP_PORT') or '587').strip() or '587'
     try: port=int(raw_port)
     except ValueError: port=587
-    user=os.getenv('SMTP_USER','').strip()
+    user=(os.getenv('SMTP_USER') or 'victor.huang@moving-match.com').strip()
+    sender=(os.getenv('SMTP_FROM') or 'lib@moving-match.com').strip()
     return {
-        'host': os.getenv('SMTP_HOST','').strip(),
+        'host': (os.getenv('SMTP_HOST') or 'smtp.gmail.com').strip(),
         'port': port,
         'user': user,
-        'password': os.getenv('SMTP_PASSWORD',''),
-        'from': os.getenv('SMTP_FROM','').strip() or user,
-        'tls': os.getenv('SMTP_TLS','true').lower() not in ('0','false','no'),
+        'password': os.getenv('SMTP_PASSWORD','').strip(),
+        'from': sender or user,
+        'tls': (os.getenv('SMTP_TLS') or 'true').lower() not in ('0','false','no'),
     }
 
 def smtp_diagnostics():
     cfg=smtp_config()
+    # Port/TLS and the non-secret Workspace values have application defaults.
+    # Only fields required by the effective runtime config are reported missing.
     checks={
         'SMTP_HOST': bool(cfg['host']),
-        'SMTP_PORT': bool(os.getenv('SMTP_PORT','').strip()),
+        'SMTP_PORT': bool(cfg['port']),
         'SMTP_USER': bool(cfg['user']),
         'SMTP_PASSWORD': bool(cfg['password']),
-        'SMTP_FROM': bool(os.getenv('SMTP_FROM','').strip()),
-        'SMTP_TLS': bool(os.getenv('SMTP_TLS','').strip()),
+        'SMTP_FROM': bool(cfg['from']),
+        'SMTP_TLS': isinstance(cfg['tls'], bool),
     }
-    return {'checks':checks,'missing':[k for k,v in checks.items() if not v]}
+    source={
+        'SMTP_HOST': 'Render' if os.getenv('SMTP_HOST') else '系統預設',
+        'SMTP_PORT': 'Render' if os.getenv('SMTP_PORT') else '系統預設',
+        'SMTP_USER': 'Render' if os.getenv('SMTP_USER') else '系統預設',
+        'SMTP_PASSWORD': 'Render' if os.getenv('SMTP_PASSWORD') else '未設定',
+        'SMTP_FROM': 'Render' if os.getenv('SMTP_FROM') else '系統預設',
+        'SMTP_TLS': 'Render' if os.getenv('SMTP_TLS') else '系統預設',
+    }
+    return {'checks':checks,'source':source,'missing':[k for k,v in checks.items() if not v]}
 
 def smtp_send(subject, body, to_list, cc_list=None, attachments=None):
     cfg=smtp_config(); cc_list=cc_list or []; attachments=attachments or []
@@ -932,7 +945,7 @@ def monthly_pdf(req:Request,month:str|None=None):
 
 @app.get('/api/email/settings')
 def email_settings(req:Request):
-    require_user(req,['ADMIN']); cfg=smtp_config(); diag=smtp_diagnostics(); return {'host':cfg['host'],'port':cfg['port'],'user':cfg['user'],'from':cfg['from'],'tls':cfg['tls'],'password_configured':bool(cfg['password']),'checks':diag['checks'],'missing':diag['missing'],'configured':not bool(diag['missing'])}
+    require_user(req,['ADMIN']); cfg=smtp_config(); diag=smtp_diagnostics(); return {'host':cfg['host'],'port':cfg['port'],'user':cfg['user'],'from':cfg['from'],'tls':cfg['tls'],'password_configured':bool(cfg['password']),'checks':diag['checks'],'source':diag['source'],'missing':diag['missing'],'configured':not bool(diag['missing'])}
 
 @app.post('/api/email/test')
 async def email_test(req:Request):
