@@ -28,7 +28,7 @@ DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
 DB = DATA_DIR / 'app.db'
 DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
 USE_POSTGRES = bool(DATABASE_URL)
-APP_VERSION='V18.3.15'
+APP_VERSION='V18.3.16'
 
 _PREFILL_CACHE = {}
 _PREFILL_CACHE_TTL_SECONDS = 45
@@ -712,14 +712,14 @@ def health(): return {'ok':True,'environment':APP_ENV}
 @app.middleware('http')
 async def no_cache_versioned_assets(request:Request, call_next):
     response=await call_next(request)
-    if request.url.path=='/' or request.url.path.startswith('/static/') or request.url.path.startswith('/api/secretary/documents/prefill-v3'):
+    if request.url.path=='/' or request.url.path.startswith('/static/') or request.url.path.startswith('/api/secretary/documents/prefill-v4'):
         response.headers['Cache-Control']='no-store, no-cache, must-revalidate, max-age=0'
         response.headers['X-App-Version']=APP_VERSION
     return response
 
 @app.get('/api/version')
 def api_version():
-    return {'version':APP_VERSION,'database':'postgresql' if USE_POSTGRES else 'sqlite','prefill_api':'v3'}
+    return {'version':APP_VERSION,'database':'postgresql' if USE_POSTGRES else 'sqlite','prefill_api':'v4'}
 
 @app.get('/', response_class=HTMLResponse)
 def home():
@@ -1016,8 +1016,8 @@ def ensure_prefill_delivery(c, service_date, branch_id):
         x=c.execute('SELECT * FROM deliveries WHERE service_date=? AND branch_id=?',(service_date,branch_id)).fetchone()
     return x
 
-@app.get('/api/secretary/documents/prefill-v3')
-def document_prefill_v3(req:Request, service_date:str|None=None):
+@app.get('/api/secretary/documents/prefill-v4')
+def document_prefill_v4(req:Request, service_date:str|None=None):
     require_user(req,['SECRETARY'])
     d=service_date or next_service_date()
     try:
@@ -1093,6 +1093,40 @@ def document_prefill_v3(req:Request, service_date:str|None=None):
         except: pass
         c.close(); print('PREFILL_ERROR',d,type(e).__name__,str(e),flush=True)
         raise HTTPException(500,f'公文預填讀取失敗：{type(e).__name__}: {e}')
+
+def _prefill_save_db(user_id,user_role,d,bid,qty):
+    c=db()
+    try:
+        x=ensure_prefill_delivery(c,d,bid)
+        if not x:
+            raise HTTPException(500,'無法建立所選日期配送資料')
+        if x['outbound_original'] is not None:
+            raise HTTPException(409,'司機已輸入圖書送出數量，公文已鎖定')
+        c.execute(
+            '''UPDATE deliveries
+               SET document_original=COALESCE(document_original,?),
+                   document_final=?,
+                   status=CASE WHEN status='WAITING_SECRETARY' THEN 'WAITING_DRIVER' ELSE status END,
+                   row_version=row_version+1
+               WHERE id=?''',
+            (qty,qty,x['id'])
+        )
+        audit(c,'USER',user_id,user_role,'PREFILL_DOCUMENT','DELIVERY',x['id'],
+              after={'service_date':d,'qty':qty})
+        c.commit()
+        _prefill_cache_clear(d)
+        return {'ok':True,'id':x['id'],'qty':qty,'service_date':d}
+    except HTTPException:
+        try: c.rollback()
+        except: pass
+        raise
+    except Exception as e:
+        try: c.rollback()
+        except: pass
+        print('PREFILL_SAVE_ERROR',d,bid,type(e).__name__,str(e),flush=True)
+        raise HTTPException(500,f'公文預填存檔失敗：{type(e).__name__}: {e}')
+    finally:
+        c.close()
 
 @app.post('/api/secretary/documents/prefill-save')
 async def document_prefill_save(req:Request):
