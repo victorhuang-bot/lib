@@ -29,6 +29,32 @@ DB = DATA_DIR / 'app.db'
 DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
 USE_POSTGRES = bool(DATABASE_URL)
 
+_PREFILL_CACHE = {}
+_PREFILL_CACHE_TTL_SECONDS = 45
+
+def _prefill_cache_get(key):
+    import time
+    item=_PREFILL_CACHE.get(key)
+    if not item:
+        return None
+    ts,value=item
+    if time.time()-ts > _PREFILL_CACHE_TTL_SECONDS:
+        _PREFILL_CACHE.pop(key,None)
+        return None
+    return value
+
+def _prefill_cache_set(key,value):
+    import time
+    _PREFILL_CACHE[key]=(time.time(),value)
+
+def _prefill_cache_clear(service_date=None):
+    if service_date is None:
+        _PREFILL_CACHE.clear()
+        return
+    for k in list(_PREFILL_CACHE):
+        if isinstance(k,tuple) and service_date in k:
+            _PREFILL_CACHE.pop(k,None)
+
 # V18.3.9: Neon connection pool.
 # min_size=0 lets Neon scale to zero when truly idle; max_size limits free-tier pressure.
 _PG_POOL = None
@@ -980,52 +1006,79 @@ def ensure_prefill_delivery(c, service_date, branch_id):
 def document_prefill(req:Request, service_date:str|None=None):
     require_user(req,['SECRETARY'])
     d=service_date or next_service_date()
-    try: selected=date.fromisoformat(d)
-    except: raise HTTPException(400,'日期格式錯誤')
-    if selected < date.fromisoformat(today()): raise HTTPException(400,'公文預填只能選擇今天或未來日期')
+    try:
+        selected=date.fromisoformat(d)
+    except:
+        raise HTTPException(400,'日期格式錯誤')
+    if selected < date.fromisoformat(today()):
+        raise HTTPException(400,'公文預填只能選擇今天或未來日期')
+
+    cache_key=('prefill',d)
+    cached=_prefill_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     c=db()
     try:
         closure=c.execute('SELECT reason FROM global_closures WHERE service_date=?',(d,)).fetchone()
+        if closure:
+            result={'service_date':d,'is_global_closure':True,'closure_reason':closure['reason'],'count':0,'rows':[]}
+            c.close(); _prefill_cache_set(cache_key,result); return result
+
+        branches=c.execute("SELECT b.id,b.code,b.name,b.route_id,b.stop_order,b.delivery_weekdays,b.delivery_frequency,r.code route_code,r.name route_name FROM branches b JOIN routes r ON r.id=b.route_id WHERE b.active=1 AND r.active=1 ORDER BY CAST(r.code AS INTEGER),r.code,b.stop_order").fetchall()
+        exceptions=c.execute("SELECT branch_id,exception_type,start_date,end_date FROM delivery_exceptions WHERE start_date<=? AND end_date>=?",(d,d)).fetchall()
+        stop_ids={x['branch_id'] for x in exceptions if x['exception_type']=='STOP'}
+        add_ids={x['branch_id'] for x in exceptions if x['exception_type']=='ADD'}
+
+        existing_rows=c.execute("SELECT x.id,x.branch_id,x.status,x.document_final,x.outbound_original,dr.route_id,dr.driver_id,dv.name driver_name FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id LEFT JOIN drivers dv ON dv.id=dr.driver_id WHERE x.service_date=?",(d,)).fetchall()
+        existing_by_branch={x['branch_id']:x for x in existing_rows}
+
+        drivers=c.execute('SELECT id,name FROM drivers WHERE active=1').fetchall()
+        driver_name_by_id={x['id']:x['name'] for x in drivers}
+        settings=c.execute("SELECT key,value FROM app_settings WHERE key LIKE 'DEFAULT_ROUTE_DRIVER_%'").fetchall()
+        default_driver_by_route={}
+        for x in settings:
+            try:
+                default_driver_by_route[int(str(x['key']).split('_')[-1])]=int(x['value'])
+            except:
+                pass
+
+        selected_weekday=selected.isoweekday()
         rows=[]
-        if not closure:
-            branches=c.execute("SELECT b.*,r.code route_code,r.name route_name FROM branches b JOIN routes r ON r.id=b.route_id WHERE b.active=1 AND r.active=1 ORDER BY CAST(r.code AS INTEGER),r.code,b.stop_order").fetchall()
-            for b in branches:
-                if not branch_expected_on(c,b,d): continue
-                existing=c.execute("SELECT x.id,x.status,x.document_final,x.outbound_original,dr.driver_id,dv.name driver_name FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id LEFT JOIN drivers dv ON dv.id=dr.driver_id WHERE x.service_date=? AND x.branch_id=?",(d,b['id'])).fetchone()
-                if existing:
-                    did,status,doc,outbound,driver_id,driver_name=existing['id'],existing['status'],existing['document_final'],existing['outbound_original'],existing['driver_id'],existing['driver_name']
-                else:
-                    did,status,doc,outbound=None,'WAITING_SECRETARY',None,None
-                    driver_id=default_driver_id(c,b['route_id'])
-                    dv=c.execute('SELECT name FROM drivers WHERE id=?',(driver_id,)).fetchone() if driver_id else None
-                    driver_name=dv['name'] if dv else None
-                rows.append({'id':did,'branch_id':b['id'],'service_date':d,'status':status,'document_final':doc,'outbound_original':outbound,'branch_code':b['code'],'branch_name':b['name'],'stop_order':b['stop_order'],'route_code':b['route_code'],'route_name':b['route_name'],'driver_id':driver_id,'driver_name':driver_name})
-        c.close()
-        return {'service_date':d,'is_global_closure':bool(closure),'closure_reason':closure['reason'] if closure else None,'count':len(rows),'rows':rows}
+        for b in branches:
+            bid=b['id']
+            fixed=False
+            raw=(b['delivery_weekdays'] or '').strip()
+            if raw:
+                try:
+                    fixed=selected_weekday in {int(v.strip()) for v in raw.split(',') if v.strip()}
+                except:
+                    fixed=False
+            expected=(fixed and bid not in stop_ids) or (bid in add_ids)
+            if not expected:
+                continue
+
+            ex=existing_by_branch.get(bid)
+            if ex:
+                did,status,doc,outbound=ex['id'],ex['status'],ex['document_final'],ex['outbound_original']
+                driver_id,driver_name=ex['driver_id'],ex['driver_name']
+            else:
+                did,status,doc,outbound=None,'WAITING_SECRETARY',None,None
+                driver_id=default_driver_by_route.get(b['route_id'])
+                if not driver_id:
+                    default_name=DEFAULT_ROUTE_DRIVER_NAMES.get(int(b['route_id']))
+                    driver_id=next((x['id'] for x in drivers if x['name']==default_name),None)
+                driver_name=driver_name_by_id.get(driver_id) if driver_id else None
+
+            rows.append({'id':did,'branch_id':bid,'service_date':d,'status':status,'document_final':doc,'outbound_original':outbound,'branch_code':b['code'],'branch_name':b['name'],'stop_order':b['stop_order'],'route_code':b['route_code'],'route_name':b['route_name'],'driver_id':driver_id,'driver_name':driver_name})
+
+        result={'service_date':d,'is_global_closure':False,'closure_reason':None,'count':len(rows),'rows':rows}
+        c.close(); _prefill_cache_set(cache_key,result); return result
     except Exception as e:
         try: c.rollback()
         except: pass
         c.close(); print('PREFILL_ERROR',d,type(e).__name__,str(e),flush=True)
         raise HTTPException(500,f'公文預填讀取失敗：{type(e).__name__}: {e}')
-
-def _prefill_save_db(user_id,user_role,d,bid,qty):
-    c=db()
-    try:
-        x=ensure_prefill_delivery(c,d,bid)
-        if x['outbound_original'] is not None:
-            raise HTTPException(409,'司機已輸入圖書送出數量，公文已鎖定')
-        c.execute('UPDATE deliveries SET document_original=COALESCE(document_original,?),document_final=?,row_version=row_version+1 WHERE id=?',(qty,qty,x['id']))
-        audit(c,'USER',user_id,user_role,'PREFILL_DOCUMENT','DELIVERY',x['id'],after={'service_date':d,'qty':qty})
-        c.commit()
-        return {'ok':True,'id':x['id'],'qty':qty}
-    except HTTPException:
-        c.rollback(); raise
-    except Exception as e:
-        c.rollback()
-        print('PREFILL_SAVE_ERROR',d,bid,type(e).__name__,str(e),flush=True)
-        raise HTTPException(500,f'公文預填存檔失敗：{type(e).__name__}: {e}')
-    finally:
-        c.close()
 
 @app.post('/api/secretary/documents/prefill-save')
 async def document_prefill_save(req:Request):
@@ -1047,6 +1100,7 @@ def _prefill_batch_db(user_id,user_role,d,items):
             changed+=1; total+=qty
         audit(c,'USER',user_id,user_role,'PREFILL_DOCUMENT_BATCH','DELIVERY',d,after={'service_date':d,'changed':changed,'total':total})
         c.commit()
+        _prefill_cache_clear(d)
         return {'ok':True,'changed':changed,'total':total}
     except HTTPException:
         c.rollback(); raise
