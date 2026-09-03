@@ -1,33 +1,35 @@
-# V18.3.13 PostgreSQL — 公文預填高速查詢 Schema 修正版
+# V18.3.14 PostgreSQL — 版本驗證 + Prefill V2
 
-基底：V18.3.12
+基底：V18.3.13
 
-## 修正
-- 修正 `delivery_exceptions` 查詢欄位名稱。
-- 實際 schema：
-  - `service_date`
-  - `branch_id`
-  - `exception_type`
-  - `reason`
-- 不再使用不存在的 `start_date / end_date`。
-- 高速公文預填改為：
-  `SELECT branch_id, exception_type, service_date FROM delivery_exceptions WHERE service_date=?`
-- 設定/刪除休館、停送、非固定運送後，清除公文預填 cache，避免短時間看到舊清單。
+## 為什麼做這版
+V18.3.13 ZIP 實際檢查已確認公文預填 SQL 是：
+`SELECT branch_id,exception_type,service_date FROM delivery_exceptions WHERE service_date=?`
+
+但線上畫面仍回傳舊版：
+`SELECT ... start_date,end_date ...`
+
+因此判定線上服務或瀏覽器仍在使用舊程式。
+
+## 本版
+- 公文預填 GET API 改為全新：
+  `/api/secretary/documents/prefill-v2`
+- API response 直接回傳 `app_version=V18.3.14`
+- UI 顯示「後端 V18.3.14」
+- 新增 `/api/version`
+- Render startup log 會印出 `APP_VERSION=V18.3.14`
+- 首頁、static、prefill-v2 強制 `Cache-Control: no-store`
+- Response header 加 `X-App-Version: V18.3.14`
+- common.js cache bust 改成 `?v=18.3.14`
 
 ## 保留
-- 公文日期自由選擇。
-- 批次查詢 + Python 記憶體計算。
-- 同日期 45 秒 cache。
-- 選日期不大量建立 future delivery。
-- 真正存檔才建立該日期/該分館 delivery。
-- 今日即時看板維持今天。
-- Neon pooled PostgreSQL。
-- 預設司機：
-  - 路線1 許春芳
-  - 路線2 陳錦隆
-  - 路線3 彭運土
-  - 路線4 林聖原
-  - 路線5 張閔傑
-  - 路線6 陳錦隆
-- 人工改派、支援司機二次確認、V17 臨時交接。
-- 502/503/504 友善錯誤處理。
+- 公文日期自由選擇
+- 高速批次查詢
+- 45 秒同日期 cache
+- 選日期不建立大量 future delivery
+- 存檔才建立 delivery
+- 今日即時看板維持今天
+- Neon pooled PostgreSQL
+- 預設司機 1許春芳、2陳錦隆、3彭運土、4林聖原、5張閔傑、6陳錦隆
+- 人工改派、支援司機二次確認、V17臨時交接
+- 502/503/504 友善處理

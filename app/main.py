@@ -28,6 +28,7 @@ DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
 DB = DATA_DIR / 'app.db'
 DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
 USE_POSTGRES = bool(DATABASE_URL)
+APP_VERSION='V18.3.14'
 
 _PREFILL_CACHE = {}
 _PREFILL_CACHE_TTL_SECONDS = 45
@@ -680,6 +681,7 @@ def next_service_date():
 def ensure_today(c):
     rebuild_service_date(c,today())
 
+print(f'APP_VERSION={APP_VERSION}',flush=True)
 init_db()
 
 def audit(c, actor_type, actor_id, role, action, etype, eid, before=None, after=None, reason=None):
@@ -706,6 +708,18 @@ async def publish(event):
 
 @app.get('/health')
 def health(): return {'ok':True,'environment':APP_ENV}
+
+@app.middleware('http')
+async def no_cache_versioned_assets(request:Request, call_next):
+    response=await call_next(request)
+    if request.url.path=='/' or request.url.path.startswith('/static/') or request.url.path.startswith('/api/secretary/documents/prefill-v2'):
+        response.headers['Cache-Control']='no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['X-App-Version']=APP_VERSION
+    return response
+
+@app.get('/api/version')
+def api_version():
+    return {'version':APP_VERSION,'database':'postgresql' if USE_POSTGRES else 'sqlite','prefill_api':'v2'}
 
 @app.get('/', response_class=HTMLResponse)
 def home():
@@ -1002,8 +1016,8 @@ def ensure_prefill_delivery(c, service_date, branch_id):
         x=c.execute('SELECT * FROM deliveries WHERE service_date=? AND branch_id=?',(service_date,branch_id)).fetchone()
     return x
 
-@app.get('/api/secretary/documents/prefill')
-def document_prefill(req:Request, service_date:str|None=None):
+@app.get('/api/secretary/documents/prefill-v2')
+def document_prefill_v2(req:Request, service_date:str|None=None):
     require_user(req,['SECRETARY'])
     d=service_date or next_service_date()
     try:
@@ -1022,7 +1036,7 @@ def document_prefill(req:Request, service_date:str|None=None):
     try:
         closure=c.execute('SELECT reason FROM global_closures WHERE service_date=?',(d,)).fetchone()
         if closure:
-            result={'service_date':d,'is_global_closure':True,'closure_reason':closure['reason'],'count':0,'rows':[]}
+            result={'app_version':APP_VERSION,'service_date':d,'is_global_closure':True,'closure_reason':closure['reason'],'count':0,'rows':[]}
             c.close(); _prefill_cache_set(cache_key,result); return result
 
         branches=c.execute("SELECT b.id,b.code,b.name,b.route_id,b.stop_order,b.delivery_weekdays,b.delivery_frequency,r.code route_code,r.name route_name FROM branches b JOIN routes r ON r.id=b.route_id WHERE b.active=1 AND r.active=1 ORDER BY CAST(r.code AS INTEGER),r.code,b.stop_order").fetchall()
@@ -1072,7 +1086,7 @@ def document_prefill(req:Request, service_date:str|None=None):
 
             rows.append({'id':did,'branch_id':bid,'service_date':d,'status':status,'document_final':doc,'outbound_original':outbound,'branch_code':b['code'],'branch_name':b['name'],'stop_order':b['stop_order'],'route_code':b['route_code'],'route_name':b['route_name'],'driver_id':driver_id,'driver_name':driver_name})
 
-        result={'service_date':d,'is_global_closure':False,'closure_reason':None,'count':len(rows),'rows':rows}
+        result={'app_version':APP_VERSION,'service_date':d,'is_global_closure':False,'closure_reason':None,'count':len(rows),'rows':rows}
         c.close(); _prefill_cache_set(cache_key,result); return result
     except Exception as e:
         try: c.rollback()
