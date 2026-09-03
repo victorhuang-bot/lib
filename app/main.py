@@ -28,7 +28,7 @@ DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
 DB = DATA_DIR / 'app.db'
 DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
 USE_POSTGRES = bool(DATABASE_URL)
-APP_VERSION='V18.3.14'
+APP_VERSION='V18.3.15'
 
 _PREFILL_CACHE = {}
 _PREFILL_CACHE_TTL_SECONDS = 45
@@ -712,14 +712,14 @@ def health(): return {'ok':True,'environment':APP_ENV}
 @app.middleware('http')
 async def no_cache_versioned_assets(request:Request, call_next):
     response=await call_next(request)
-    if request.url.path=='/' or request.url.path.startswith('/static/') or request.url.path.startswith('/api/secretary/documents/prefill-v2'):
+    if request.url.path=='/' or request.url.path.startswith('/static/') or request.url.path.startswith('/api/secretary/documents/prefill-v3'):
         response.headers['Cache-Control']='no-store, no-cache, must-revalidate, max-age=0'
         response.headers['X-App-Version']=APP_VERSION
     return response
 
 @app.get('/api/version')
 def api_version():
-    return {'version':APP_VERSION,'database':'postgresql' if USE_POSTGRES else 'sqlite','prefill_api':'v2'}
+    return {'version':APP_VERSION,'database':'postgresql' if USE_POSTGRES else 'sqlite','prefill_api':'v3'}
 
 @app.get('/', response_class=HTMLResponse)
 def home():
@@ -1016,8 +1016,8 @@ def ensure_prefill_delivery(c, service_date, branch_id):
         x=c.execute('SELECT * FROM deliveries WHERE service_date=? AND branch_id=?',(service_date,branch_id)).fetchone()
     return x
 
-@app.get('/api/secretary/documents/prefill-v2')
-def document_prefill_v2(req:Request, service_date:str|None=None):
+@app.get('/api/secretary/documents/prefill-v3')
+def document_prefill_v3(req:Request, service_date:str|None=None):
     require_user(req,['SECRETARY'])
     d=service_date or next_service_date()
     try:
@@ -1049,7 +1049,7 @@ def document_prefill_v2(req:Request, service_date:str|None=None):
 
         drivers=c.execute('SELECT id,name FROM drivers WHERE active=1').fetchall()
         driver_name_by_id={x['id']:x['name'] for x in drivers}
-        settings=c.execute("SELECT key,value FROM app_settings WHERE key LIKE 'DEFAULT_ROUTE_DRIVER_%'").fetchall()
+        settings=c.execute("SELECT key,value FROM app_settings WHERE key LIKE ?",('DEFAULT_ROUTE_DRIVER_%',)).fetchall()
         default_driver_by_route={}
         for x in settings:
             try:
