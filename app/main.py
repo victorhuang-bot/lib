@@ -1026,7 +1026,7 @@ def document_prefill(req:Request, service_date:str|None=None):
             c.close(); _prefill_cache_set(cache_key,result); return result
 
         branches=c.execute("SELECT b.id,b.code,b.name,b.route_id,b.stop_order,b.delivery_weekdays,b.delivery_frequency,r.code route_code,r.name route_name FROM branches b JOIN routes r ON r.id=b.route_id WHERE b.active=1 AND r.active=1 ORDER BY CAST(r.code AS INTEGER),r.code,b.stop_order").fetchall()
-        exceptions=c.execute("SELECT branch_id,exception_type,start_date,end_date FROM delivery_exceptions WHERE start_date<=? AND end_date>=?",(d,d)).fetchall()
+        exceptions=c.execute("SELECT branch_id,exception_type,service_date FROM delivery_exceptions WHERE service_date=?",(d,)).fetchall()
         stop_ids={x['branch_id'] for x in exceptions if x['exception_type']=='STOP'}
         add_ids={x['branch_id'] for x in exceptions if x['exception_type']=='ADD'}
 
@@ -1221,7 +1221,7 @@ async def save_schedule_range(req:Request):
             c.execute("""INSERT INTO delivery_exceptions(service_date,branch_id,exception_type,reason,created_by,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(service_date,branch_id) DO UPDATE SET exception_type=excluded.exception_type,reason=excluded.reason,created_by=excluded.created_by,created_at=excluded.created_at""",(d,bid,et,reason,u['id'],now()))
             audit(c,'USER',u['id'],u['role'],'SET_DELIVERY_EXCEPTION','BRANCH',bid,after={'service_date':d,'exception_type':et,'reason':reason})
             rebuild_service_date(c,d)
-    c.commit(); c.close(); await publish({'type':'schedule.updated','dates':dates}); return {'ok':True,'days':len(dates)}
+    c.commit(); c.close(); _prefill_cache_clear(); await publish({'type':'schedule.updated','dates':dates}); return {'ok':True,'days':len(dates)}
 
 @app.delete('/api/schedule-exceptions/{eid}')
 async def delete_schedule_exception(eid:str,req:Request):
@@ -1238,7 +1238,7 @@ async def delete_schedule_exception(eid:str,req:Request):
         x=c.execute('SELECT * FROM delivery_exceptions WHERE id=?',(iid,)).fetchone()
         if not x: c.close(); raise HTTPException(404)
         c.execute('DELETE FROM delivery_exceptions WHERE id=?',(iid,)); audit(c,'USER',u['id'],u['role'],'DELETE_DELIVERY_EXCEPTION','BRANCH',x['branch_id'],before=dict(x)); rebuild_service_date(c,x['service_date'])
-    c.commit(); c.close(); await publish({'type':'schedule.updated'}); return {'ok':True}
+    c.commit(); c.close(); _prefill_cache_clear(); await publish({'type':'schedule.updated'}); return {'ok':True}
 
 @app.get('/api/secretary/sign-status')
 def secretary_sign_status(req:Request):
