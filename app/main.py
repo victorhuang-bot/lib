@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, Response, HTTPException, Form
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
-import sqlite3, os, secrets, hashlib, hmac, base64, io, json, asyncio, csv, smtplib, ssl, re
+import sqlite3, os, secrets, hashlib, hmac, base64, io, json, asyncio, csv, re
 try:
     import psycopg
     from psycopg.rows import dict_row
@@ -11,9 +11,9 @@ except Exception:
     psycopg=None
     ConnectionPool=None
 
-from email.message import EmailMessage
 from datetime import datetime, timedelta, date, timezone
 from zoneinfo import ZoneInfo
+from app.services.gmail_service import send_email as gmail_send_email, gmail_config, gmail_diagnostics
 import qrcode
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as XLImage
@@ -28,7 +28,7 @@ DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
 DB = DATA_DIR / 'app.db'
 DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
 USE_POSTGRES = bool(DATABASE_URL)
-APP_VERSION='V18.3.16'
+APP_VERSION='V19'
 
 _PREFILL_CACHE = {}
 _PREFILL_CACHE_TTL_SECONDS = 45
@@ -266,63 +266,50 @@ def verify_secret(s, stored):
     except: return False
 def thash(s): return hashlib.sha256(s.encode()).hexdigest()
 
-def smtp_config():
-    # V18.2: non-secret Google Workspace defaults are safe fallbacks.
-    # Render only needs to hold SMTP_PASSWORD as a secret; every value can still be overridden.
-    raw_port=(os.getenv('SMTP_PORT') or '587').strip() or '587'
-    try: port=int(raw_port)
-    except ValueError: port=587
-    user=(os.getenv('SMTP_USER') or 'victor.huang@moving-match.com').strip()
-    sender=(os.getenv('SMTP_FROM') or 'lib@moving-match.com').strip()
+def email_provider_config():
+    cfg=gmail_config(); diag=gmail_diagnostics()
     return {
-        'host': (os.getenv('SMTP_HOST') or 'smtp.gmail.com').strip(),
-        'port': port,
-        'user': user,
-        'password': os.getenv('SMTP_PASSWORD','').strip(),
-        'from': sender or user,
-        'tls': (os.getenv('SMTP_TLS') or 'true').lower() not in ('0','false','no'),
+        'provider':'gmail_api',
+        'host':'gmail.googleapis.com',
+        'port':443,
+        'user':cfg['gmail_user'],
+        'from':cfg['from_address'],
+        'from_name':cfg['from_name'],
+        'tls':True,
+        'password_configured':False,
+        'client_id_configured':bool(cfg['client_id']),
+        'client_secret_configured':bool(cfg['client_secret']),
+        'refresh_token_configured':bool(cfg['refresh_token']),
+        'oauth_configured':diag['oauth_configured'],
+        'configured':diag['configured'],
+        'checks':diag['checks'],
+        'source':{k:('Render' if os.getenv(k) else ('系統預設' if k in ('GOOGLE_GMAIL_USER','EMAIL_FROM_ADDRESS','EMAIL_FROM_NAME') else '未設定')) for k in diag['checks']},
+        'missing':diag['missing'],
+        'connection':'HTTPS / OAuth 2.0',
+        'scope':'https://www.googleapis.com/auth/gmail.send',
     }
 
-def smtp_diagnostics():
-    cfg=smtp_config()
-    # Port/TLS and the non-secret Workspace values have application defaults.
-    # Only fields required by the effective runtime config are reported missing.
-    checks={
-        'SMTP_HOST': bool(cfg['host']),
-        'SMTP_PORT': bool(cfg['port']),
-        'SMTP_USER': bool(cfg['user']),
-        'SMTP_PASSWORD': bool(cfg['password']),
-        'SMTP_FROM': bool(cfg['from']),
-        'SMTP_TLS': isinstance(cfg['tls'], bool),
-    }
-    source={
-        'SMTP_HOST': 'Render' if os.getenv('SMTP_HOST') else '系統預設',
-        'SMTP_PORT': 'Render' if os.getenv('SMTP_PORT') else '系統預設',
-        'SMTP_USER': 'Render' if os.getenv('SMTP_USER') else '系統預設',
-        'SMTP_PASSWORD': 'Render' if os.getenv('SMTP_PASSWORD') else '未設定',
-        'SMTP_FROM': 'Render' if os.getenv('SMTP_FROM') else '系統預設',
-        'SMTP_TLS': 'Render' if os.getenv('SMTP_TLS') else '系統預設',
-    }
-    return {'checks':checks,'source':source,'missing':[k for k,v in checks.items() if not v]}
 
-def smtp_send(subject, body, to_list, cc_list=None, attachments=None):
-    cfg=smtp_config(); cc_list=cc_list or []; attachments=attachments or []
-    if not cfg['host'] or not cfg['from'] or not cfg['password']:
-        raise RuntimeError('SMTP 尚未完整設定：'+', '.join(smtp_diagnostics()['missing']))
-    msg=EmailMessage(); msg['Subject']=subject; msg['From']=cfg['from']; msg['To']=', '.join(to_list)
-    if cc_list: msg['Cc']=', '.join(cc_list)
-    msg.set_content(body)
-    for filename,data,mime in attachments:
-        maintype,subtype=mime.split('/',1); msg.add_attachment(data,maintype=maintype,subtype=subtype,filename=filename)
-    if cfg['port']==465:
-        with smtplib.SMTP_SSL(cfg['host'],cfg['port'],context=ssl.create_default_context(),timeout=30) as x:
-            if cfg['user']: x.login(cfg['user'],cfg['password'])
-            x.send_message(msg)
+def email_delivery_identifier(email_type, period, to_list, cc_list=None, bcc_list=None):
+    values=[email_type or '',period or '']+sorted((to_list or [])+(cc_list or [])+(bcc_list or []))
+    return hashlib.sha256('|'.join(values).encode('utf-8')).hexdigest()
+
+
+def email_log_create(c, email_type, subject, to_list, cc_list, bcc_list, sender, triggered_by, period='', delivery_identifier=None):
+    recipients=','.join((to_list or [])+(cc_list or [])+(bcc_list or []))
+    legacy_report_type='DAILY' if email_type=='daily_report' else ('MONTHLY' if email_type=='monthly_report' else email_type.upper())
+    cur=c.execute('''INSERT INTO email_logs(report_type,period,recipients,status,error_message,created_at,email_type,subject,to_addresses,cc_addresses,bcc_addresses,sender,provider,message_id,triggered_by,delivery_identifier)
+                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                  (legacy_report_type,period,recipients,'sending',None,now(),email_type,subject,','.join(to_list or []),','.join(cc_list or []),','.join(bcc_list or []),sender,'gmail_api',None,triggered_by,delivery_identifier))
+    return cur.lastrowid
+
+
+def email_log_finish(c, lid, result):
+    if result.get('success'):
+        c.execute("UPDATE email_logs SET status='sent',sent_at=?,provider='gmail_api',message_id=?,error_message=NULL WHERE id=?",(now(),result.get('message_id'),lid))
     else:
-        with smtplib.SMTP(cfg['host'],cfg['port'],timeout=30) as x:
-            if cfg['tls']: x.starttls(context=ssl.create_default_context())
-            if cfg['user']: x.login(cfg['user'],cfg['password'])
-            x.send_message(msg)
+        c.execute("UPDATE email_logs SET status='failed',provider='gmail_api',message_id=NULL,error_message=? WHERE id=?",((result.get('error') or 'Gmail API send failed')[:2000],lid))
+
 
 def init_db():
     DB.parent.mkdir(parents=True, exist_ok=True)
@@ -344,7 +331,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS driver_sessions(token_hash TEXT PRIMARY KEY, driver_id INTEGER, device_id INTEGER, expires_at TEXT);
     CREATE TABLE IF NOT EXISTS daily_reports(id INTEGER PRIMARY KEY, service_date TEXT UNIQUE, secretary_signature TEXT, secretary_signed_at TEXT, status TEXT DEFAULT 'OPEN', locked_at TEXT);
     CREATE TABLE IF NOT EXISTS email_recipients(id INTEGER PRIMARY KEY, email TEXT, recipient_type TEXT DEFAULT 'TO', active INTEGER DEFAULT 1, created_at TEXT);
-    CREATE TABLE IF NOT EXISTS email_logs(id INTEGER PRIMARY KEY, report_type TEXT, period TEXT, recipients TEXT, status TEXT, error_message TEXT, sent_at TEXT, created_at TEXT);
+    CREATE TABLE IF NOT EXISTS email_logs(id INTEGER PRIMARY KEY, report_type TEXT, period TEXT, recipients TEXT, status TEXT, error_message TEXT, sent_at TEXT, created_at TEXT, email_type TEXT, subject TEXT, to_addresses TEXT, cc_addresses TEXT, bcc_addresses TEXT, sender TEXT, provider TEXT, message_id TEXT, triggered_by TEXT, delivery_identifier TEXT);
     CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, value TEXT);
     CREATE TABLE IF NOT EXISTS delivery_exceptions(id INTEGER PRIMARY KEY, service_date TEXT, branch_id INTEGER, exception_type TEXT, reason TEXT, created_by INTEGER, created_at TEXT, UNIQUE(service_date,branch_id));
     CREATE TABLE IF NOT EXISTS global_closures(id INTEGER PRIMARY KEY, service_date TEXT UNIQUE, reason TEXT, created_by INTEGER, created_at TEXT);
@@ -369,6 +356,7 @@ def init_db():
             c.execute('INSERT INTO audit_logs(actor_type,role,action,entity_type,entity_id,after_json,created_at) VALUES(?,?,?,?,?,?,?)',('SYSTEM','SYSTEM','SEED_BRANCH_TOKEN','BRANCH',str(i),json.dumps({'token':tok}),now()))
         c.commit()
     migrate_corrections_for_repeat_requests(c)
+    migrate_email_logs_gmail_api(c)
     migrate_route_secretary_signatures(c)
     migrate_official_routes_and_branches(c)
     migrate_default_route_drivers(c)
@@ -382,6 +370,23 @@ def init_db():
     ensure_today(c)
     reset_test_day_once(c)
     c.close()
+
+def migrate_email_logs_gmail_api(c):
+    cols=[
+        ('email_type','TEXT'),('subject','TEXT'),('to_addresses','TEXT'),('cc_addresses','TEXT'),
+        ('bcc_addresses','TEXT'),('sender','TEXT'),('provider','TEXT'),('message_id','TEXT'),
+        ('triggered_by','TEXT'),('delivery_identifier','TEXT')
+    ]
+    if USE_POSTGRES:
+        for name,typ in cols:
+            c.execute(f'ALTER TABLE email_logs ADD COLUMN IF NOT EXISTS {name} {typ}')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_email_logs_delivery_identifier ON email_logs(delivery_identifier,status)')
+    else:
+        existing={r['name'] for r in c.execute('PRAGMA table_info(email_logs)').fetchall()}
+        for name,typ in cols:
+            if name not in existing: c.execute(f'ALTER TABLE email_logs ADD COLUMN {name} {typ}')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_email_logs_delivery_identifier ON email_logs(delivery_identifier,status)')
+    c.commit()
 
 def migrate_route_secretary_signatures(c):
     if USE_POSTGRES:
@@ -773,10 +778,11 @@ async def forgot(req:Request):
         raw=secrets.token_urlsafe(32); c.execute('INSERT INTO password_resets(user_id,token_hash,expires_at,created_at) VALUES(?,?,?,?)',(u['id'],thash(raw),future_iso(minutes=30),now())); c.commit()
         reset_url=APP_BASE_URL+f'/reset-password?token={raw}'
         if APP_ENV!='production' or DEMO_RESET_LINKS: demo=reset_url
-        try:
-            smtp_send('圖書物流系統密碼重設',f'帳號：{username}\n\n請於 30 分鐘內使用以下連結重設密碼：\n{reset_url}\n\n若非本人操作，請忽略此信。',[RESET_EMAIL])
-        except Exception as e:
-            c.close(); raise HTTPException(500,'密碼重設信寄送失敗：'+str(e))
+        cfg=gmail_config(); subject='圖書物流系統密碼重設'; body=f'帳號：{username}\n\n請於 30 分鐘內使用以下連結重設密碼：\n{reset_url}\n\n若非本人操作，請忽略此信。'
+        lid=email_log_create(c,'password_reset',subject,[RESET_EMAIL],[],[],cfg['from_address'],'SYSTEM',period=today())
+        c.commit()
+        result=await asyncio.to_thread(gmail_send_email,[RESET_EMAIL],subject,body,None,[],[],None,'password_reset:'+str(u['id'])+':'+str(raw))
+        email_log_finish(c,lid,result); c.commit()
     c.close(); return {'ok':True,'message':'若帳號存在，系統已寄送重設連結。','demo_reset_url':demo}
 @app.post('/api/auth/password/reset')
 async def reset(req:Request):
@@ -1569,15 +1575,26 @@ def monthly_pdf(req:Request,month:str|None=None):
 
 @app.get('/api/email/settings')
 def email_settings(req:Request):
-    require_user(req,['ADMIN']); cfg=smtp_config(); diag=smtp_diagnostics(); return {'host':cfg['host'],'port':cfg['port'],'user':cfg['user'],'from':cfg['from'],'tls':cfg['tls'],'password_configured':bool(cfg['password']),'checks':diag['checks'],'source':diag['source'],'missing':diag['missing'],'configured':not bool(diag['missing'])}
+    require_user(req,['ADMIN'])
+    return email_provider_config()
+
+@app.get('/api/email/health')
+def email_health(req:Request):
+    require_user(req,['ADMIN','SECRETARY'])
+    cfg=email_provider_config()
+    return {'provider':'gmail_api','configured':cfg['configured'],'oauth_configured':cfg['oauth_configured'],'sender':cfg['from'],'gmail_user':cfg['user']}
 
 @app.post('/api/email/test')
 async def email_test(req:Request):
-    require_user(req,['ADMIN']); p=await req.json(); to=(p.get('email') or '').strip()
+    u=require_user(req,['ADMIN']); p=await req.json(); to=(p.get('email') or '').strip()
     if '@' not in to: raise HTTPException(400,'請輸入測試收件信箱')
-    try: smtp_send('圖書物流系統 SMTP 測試','Google Workspace SMTP 已成功連線。\n\n寄件者：'+smtp_config()['from'],[to])
-    except Exception as e: raise HTTPException(500,str(e))
-    return {'ok':True,'message':'測試郵件已寄出'}
+    cfg=gmail_config(); subject='圖書物流系統 Gmail API 測試'; body='Google Workspace Gmail API 已成功寄送測試郵件。\\n\\n寄件者：'+cfg['from_address']
+    c=db(); lid=email_log_create(c,'test',subject,[to],[],[],cfg['from_address'],f"{u['role']}:{u['id']}",period=today()); c.commit(); c.close()
+    result=await asyncio.to_thread(gmail_send_email,[to],subject,body,None,[],[],None,'test:'+str(lid))
+    c=db(); email_log_finish(c,lid,result); audit(c,'USER',u['id'],u['role'],'SEND_TEST_EMAIL','EMAIL_LOG',lid,after={'provider':'gmail_api','success':result['success']}); c.commit(); c.close()
+    if result['success']:
+        return {'ok':True,'success':True,'provider':'gmail_api','message_id':result['message_id'],'message':'測試郵件已成功寄送。'}
+    return {'ok':False,'success':False,'provider':'gmail_api','message_id':None,'error':result['error'],'message':'測試郵件寄送失敗：'+result['error']}
 
 @app.get('/api/email/recipients')
 def recipients(req:Request):
@@ -1586,8 +1603,8 @@ def recipients(req:Request):
 async def add_recipient(req:Request):
     u=require_user(req,['ADMIN']); p=await req.json(); email=(p.get('email') or '').strip(); typ=(p.get('recipient_type') or 'TO').upper()
     if '@' not in email: raise HTTPException(400,'Email格式錯誤')
-    if typ not in ('TO','CC'): raise HTTPException(400,'收件類型錯誤')
-    c=db(); cur=c.execute('INSERT INTO email_recipients(email,recipient_type,active,created_at) VALUES(?,?,1,?)',(email,typ,now())); rid=cur.lastrowid; audit(c,'USER',u['id'],u['role'],'ADD_EMAIL_RECIPIENT','EMAIL_RECIPIENT',rid); c.commit(); c.close(); return {'ok':True}
+    if typ not in ('TO','CC','BCC'): raise HTTPException(400,'收件類型錯誤')
+    c=db(); cur=c.execute('INSERT INTO email_recipients(email,recipient_type,active,created_at) VALUES(?,?,1,?)',(email,typ,now())); rid=cur.lastrowid; audit(c,'USER',u['id'],u['role'],'ADD_EMAIL_RECIPIENT','EMAIL_RECIPIENT',rid,after={'recipient_type':typ,'email':email}); c.commit(); c.close(); return {'ok':True}
 @app.post('/api/email/recipients/{rid}/toggle')
 async def toggle_recipient(req:Request,rid:int):
     u=require_user(req,['ADMIN']); c=db(); c.execute('UPDATE email_recipients SET active=CASE active WHEN 1 THEN 0 ELSE 1 END WHERE id=?',(rid,)); audit(c,'USER',u['id'],u['role'],'TOGGLE_EMAIL_RECIPIENT','EMAIL_RECIPIENT',rid); c.commit(); c.close(); return {'ok':True}
@@ -1596,7 +1613,12 @@ def delete_recipient(req:Request,rid:int):
     u=require_user(req,['ADMIN']); c=db(); c.execute('DELETE FROM email_recipients WHERE id=?',(rid,)); audit(c,'USER',u['id'],u['role'],'DELETE_EMAIL_RECIPIENT','EMAIL_RECIPIENT',rid); c.commit(); c.close(); return {'ok':True}
 @app.get('/api/email/logs')
 def email_logs(req:Request):
-    require_user(req,['ADMIN','SECRETARY']); c=db(); rows=[dict(x) for x in c.execute('SELECT * FROM email_logs ORDER BY id DESC LIMIT 100').fetchall()]; c.close(); return rows
+    require_user(req,['ADMIN','SECRETARY']); c=db(); rows=[dict(x) for x in c.execute('SELECT * FROM email_logs ORDER BY id DESC LIMIT 100').fetchall()]; c.close()
+    for r in rows:
+        r['to']=r.get('to_addresses') or ''
+        r['cc']=r.get('cc_addresses') or ''
+        r['bcc']=r.get('bcc_addresses') or ''
+    return rows
 
 def build_report_email(report_type,period):
     c=db()
@@ -1606,29 +1628,51 @@ def build_report_email(report_type,period):
         d=period[:10]; rows=report_rows(c,d,d); c.close(); title=f'{d} 圖書物流配送日報'; x=xlsx_bytes(rows,title); p=pdf_bytes(rows,title); base=d+'_daily'
     return title,[(base+'.xlsx',x,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),(base+'.pdf',p,'application/pdf')]
 
+def _email_recipient_groups(rec):
+    to=[x['email'] for x in rec if x['recipient_type']=='TO']
+    cc=[x['email'] for x in rec if x['recipient_type']=='CC']
+    bcc=[x['email'] for x in rec if x['recipient_type']=='BCC']
+    if not to:
+        if cc: to=[cc.pop(0)]
+        elif bcc: to=[bcc.pop(0)]
+    return to,cc,bcc
+
 @app.post('/api/email/send-report')
 async def send_report(req:Request):
-    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); period=p.get('period') or today(); typ=(p.get('report_type') or 'DAILY').upper(); c=db(); rec=[dict(x) for x in c.execute('SELECT email,recipient_type FROM email_recipients WHERE active=1 ORDER BY id').fetchall()]
+    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); period=p.get('period') or today(); typ=(p.get('report_type') or 'DAILY').upper()
+    c=db(); rec=[dict(x) for x in c.execute('SELECT email,recipient_type FROM email_recipients WHERE active=1 ORDER BY id').fetchall()]
     if not rec: c.close(); raise HTTPException(409,'尚未設定Email收件人')
-    to=[x['email'] for x in rec if x['recipient_type']=='TO']; cc=[x['email'] for x in rec if x['recipient_type']=='CC'];
-    if not to and cc: to=[cc.pop(0)]
-    cur=c.execute('INSERT INTO email_logs(report_type,period,recipients,status,created_at) VALUES(?,?,?,?,?)',(typ,period,','.join([x['email'] for x in rec]),'SENDING',now())); lid=cur.lastrowid; c.commit(); c.close()
-    try:
-        title,atts=build_report_email(typ,period); smtp_send(title,f'附件為 {period} 圖書物流報表。\n\n寄件者：{smtp_config()["from"]}',to,cc,atts)
-        c=db(); c.execute("UPDATE email_logs SET status='SENT',sent_at=?,error_message=NULL WHERE id=?",(now(),lid)); audit(c,'USER',u['id'],u['role'],'SEND_REPORT_EMAIL','EMAIL_LOG',lid,after={'recipients':[x['email'] for x in rec]}); c.commit(); c.close(); return {'ok':True,'status':'SENT','recipients':[x['email'] for x in rec]}
-    except Exception as e:
-        c=db(); c.execute("UPDATE email_logs SET status='FAILED',error_message=? WHERE id=?",(str(e),lid)); c.commit(); c.close(); raise HTTPException(500,str(e))
+    to,cc,bcc=_email_recipient_groups(rec); cfg=gmail_config(); email_type='monthly_report' if typ=='MONTHLY' else 'daily_report'
+    identifier=email_delivery_identifier(email_type,period,to,cc,bcc)
+    old=c.execute("SELECT id,message_id FROM email_logs WHERE delivery_identifier=? AND lower(status)='sent' ORDER BY id DESC LIMIT 1",(identifier,)).fetchone()
+    if old:
+        c.close(); return {'ok':True,'status':'SENT','provider':'gmail_api','message_id':old['message_id'],'recipients':[x['email'] for x in rec],'duplicate_skipped':True}
+    title,atts=build_report_email(typ,period); body=f'附件為 {period} 圖書物流報表。\\n\\n寄件者：{cfg["from_address"]}'
+    lid=email_log_create(c,email_type,title,to,cc,bcc,cfg['from_address'],f"{u['role']}:{u['id']}",period,identifier); c.commit(); c.close()
+    result=await asyncio.to_thread(gmail_send_email,to,title,body,None,cc,bcc,atts,identifier)
+    c=db(); email_log_finish(c,lid,result); audit(c,'USER',u['id'],u['role'],'SEND_REPORT_EMAIL','EMAIL_LOG',lid,after={'provider':'gmail_api','success':result['success'],'recipients':[x['email'] for x in rec]}); c.commit(); c.close()
+    if result['success']:
+        return {'ok':True,'status':'SENT','provider':'gmail_api','message_id':result['message_id'],'recipients':[x['email'] for x in rec]}
+    return {'ok':False,'status':'FAILED','provider':'gmail_api','message_id':None,'error':result['error'],'recipients':[x['email'] for x in rec]}
+
 @app.post('/api/email/logs/{lid}/resend')
 async def resend_email(req:Request,lid:int):
     u=require_user(req,['ADMIN','SECRETARY']); c=db(); old=c.execute('SELECT * FROM email_logs WHERE id=?',(lid,)).fetchone(); c.close()
     if not old: raise HTTPException(404)
-    rec=[x.strip() for x in (old['recipients'] or '').split(',') if x.strip()];
-    if not rec: raise HTTPException(409,'原寄送紀錄沒有收件人')
-    try:
-        title,atts=build_report_email(old['report_type'],old['period']); smtp_send(title,f'重新寄送：附件為 {old["period"]} 圖書物流報表。',[rec[0]],rec[1:],atts)
-        c=db(); c.execute("UPDATE email_logs SET status='SENT',sent_at=?,error_message=NULL WHERE id=?",(now(),lid)); audit(c,'USER',u['id'],u['role'],'RESEND_REPORT_EMAIL','EMAIL_LOG',lid); c.commit(); c.close(); return {'ok':True,'status':'SENT'}
-    except Exception as e:
-        c=db(); c.execute("UPDATE email_logs SET status='FAILED',error_message=? WHERE id=?",(str(e),lid)); c.commit(); c.close(); raise HTTPException(500,str(e))
+    old=dict(old)
+    to=[x.strip() for x in (old['to_addresses'] or '').split(',') if x.strip()] if old.get('to_addresses') else []
+    cc=[x.strip() for x in (old['cc_addresses'] or '').split(',') if x.strip()] if old.get('cc_addresses') else []
+    bcc=[x.strip() for x in (old['bcc_addresses'] or '').split(',') if x.strip()] if old.get('bcc_addresses') else []
+    if not (to or cc or bcc):
+        legacy=[x.strip() for x in (old['recipients'] or '').split(',') if x.strip()]
+        if legacy: to=[legacy[0]]; cc=legacy[1:]
+    if not (to or cc or bcc): raise HTTPException(409,'原寄送紀錄沒有收件人')
+    title,atts=build_report_email(old['report_type'],old['period']); cfg=gmail_config(); body=f'重新寄送：附件為 {old["period"]} 圖書物流報表。'
+    identifier=(old['delivery_identifier'] or email_delivery_identifier('resend',old['period'],to,cc,bcc))+':resend:'+str(lid)+':'+now()
+    c=db(); new_lid=email_log_create(c,'resend_'+str(old.get('email_type') or old['report_type']).lower(),title,to,cc,bcc,cfg['from_address'],f"{u['role']}:{u['id']}",old['period'],identifier); c.commit(); c.close()
+    result=await asyncio.to_thread(gmail_send_email,to,title,body,None,cc,bcc,atts,identifier)
+    c=db(); email_log_finish(c,new_lid,result); audit(c,'USER',u['id'],u['role'],'RESEND_REPORT_EMAIL','EMAIL_LOG',new_lid,after={'provider':'gmail_api','success':result['success'],'source_log_id':lid}); c.commit(); c.close()
+    return {'ok':result['success'],'status':'SENT' if result['success'] else 'FAILED','provider':'gmail_api','message_id':result.get('message_id'),'error':result.get('error'),'log_id':new_lid}
 
 @app.get('/api/events')
 async def events(req:Request):
@@ -1642,7 +1686,7 @@ async def events(req:Request):
     return StreamingResponse(gen(),media_type='text/event-stream')
 
 
-# V17 臨時交接 / 分段簽名 / SMTP
+# V17 臨時交接 / 分段簽名
 @app.get('/api/route-handoffs')
 def route_handoffs(req:Request, service_date:str|None=None):
     require_user(req,['ADMIN','SECRETARY']); d=service_date or today(); c=db(); rows=[dict(x) for x in c.execute("SELECT h.*,r.code route_code,fd.name from_driver,td.name to_driver,b.name start_branch FROM route_handoffs h JOIN daily_routes dr ON dr.id=h.daily_route_id JOIN routes r ON r.id=dr.route_id JOIN drivers fd ON fd.id=h.from_driver_id JOIN drivers td ON td.id=h.to_driver_id JOIN deliveries x ON x.id=h.start_delivery_id JOIN branches b ON b.id=x.branch_id WHERE h.service_date=? ORDER BY h.id DESC",(d,)).fetchall()];c.close();return rows
@@ -1675,10 +1719,3 @@ async def segment_sign(rid:int,req:Request):
     if not assigned or not assigned['n'] or assigned['done']<assigned['n']: c.close(); raise HTTPException(409,'您的配送區段尚未全部完成')
     c.execute('INSERT INTO route_segment_signatures(service_date,daily_route_id,driver_id,signature,signed_at) VALUES(?,?,?,?,?) ON CONFLICT(service_date,daily_route_id,driver_id) DO UPDATE SET signature=excluded.signature,signed_at=excluded.signed_at',(today(),rid,s['driver_id'],sig,now()));audit(c,'DRIVER',s['driver_id'],'DRIVER','DRIVER_SEGMENT_SIGN','DAILY_ROUTE',rid);c.commit();c.close();return {'ok':True}
 
-@app.post('/api/email/smtp-test')
-async def smtp_test(req:Request):
-    require_user(req,['ADMIN']);p=await req.json();email=(p.get('email') or '').strip()
-    if '@' not in email: raise HTTPException(400,'Email格式錯誤')
-    try:smtp_send('圖書物流系統 SMTP 測試','lib.moving-match.com SMTP 郵件服務測試成功。',[email])
-    except Exception as e:raise HTTPException(500,str(e))
-    return {'ok':True}

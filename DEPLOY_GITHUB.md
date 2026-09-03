@@ -111,7 +111,7 @@ Repository 根目錄應該直接看到：
 目前版本適合 UAT / 展示 / 流程測試。真正正式營運前，建議再完成：
 
 - PostgreSQL
-- 真正 SMTP / Email provider
+- 真正 Gmail API / Email provider
 - MFA
 - PIN / Login Rate Limit
 - Object Storage 保存簽名

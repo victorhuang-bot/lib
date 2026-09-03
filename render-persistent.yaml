@@ -1,6 +1,5 @@
-# Production-style Render example with persistent disk.
-# Persistent disks require a paid Render plan. Rename this file to render.yaml
-# if you want the database to survive service replacement/redeploys.
+# Alternate paid Render example with a persistent local disk.
+# Current V19 production uses PostgreSQL via DATABASE_URL; this file is retained only as an optional deployment template.
 services:
   - type: web
     name: library-logistics
@@ -27,5 +26,15 @@ services:
         sync: false
       - key: DEMO_BRANCH_PIN
         sync: false
-
-# SMTP values are managed in Render Environment
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REFRESH_TOKEN
+        sync: false
+      - key: GOOGLE_GMAIL_USER
+        value: victor.huang@moving-match.com
+      - key: EMAIL_FROM_ADDRESS
+        value: lib@moving-match.com
+      - key: EMAIL_FROM_NAME
+        value: 圖書物流配送暨電子簽收管理系統

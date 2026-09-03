@@ -1,33 +1,21 @@
-# V18.3.16 PostgreSQL — 公文單筆存檔修正版
+# V19 Gmail API Edition
 
-基底：V18.3.15
+基底：V18.3.16 PostgreSQL
 
-## 修正
-Render Log 顯示：
-`NameError: name '_prefill_save_db' is not defined`
-
-V18.3.16 補回 `_prefill_save_db()`，單筆公文存檔會：
-1. 取得/建立所選日期與分館的 delivery。
-2. 檢查司機是否已輸入圖書送出。
-3. 寫入 document_original / document_final。
-4. WAITING_SECRETARY 轉為 WAITING_DRIVER。
-5. 寫入 Audit Log。
-6. commit PostgreSQL。
-7. 清除該日期 prefill cache。
-
-## 版本驗證
-- APP_VERSION = V18.3.16
-- Prefill GET API = /api/secretary/documents/prefill-v4
-- common.js cache bust = v18.3.16
+## 唯一核心改造
+- Email transport：Google Workspace SMTP → Google Gmail API `users.messages.send`。
+- OAuth scope：`https://www.googleapis.com/auth/gmail.send`。
+- MIME UTF-8 → base64URL → HTTPS 443 Gmail API。
+- Access token 不落地；由 refresh token 自動取得。
+- 不 fallback SMTP。
 
 ## 保留
-- 公文日期自由選擇
-- 高速批次查詢
-- 45 秒 cache
-- 選日期不大量建立 future delivery
-- 存檔才建立 delivery
-- 今日即時看板維持今天
-- Neon pooled PostgreSQL
-- 預設司機 1許春芳、2陳錦隆、3彭運土、4林聖原、5張閔傑、6陳錦隆
-- 人工改派、支援司機二次確認、V17 臨時交接
-- 502/503/504 友善處理
+配送、QR、4位碼、電子簽收、分館更正、路線/每日指派、司機裝置、休館/停送/非固定運送、Audit Log、PostgreSQL、公文預填與日/月報內容全部保留。
+
+## Email
+- 保留 `/api/email/settings`、`/recipients`、`/logs`、`/test`、`/send-report`、resend。
+- 新增 `/api/email/health`。
+- TO/CC/BCC。
+- Email Log migration 新增 provider/message_id/sender/subject/to/cc/bcc/triggered_by/delivery_identifier。
+- 日/月報 duplicate prevention。
+- 429/500/502/503/504/timeout 最多 retry 3 次，backoff 1/2/4 秒。

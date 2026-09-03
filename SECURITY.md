@@ -18,7 +18,7 @@ Before production:
 - MFA for admin/secretary
 - CSRF protection appropriate to deployment
 - robust rate limits and lockouts
-- formal SMTP password reset delivery
+- formal Gmail API password reset delivery
 - private object storage for signature images instead of DB data URLs
 - backup/restore drills
 - public-sector vulnerability scan / penetration test

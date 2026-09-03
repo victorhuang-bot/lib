@@ -1,3 +1,7 @@
+# V19 Gmail API Edition
+
+Email 寄送已改為 Google Gmail API + OAuth 2.0 + HTTPS 443；配送與簽收功能沿用 V18.3.16 PostgreSQL。
+
 # 圖書物流配送暨電子簽收管理系統 — GitHub Deploy Edition
 
 這是可直接放入 GitHub Repository，並透過 Docker 部署到公開 HTTPS 網站的 MVP / UAT 版本。
