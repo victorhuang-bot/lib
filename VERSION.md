@@ -1,10 +1,30 @@
-# V19.2.3 Gmail API
+# V19.2.4 Gmail API — Login 401 loop hotfix
 
-修正：
-- 修正查詢月份路線總計 JS 被放在 external script tag 內而未執行。
-- 查詢月份路線總計改共用已正常運作的 /api/reports/monthly-route-summary。
-- 月份欄位會自動帶入目前月份。
-- 無資料顯示 0；錯誤顯示明確訊息。
-- 本月日期/路線累積的 1/3/5 線套淡底色，2/4/6 線白底。
-- 每條路線三欄後加垂直分隔線。
-- common.js cache bust 更新為 v19.2.3。
+基底：V19.2.3
+
+## 問題
+登入頁載入時，DOMContentLoaded 無條件呼叫：
+`loadMonthlyRouteCumulative()`
+
+該函式會呼叫需要 ADMIN/SECRETARY 權限的月統計 API。
+使用者尚未登入時 API 回 401，common.js 因此顯示：
+「登入狀態已失效，請重新登入。」
+並 reload，形成循環。
+
+## 修正
+- 登入頁 DOMContentLoaded 只初始化月份，不呼叫受保護 API。
+- `/api/auth/me` 確認已登入後，`loadAll()` 才並行載入：
+  - 今日 Dashboard
+  - 今日配送
+  - 本月日期 / 路線累積
+  - 查詢月份路線總計
+- common.js cache bust 更新到 v19.2.4。
+- APP_VERSION 固定為 V19.2.4。
+
+## 保留
+- V19 Gmail API
+- 本月日期 / 路線累積
+- 路線交錯底色
+- 查詢月份路線總計
+- 分館隔日補簽
+- 配送 / QR / 角色權限 / 報表邏輯
