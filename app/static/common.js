@@ -37,5 +37,5 @@ async function api(url,opt={}){
   }
   throw new Error(`服務暫時無法回應（${lastStatus||'network'}）`);
 }
-function statusText(s){return ({WAITING_SECRETARY:'待秘書輸入',WAITING_DRIVER:'待司機輸入',WAITING_BRANCH:'待分館簽收',WAITING_DRIVER_CONFIRM:'分館已簽・待司機確認',WAITING_BRANCH_CORRECTION:'待分館更正',WAITING_DRIVER_RECONFIRM:'已更正・待司機確認',STOP_COMPLETED:'本站完成'})[s]||s}
+function statusText(s){return ({WAITING_SECRETARY:'待秘書輸入',WAITING_DRIVER:'待司機輸入',WAITING_BRANCH:'待分館簽收',LATE_BRANCH_PENDING:'運送完成・待分館補簽',WAITING_DRIVER_CONFIRM:'分館已簽・待司機確認',WAITING_BRANCH_CORRECTION:'待分館更正',WAITING_DRIVER_RECONFIRM:'已更正・待司機確認',STOP_COMPLETED:'本站完成'})[s]||s}
 function sigPad(canvas){const ctx=canvas.getContext('2d');ctx.lineWidth=3;ctx.lineCap='round';let down=false,last=null;function p(e){let r=canvas.getBoundingClientRect(),t=e.touches?e.touches[0]:e;return {x:(t.clientX-r.left)*canvas.width/r.width,y:(t.clientY-r.top)*canvas.height/r.height}}canvas.onpointerdown=e=>{down=true;last=p(e)};canvas.onpointermove=e=>{if(!down)return;let n=p(e);ctx.beginPath();ctx.moveTo(last.x,last.y);ctx.lineTo(n.x,n.y);ctx.stroke();last=n};canvas.onpointerup=()=>down=false;return()=>canvas.toDataURL('image/png')}
