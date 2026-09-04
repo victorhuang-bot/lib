@@ -28,7 +28,7 @@ DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
 DB = DATA_DIR / 'app.db'
 DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
 USE_POSTGRES = bool(DATABASE_URL)
-APP_VERSION='V19.2.6'
+APP_VERSION='V19.2.7'
 
 _PREFILL_CACHE = {}
 _PREFILL_CACHE_TTL_SECONDS = 45
@@ -1059,7 +1059,13 @@ async def branch_verify(req:Request):
                             service_date ASC, id ASC
                    LIMIT 1''',(b['id'],today(),today())).fetchone()
     if not x:c.close();raise HTTPException(404,'目前沒有待簽收或待補簽的配送任務')
-    raw=secrets.token_urlsafe(32);c.execute('INSERT INTO branch_sessions(token_hash,branch_id,delivery_id,expires_at) VALUES(?,?,?,?)',(thash(raw),b['id'],x['id'],future_iso(minutes=30)));c.commit();c.close();return {'session':raw,'branch':b['name']}
+    raw=secrets.token_urlsafe(32);c.execute('INSERT INTO branch_sessions(token_hash,branch_id,delivery_id,expires_at) VALUES(?,?,?,?)',(thash(raw),b['id'],x['id'],future_iso(minutes=30)));c.commit()
+    is_historical_late=(x['status']=='LATE_BRANCH_PENDING' and x['service_date']<today())
+    result={'session':raw,'branch':b['name'],'service_date':x['service_date'],
+            'late_pending':x['status']=='LATE_BRANCH_PENDING',
+            'historical_late_pending':is_historical_late}
+    c.close()
+    return result
 def branch_auth(req):
     auth=req.headers.get('Authorization',''); raw=auth[7:] if auth.startswith('Bearer ') else ''
     c=db();r=c.execute('SELECT * FROM branch_sessions WHERE token_hash=? AND expires_at>?',(thash(raw),now())).fetchone();c.close();
@@ -1073,6 +1079,24 @@ async def branch_sign(req:Request):
     s=branch_auth(req);p=await req.json();c=db();
     x=c.execute('SELECT * FROM deliveries WHERE id=?',(s['delivery_id'],)).fetchone()
     if not x: c.close(); raise HTTPException(404,'找不到配送資料')
+
+    # V19.2.7: 分館跨日待補 FIFO 強制規則。
+    # 即使分館持有較新日期的舊 session，也不得跳過更早的待補簽。
+    older_pending=c.execute(
+        '''SELECT id,service_date FROM deliveries
+           WHERE branch_id=?
+             AND status='LATE_BRANCH_PENDING'
+             AND branch_signed_at IS NULL
+             AND branch_signature IS NULL
+             AND service_date<?
+           ORDER BY service_date ASC,id ASC
+           LIMIT 1''',
+        (s['branch_id'],x['service_date'])
+    ).fetchone()
+    if older_pending:
+        old_date=older_pending['service_date']
+        c.close()
+        raise HTTPException(409,f'尚有較早待補簽：{old_date}，請先完成該筆後才能處理 {x["service_date"]}')
     late=(x['status']=='LATE_BRANCH_PENDING' and not x['branch_signed_at'] and not x['branch_signature'])
     if not late and is_report_locked(c,x['service_date']): c.close(); raise HTTPException(409,'該日日報已鎖定')
     if x['status'] not in ('WAITING_BRANCH','LATE_BRANCH_PENDING') or x['branch_signed_at'] or x['branch_signature']:
