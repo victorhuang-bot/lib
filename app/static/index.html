@@ -1,6 +1,28 @@
 <!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>圖書物流配送暨電子簽收 V18</title><link rel="stylesheet" href="/static/style.css"><style>
 .nav{display:flex;gap:8px;flex-wrap:wrap}.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0}.modal{position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center;z-index:20}.modalbox{background:white;padding:24px;border-radius:18px;max-width:720px;width:92%;max-height:90vh;overflow:auto}.formgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.formgrid label{font-size:13px;color:#667}.formgrid input,.formgrid select{width:100%}.danger{background:#a43b32;color:#fff}.small{padding:7px 10px;font-size:13px}.tagoff{opacity:.55}.sectiontitle{display:flex;justify-content:space-between;align-items:center;gap:10px}.nowrap{white-space:nowrap}@media(max-width:700px){.formgrid{grid-template-columns:1fr}}
 .range-calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;user-select:none;touch-action:none}.range-calendar .day{border:1px solid #d8dee8;border-radius:10px;padding:10px 4px;text-align:center;cursor:pointer;background:#fff}.range-calendar .day.sel{background:#e7eef8;border-color:#1f2937;font-weight:700}.range-calendar .blank{border:0}
+
+/* V19.2.2 route-group shading */
+#monthlyRouteTable th:nth-child(2), #monthlyRouteTable td:nth-child(2),
+#monthlyRouteTable th:nth-child(3), #monthlyRouteTable td:nth-child(3),
+#monthlyRouteTable th:nth-child(4), #monthlyRouteTable td:nth-child(4),
+#monthlyRouteTable th:nth-child(8), #monthlyRouteTable td:nth-child(8),
+#monthlyRouteTable th:nth-child(9), #monthlyRouteTable td:nth-child(9),
+#monthlyRouteTable th:nth-child(10), #monthlyRouteTable td:nth-child(10),
+#monthlyRouteTable th:nth-child(14), #monthlyRouteTable td:nth-child(14),
+#monthlyRouteTable th:nth-child(15), #monthlyRouteTable td:nth-child(15),
+#monthlyRouteTable th:nth-child(16), #monthlyRouteTable td:nth-child(16) {
+  background: rgba(148,163,184,.08);
+}
+#monthlyRouteTable th:nth-child(4), #monthlyRouteTable td:nth-child(4),
+#monthlyRouteTable th:nth-child(7), #monthlyRouteTable td:nth-child(7),
+#monthlyRouteTable th:nth-child(10), #monthlyRouteTable td:nth-child(10),
+#monthlyRouteTable th:nth-child(13), #monthlyRouteTable td:nth-child(13),
+#monthlyRouteTable th:nth-child(16), #monthlyRouteTable td:nth-child(16),
+#monthlyRouteTable th:nth-child(19), #monthlyRouteTable td:nth-child(19) {
+  border-right: 1px solid rgba(100,116,139,.22);
+}
+
 </style></head><body>
 <div id="login" class="login card"><h1>圖書物流配送暨電子簽收</h1><p class="muted">管理者 / 總館秘書</p><input id="u" placeholder="帳號" style="width:100%;margin:6px 0"><input id="p" type="password" placeholder="密碼" style="width:100%;margin:6px 0"><button class="btn big" onclick="login()">登入</button><button class="btn alt big" style="margin-top:8px" onclick="forgot()">忘記密碼</button><div id="msg"></div></div>
 <div id="app" class="hidden"><header class="top"><div class="brand">圖書物流配送暨電子簽收管理系統</div><div><span id="who"></span> <button class="btn alt" onclick="logout()">登出</button></div></header><main class="wrap">
@@ -40,8 +62,8 @@
 <section id="reports" class="hidden"><div class="grid"><div class="card"><h2>今日路線總表 / 三方簽核</h2><p class="muted">分館可當日簽收；若分館無法當日簽名，司機可先標記「運送完成・待分館補簽」並完成路線簽名，秘書亦可先完成簽核。未曾簽名的分館資料之後可補填一次，且不需司機再次確認。</p><div id="routeSignStatus"></div><div id="dailyGrandTotal" class="notice hidden"></div><div id="routeDetailHost"></div><div id="secretarySignBox" class="hidden"><h3>總館秘書－今日路線總表最終簽名</h3><p class="muted">待補簽分館不阻擋今日簽核；已簽名資料仍維持鎖定，未曾簽名的待補資料可於之後補填一次。</p><canvas id="secSig" width="650" height="180" style="width:100%;border:2px dashed #b8c0cc;border-radius:12px;touch-action:none"></canvas><div class="toolbar"><button class="btn alt" onclick="clearSig('secSig')">清除簽名</button><button class="btn" onclick="secretaryFinalSign()">確認今日路線總表並完成最終簽名</button></div></div><div id="reportLocked" class="ok hidden"></div></div><div><div class="card"><div class="sectiontitle"><div><h2>本月日期 / 路線累積</h2><p class="muted">依配送日期列出 1～6 線的公文、圖書送出、圖書收回；月底自動結算，下個月重新累積。分館補簽後會自動更新。</p></div><input type="month" id="monthlyCumMonth" onchange="loadMonthlyRouteSummary()"></div><div id="monthlyRouteSummary" style="overflow:auto"><div class="muted">載入中…</div></div></div>
 <div class="card" id="monthlyRouteCumCard" style="margin-bottom:18px">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-    <div><h2>本月各路線累積總計</h2>
-    <div class="muted">每日各路線 + 本月截至目前各路線累積（公文／送出／收回）</div></div>
+    <div><h2>查詢月份路線總計</h2>
+    <div class="muted">整理所選月份各路線公文／圖書送出／圖書收回數量。</div></div>
     <input id="monthlyRouteCumMonth" type="month" onchange="loadMonthlyRouteCumulative()">
   </div>
   <div id="monthlyRouteCumBody" style="margin-top:14px">讀取中...</div>
@@ -55,25 +77,23 @@ async function loadMonthlyRouteCumulative(){
   const m=document.querySelector('#monthlyRouteCumMonth');
   if(!m) return;
   if(!m.value) m.value=new Date().toISOString().slice(0,7);
+  const box=document.querySelector('#monthlyRouteCumBody');
+  if(!box) return;
+  box.innerHTML='<div class="muted">讀取中...</div>';
   try{
     const r=await api('/api/dashboard/monthly-route-cumulative?month='+encodeURIComponent(m.value));
-    const box=document.querySelector('#monthlyRouteCumBody'); if(!box) return;
-    let x='<div style="overflow:auto"><table class="table"><thead><tr><th>日期</th>';
-    for(let i=1;i<=6;i++) x+=`<th>${i}線<br>公文／送出／收回</th>`;
-    x+='<th>當日總計<br>公文／送出／收回</th></tr></thead><tbody>';
-    for(const d of (r.daily||[])){
-      const mp={}; let a=0,b=0,c=0;
-      for(const q of (d.routes||[])){mp[q.route_id]=q;a+=q.document||0;b+=q.outbound||0;c+=q.inbound||0;}
-      x+=`<tr><td>${d.date.slice(5).replace('-','/')}</td>`;
-      for(let i=1;i<=6;i++){const q=mp[i]||{document:0,outbound:0,inbound:0};x+=`<td>${q.document}／${q.outbound}／${q.inbound}</td>`;}
-      x+=`<td><b>${a}／${b}／${c}</b></td></tr>`;
+    const totals=r.route_totals||{};
+    let x='<div style="overflow:auto"><table class="table" id="monthlyRouteTable"><thead><tr><th>路線</th><th>公文</th><th>圖書送出</th><th>圖書收回</th></tr></thead><tbody>';
+    for(let i=1;i<=6;i++){
+      const q=totals[String(i)]||{document:0,outbound:0,inbound:0};
+      x+=`<tr><td><b>${i}線</b></td><td>${q.document||0}</td><td>${q.outbound||0}</td><td>${q.inbound||0}</td></tr>`;
     }
-    x+='</tbody><tfoot><tr><th>本月各路線累積</th>';
-    for(let i=1;i<=6;i++){const q=(r.route_totals||{})[String(i)]||{document:0,outbound:0,inbound:0};x+=`<th>${q.document}／${q.outbound}／${q.inbound}</th>`;}
     const g=r.grand_total||{document:0,outbound:0,inbound:0};
-    x+=`<th>${g.document}／${g.outbound}／${g.inbound}</th></tr></tfoot></table></div>`;
+    x+=`</tbody><tfoot><tr><th>全路線合計</th><th>${g.document||0}</th><th>${g.outbound||0}</th><th>${g.inbound||0}</th></tr></tfoot></table></div>`;
     box.innerHTML=x;
-  }catch(e){document.querySelector('#monthlyRouteCumBody').innerHTML='<div class="error">無法讀取本月累積</div>';}
+  }catch(e){
+    box.innerHTML='<div class="error">讀取月份路線總計失敗：'+esc(e.message||String(e))+'</div>';
+  }
 }
 document.addEventListener('DOMContentLoaded',loadMonthlyRouteCumulative);
 
