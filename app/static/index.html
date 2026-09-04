@@ -2,7 +2,7 @@
 .nav{display:flex;gap:8px;flex-wrap:wrap}.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0}.modal{position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center;z-index:20}.modalbox{background:white;padding:24px;border-radius:18px;max-width:720px;width:92%;max-height:90vh;overflow:auto}.formgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.formgrid label{font-size:13px;color:#667}.formgrid input,.formgrid select{width:100%}.danger{background:#a43b32;color:#fff}.small{padding:7px 10px;font-size:13px}.tagoff{opacity:.55}.sectiontitle{display:flex;justify-content:space-between;align-items:center;gap:10px}.nowrap{white-space:nowrap}@media(max-width:700px){.formgrid{grid-template-columns:1fr}}
 .range-calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;user-select:none;touch-action:none}.range-calendar .day{border:1px solid #d8dee8;border-radius:10px;padding:10px 4px;text-align:center;cursor:pointer;background:#fff}.range-calendar .day.sel{background:#e7eef8;border-color:#1f2937;font-weight:700}.range-calendar .blank{border:0}
 
-/* V19.2.4 route-group shading */
+/* V19.2.5 route-group shading */
 #monthlyRouteTable th:nth-child(2), #monthlyRouteTable td:nth-child(2),
 #monthlyRouteTable th:nth-child(3), #monthlyRouteTable td:nth-child(3),
 #monthlyRouteTable th:nth-child(4), #monthlyRouteTable td:nth-child(4),
@@ -24,7 +24,7 @@
 }
 
 
-/* V19.2.4 dynamic monthly route grouping */
+/* V19.2.5 dynamic monthly route grouping */
 #monthlyRouteSummaryTable .route-alt { background: rgba(148,163,184,.10); }
 #monthlyRouteSummaryTable .route-end { border-right: 2px solid rgba(100,116,139,.24); }
 #monthlyRouteSummaryTable .daytotal { background: rgba(226,232,240,.45); }
@@ -79,7 +79,7 @@
 <section id="account" class="hidden"><div class="grid"><div class="card"><h2>我的帳號</h2><div id="accountInfo" class="muted"></div><div class="formgrid"><label>目前密碼<input id="ownCurrent" type="password"></label><label>新密碼（至少 8 碼）<input id="ownNew" type="password"></label><label>再次輸入新密碼<input id="ownConfirm" type="password"></label></div><div class="toolbar"><button class="btn" onclick="changeOwnPassword()">變更我的密碼</button></div><p class="muted">系統不顯示目前密碼；資料庫僅保存密碼雜湊。</p></div><div id="adminResetCard" class="card"><h2>重設總館秘書密碼</h2><p class="muted">僅管理者可操作；需再次輸入管理者目前密碼確認。</p><div class="formgrid"><label>管理者目前密碼<input id="adminVerify" type="password"></label><label>秘書新密碼<input id="secNew" type="password"></label><label>再次輸入秘書新密碼<input id="secConfirm" type="password"></label></div><div class="toolbar"><button class="btn" onclick="resetSecretaryPassword()">重設秘書密碼</button></div></div></div></section>
 <section id="email" class="hidden"><div class="grid"><div class="card"><h2>Google Workspace Gmail API</h2><div id="emailProviderStatus"></div><div id="emailTestTools" class="toolbar"><input id="emailTestEmail" type="email" placeholder="測試收件信箱"><button class="btn" onclick="testEmail()">寄送測試郵件</button></div><p class="muted">OAuth Secret / Refresh Token 僅存在 Render Environment，後台永遠不顯示實際內容。</p></div><div class="card"><h2>Email 收件人</h2><div id="emailAdminTools" class="toolbar"><input id="emailAddr" type="email" placeholder="name@example.com"><select id="emailType"><option>TO</option><option>CC</option><option>BCC</option></select><button class="btn" onclick="addEmail()">新增</button></div><div id="emailRecipients"></div></div><div class="card"><h2>報表寄送 / 紀錄</h2><div class="toolbar"><button class="btn" onclick="sendReport()">寄送今日報表 Excel + PDF</button></div><div id="emailLogs"></div></div></div></section>
 <section id="audit" class="hidden"><div class="card"><h2>Audit Log</h2><div id="auditList" style="overflow:auto"></div></div></section>
-</main></div><div id="modalHost"></div><script src="/static/common.js?v=19.2.4"></script><script>
+</main></div><div id="modalHost"></div><script src="/static/common.js?v=19.2.5"></script><script>
 async function loadMonthlyRouteCumulative(){
   const m=document.querySelector('#monthlyRouteCumMonth');
   const box=document.querySelector('#monthlyRouteCumBody');
