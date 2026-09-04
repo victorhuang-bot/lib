@@ -28,7 +28,7 @@ DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
 DB = DATA_DIR / 'app.db'
 DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
 USE_POSTGRES = bool(DATABASE_URL)
-APP_VERSION='V19.2.5'
+APP_VERSION='V19.2.6'
 
 _PREFILL_CACHE = {}
 _PREFILL_CACHE_TTL_SECONDS = 45
@@ -389,14 +389,49 @@ def migrate_email_logs_gmail_api(c):
     c.commit()
 
 def migrate_route_secretary_signatures(c):
-    if USE_POSTGRES:
-        c.execute('ALTER TABLE daily_routes ADD COLUMN IF NOT EXISTS secretary_signature TEXT')
-        c.execute('ALTER TABLE daily_routes ADD COLUMN IF NOT EXISTS secretary_signed_at TEXT')
-    else:
-        cols={r['name'] for r in c.execute("PRAGMA table_info(daily_routes)").fetchall()}
-        if 'secretary_signature' not in cols: c.execute('ALTER TABLE daily_routes ADD COLUMN secretary_signature TEXT')
-        if 'secretary_signed_at' not in cols: c.execute('ALTER TABLE daily_routes ADD COLUMN secretary_signed_at TEXT')
-    c.commit()
+    """Idempotent PostgreSQL migration for route secretary signatures.
+
+    Avoids running ALTER TABLE on every boot when the columns already exist.
+    If a schema change is genuinely needed, allow DDL more time than the normal
+    10s query timeout while keeping lock acquisition bounded.
+    """
+    try:
+        rows=c.execute(
+            """SELECT column_name
+               FROM information_schema.columns
+               WHERE table_schema=current_schema()
+                 AND table_name='daily_routes'
+                 AND column_name IN ('secretary_signature','secretary_signed_at')"""
+        ).fetchall()
+        existing={r['column_name'] for r in rows}
+        if 'secretary_signature' in existing and 'secretary_signed_at' in existing:
+            return
+
+        # Startup DDL may legitimately take longer than the ordinary app query timeout.
+        # Keep lock wait bounded so a busy DB doesn't hang startup indefinitely.
+        c.execute("SET LOCAL statement_timeout TO '60s'")
+        c.execute("SET LOCAL lock_timeout TO '8s'")
+
+        if 'secretary_signature' not in existing:
+            c.execute("ALTER TABLE daily_routes ADD COLUMN IF NOT EXISTS secretary_signature TEXT")
+        if 'secretary_signed_at' not in existing:
+            c.execute("ALTER TABLE daily_routes ADD COLUMN IF NOT EXISTS secretary_signed_at TEXT")
+    except Exception as e:
+        # If another deploy completed the same migration concurrently, re-check schema.
+        try:
+            rows=c.execute(
+                """SELECT column_name
+                   FROM information_schema.columns
+                   WHERE table_schema=current_schema()
+                     AND table_name='daily_routes'
+                     AND column_name IN ('secretary_signature','secretary_signed_at')"""
+            ).fetchall()
+            existing={r['column_name'] for r in rows}
+            if 'secretary_signature' in existing and 'secretary_signed_at' in existing:
+                return
+        except Exception:
+            pass
+        raise
 
 def migrate_corrections_for_repeat_requests(c):
     if USE_POSTGRES:
