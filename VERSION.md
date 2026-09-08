@@ -1,21 +1,22 @@
-# V19.2.8 Gmail API — 三種完成狀態、公文收回、總館用語
+# V19.2.9 Gmail API
 
-## 三種完成狀態
-- 運送完成：司機 operational completed = `STOP_COMPLETED + LATE_BRANCH_PENDING`。
-- 分館簽收完成：以分館實際簽名為準；待補簽不阻擋司機路線簽名。
-- 總館簽核完成：總館填妥公文送出後完成路線簽核；與司機運送完成分離。
+## 1. 作廢配送
+- 管理者可將未簽名、未由司機確認的錯建配送作廢。
+- VOID 保留 Audit Log，不刪歷史。
+- VOID 不列入司機路線有效站點總數，也不阻擋路線簽名。
 
-## 數量責任
-- 總館：公文送出 `document_final`
-- 分館：公文收回 `document_return_final` + 圖書收回 `inbound_final`
-- 司機：圖書送出 `outbound_final`
+## 2. 三種完成狀態分離
+- 運送完成：STOP_COMPLETED + LATE_BRANCH_PENDING。
+- 分館簽收完成：branch_signed_at / branch_signature。
+- 總館簽核完成：daily_routes.secretary_signature / secretary_signed_at。
 
-## 解鎖流程
-- 司機輸入圖書送出後，即可進入分館簽收／待補簽流程，不再被「總館尚未填公文」卡住。
-- 總館可在司機完成當日運送、甚至司機完成路線簽名後補填／修改公文送出。
-- 公文送出直到「該路線總館簽核」前可修改；簽核後鎖定。
-- 總館路線簽核前，該路線每站公文送出必須已填（無公文請填 0）。
-- 最終日報簽核要求所有配送路線皆完成司機簽名與總館路線簽核。
+## 3. 總館隨車物品
+- 新增 delivery_items。
+- 海報、文宣、文具、其他可同時多筆填寫數量。
+- 其他可自訂名稱。
+- 總館路線簽核後鎖定。
 
-## 用語
-所有使用者看得到的「秘書」改為「總館」。後端既有 `SECRETARY` role / API path 保留，以維持資料庫與既有登入相容。
+## 4. 分館實際簽收時間
+- 新增 deliveries.receipt_at。
+- 分館畫面預設目前時間，可修改。
+- branch_signed_at 仍由系統自動記錄且不可由分館修改。

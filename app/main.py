@@ -28,7 +28,7 @@ DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
 DB = DATA_DIR / 'app.db'
 DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
 USE_POSTGRES = bool(DATABASE_URL)
-APP_VERSION='V19.2.8'
+APP_VERSION='V19.2.9'
 
 _PREFILL_CACHE = {}
 _PREFILL_CACHE_TTL_SECONDS = 45
@@ -324,7 +324,8 @@ def init_db():
     CREATE TABLE IF NOT EXISTS driver_activation_tokens(id INTEGER PRIMARY KEY, driver_id INTEGER, token_hash TEXT UNIQUE, created_at TEXT, expires_at TEXT, used_at TEXT, revoked_at TEXT, created_by INTEGER);
     CREATE TABLE IF NOT EXISTS branches(id INTEGER PRIMARY KEY, code TEXT UNIQUE, name TEXT, route_id INTEGER, stop_order INTEGER, active INTEGER DEFAULT 1, pin_hash TEXT, access_token_hash TEXT UNIQUE, qr_created_at TEXT, address TEXT DEFAULT '', phone TEXT DEFAULT '', contact_name TEXT DEFAULT '', contact_info TEXT DEFAULT '', delivery_weekdays TEXT DEFAULT '1,2,3,4,5', delivery_frequency TEXT DEFAULT '每週固定');
     CREATE TABLE IF NOT EXISTS daily_routes(id INTEGER PRIMARY KEY, service_date TEXT, route_id INTEGER, driver_id INTEGER, status TEXT DEFAULT 'ACTIVE', driver_signature TEXT, driver_signed_at TEXT, UNIQUE(service_date,route_id));
-    CREATE TABLE IF NOT EXISTS deliveries(id INTEGER PRIMARY KEY, service_date TEXT, daily_route_id INTEGER, branch_id INTEGER, status TEXT DEFAULT 'WAITING_SECRETARY', document_original INTEGER, document_final INTEGER, document_return_final INTEGER, outbound_original INTEGER, outbound_final INTEGER, inbound_final INTEGER, note_final TEXT, signer_name TEXT, branch_signed_at TEXT, branch_signature TEXT, correction_signature TEXT, correction_signer_name TEXT, correction_reason TEXT, corrected_at TEXT, driver_confirmed_at TEXT, row_version INTEGER DEFAULT 1, UNIQUE(service_date,branch_id));
+    CREATE TABLE IF NOT EXISTS deliveries(id INTEGER PRIMARY KEY, service_date TEXT, daily_route_id INTEGER, branch_id INTEGER, status TEXT DEFAULT 'WAITING_SECRETARY', document_original INTEGER, document_final INTEGER, document_return_final INTEGER, outbound_original INTEGER, outbound_final INTEGER, inbound_final INTEGER, note_final TEXT, signer_name TEXT, branch_signed_at TEXT, branch_signature TEXT, receipt_at TEXT, voided_at TEXT, voided_by INTEGER, void_reason TEXT, correction_signature TEXT, correction_signer_name TEXT, correction_reason TEXT, corrected_at TEXT, driver_confirmed_at TEXT, row_version INTEGER DEFAULT 1, UNIQUE(service_date,branch_id));
+    CREATE TABLE IF NOT EXISTS delivery_items(id INTEGER PRIMARY KEY, delivery_id INTEGER, item_type TEXT, item_name TEXT DEFAULT '', quantity INTEGER DEFAULT 0, created_by INTEGER, updated_at TEXT);
     CREATE TABLE IF NOT EXISTS corrections(id INTEGER PRIMARY KEY, delivery_id INTEGER, requested_by_driver_id INTEGER, requested_at TEXT, fields_json TEXT, driver_note TEXT, status TEXT, resolved_at TEXT);
     CREATE TABLE IF NOT EXISTS audit_logs(id INTEGER PRIMARY KEY, actor_type TEXT, actor_id TEXT, role TEXT, action TEXT, entity_type TEXT, entity_id TEXT, before_json TEXT, after_json TEXT, reason TEXT, created_at TEXT);
     CREATE TABLE IF NOT EXISTS branch_sessions(token_hash TEXT PRIMARY KEY, branch_id INTEGER, delivery_id INTEGER, expires_at TEXT);
@@ -359,6 +360,7 @@ def init_db():
     migrate_email_logs_gmail_api(c)
     migrate_route_secretary_signatures(c)
     migrate_document_return_final(c)
+    migrate_v1929(c)
     migrate_official_routes_and_branches(c)
     migrate_default_route_drivers(c)
     stabilize_accounts_and_today_drivers(c)
@@ -460,6 +462,45 @@ def migrate_document_return_final(c):
         existing={r['name'] for r in c.execute('PRAGMA table_info(deliveries)').fetchall()}
         if 'document_return_final' not in existing:
             c.execute('ALTER TABLE deliveries ADD COLUMN document_return_final INTEGER')
+    c.commit()
+
+def migrate_v1929(c):
+    """V19.2.9: void metadata, carried items and editable receipt time."""
+    cols=[('receipt_at','TEXT'),('voided_at','TEXT'),('voided_by','INTEGER'),('void_reason','TEXT')]
+    if USE_POSTGRES:
+        rows=c.execute("""SELECT column_name FROM information_schema.columns
+                          WHERE table_schema=current_schema() AND table_name='deliveries'""").fetchall()
+        existing={r['column_name'] for r in rows}
+        missing=[(name,typ) for name,typ in cols if name not in existing]
+        if missing:
+            c.execute("SET LOCAL statement_timeout TO '60s'")
+            c.execute("SET LOCAL lock_timeout TO '8s'")
+            for name,typ in missing:
+                c.execute(f'ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS {name} {typ}')
+        c.execute("""CREATE TABLE IF NOT EXISTS delivery_items(
+            id BIGSERIAL PRIMARY KEY,
+            delivery_id INTEGER NOT NULL,
+            item_type TEXT NOT NULL,
+            item_name TEXT DEFAULT '',
+            quantity INTEGER NOT NULL DEFAULT 0,
+            created_by INTEGER,
+            updated_at TEXT
+        )""")
+    else:
+        existing={r['name'] for r in c.execute('PRAGMA table_info(deliveries)').fetchall()}
+        for name,typ in cols:
+            if name not in existing:
+                c.execute(f'ALTER TABLE deliveries ADD COLUMN {name} {typ}')
+        c.execute("""CREATE TABLE IF NOT EXISTS delivery_items(
+            id INTEGER PRIMARY KEY,
+            delivery_id INTEGER NOT NULL,
+            item_type TEXT NOT NULL,
+            item_name TEXT DEFAULT '',
+            quantity INTEGER NOT NULL DEFAULT 0,
+            created_by INTEGER,
+            updated_at TEXT
+        )""")
+    c.execute('CREATE INDEX IF NOT EXISTS idx_delivery_items_delivery_id ON delivery_items(delivery_id)')
     c.commit()
 
 def migrate_official_routes_and_branches(c):
@@ -917,9 +958,9 @@ def account_security(req:Request):
 @app.get('/api/dashboard/today')
 def dashboard(req:Request):
     require_user(req,['ADMIN','SECRETARY']); c=db(); ensure_today(c)
-    rows=c.execute('SELECT status,COUNT(*) n FROM deliveries WHERE service_date=? GROUP BY status',(today(),)).fetchall(); counts={r['status']:r['n'] for r in rows}; total=sum(counts.values()); completed=counts.get('STOP_COMPLETED',0)+counts.get('LATE_BRANCH_PENDING',0)
+    rows=c.execute("SELECT status,COUNT(*) n FROM deliveries WHERE service_date=? AND status<>'VOID' GROUP BY status",(today(),)).fetchall(); counts={r['status']:r['n'] for r in rows}; total=sum(counts.values()); completed=counts.get('STOP_COMPLETED',0)+counts.get('LATE_BRANCH_PENDING',0)
     routes=c.execute('''SELECT dr.id,r.code,r.name,d.name driver,
-        (SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id) total,
+        (SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID') total,
         (SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status IN ('STOP_COMPLETED','LATE_BRANCH_PENDING')) completed,
         dr.status
         FROM daily_routes dr
@@ -1003,7 +1044,7 @@ def driver_auth(req):
     return dict(r)
 @app.get('/api/driver/today')
 def driver_today(req:Request):
-    s=driver_auth(req); c=db(); rows=[dict(x) for x in c.execute('''SELECT x.*,b.name branch_name,b.code branch_code,r.code route_code FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id WHERE x.service_date=? AND COALESCE(dda.driver_id,dr.driver_id)=? AND b.active=1 ORDER BY r.code,b.stop_order''',(today(),s['driver_id'])).fetchall()];c.close();return rows
+    s=driver_auth(req); c=db(); rows=[dict(x) for x in c.execute('''SELECT x.*,b.name branch_name,b.code branch_code,r.code route_code FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id WHERE x.service_date=? AND COALESCE(dda.driver_id,dr.driver_id)=? AND b.active=1 AND x.status<>'VOID' ORDER BY r.code,b.stop_order''',(today(),s['driver_id'])).fetchall()];c.close();return rows
 @app.patch('/api/driver/deliveries/{did}/outbound')
 async def outbound(did:int,req:Request):
     s=driver_auth(req);p=await req.json();qty=int(p.get('qty',0));c=db();
@@ -1042,16 +1083,27 @@ async def request_correction(did:int,req:Request):
     if c.execute("SELECT 1 FROM corrections WHERE delivery_id=? AND status='PENDING'",(did,)).fetchone():c.close();raise HTTPException(409,'此筆已有待分館處理的更正要求')
     fields=['document_return','inbound']
     c.execute('INSERT INTO corrections(delivery_id,requested_by_driver_id,requested_at,fields_json,driver_note,status) VALUES(?,?,?,?,?,?)',(did,s['driver_id'],now(),json.dumps(fields),p.get('note',''),'PENDING'));audit(c,'DRIVER',s['driver_id'],'DRIVER','REQUEST_CORRECTION','DELIVERY',did,after={'fields':fields,'note':p.get('note','')});c.execute("UPDATE deliveries SET status='WAITING_BRANCH_CORRECTION',row_version=row_version+1 WHERE id=?",(did,));c.commit();c.close();await publish({'type':'delivery.updated','id':did});return {'ok':True}
+@app.get('/api/driver/items/today')
+def driver_items_today(req:Request):
+    ss=driver_auth(req); c=db()
+    rows=[dict(x) for x in c.execute("""SELECT di.delivery_id,di.item_type,di.item_name,di.quantity
+        FROM delivery_items di JOIN deliveries x ON x.id=di.delivery_id
+        JOIN daily_routes dr ON dr.id=x.daily_route_id
+        LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id
+        WHERE x.service_date=? AND x.status<>'VOID' AND COALESCE(dda.driver_id,dr.driver_id)=?
+        ORDER BY di.delivery_id,di.id""",(today(),ss['driver_id'])).fetchall()]
+    c.close(); return rows
+
 @app.get('/api/driver/routes/today')
 def driver_routes_today(req:Request):
-    s=driver_auth(req); c=db(); rows=[dict(x) for x in c.execute("""SELECT dr.id,r.code,r.name,dr.status,dr.driver_signed_at,dr.driver_signature,dr.secretary_signature,dr.secretary_signed_at,(SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id) total,(SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status IN ('STOP_COMPLETED','LATE_BRANCH_PENDING')) completed FROM daily_routes dr JOIN routes r ON r.id=dr.route_id WHERE dr.service_date=? AND dr.driver_id=? AND EXISTS(SELECT 1 FROM deliveries x WHERE x.daily_route_id=dr.id) ORDER BY r.code""",(today(),s['driver_id'])).fetchall()]; c.close(); return rows
+    s=driver_auth(req); c=db(); rows=[dict(x) for x in c.execute("""SELECT dr.id,r.code,r.name,dr.status,dr.driver_signed_at,dr.driver_signature,dr.secretary_signature,dr.secretary_signed_at,(SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID') total,(SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status IN ('STOP_COMPLETED','LATE_BRANCH_PENDING')) completed FROM daily_routes dr JOIN routes r ON r.id=dr.route_id WHERE dr.service_date=? AND dr.driver_id=? AND EXISTS(SELECT 1 FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID') ORDER BY r.code""",(today(),s['driver_id'])).fetchall()]; c.close(); return rows
 
 @app.get('/api/driver/routes/{rid}/summary')
 def driver_route_summary(rid:int,req:Request):
     s=driver_auth(req); c=db()
     dr=c.execute("""SELECT dr.id,dr.service_date,dr.status,dr.driver_signed_at,dr.driver_signature,dr.secretary_signature,dr.secretary_signed_at,dr.secretary_signature,dr.secretary_signed_at,r.code,r.name,d.name driver_name FROM daily_routes dr JOIN routes r ON r.id=dr.route_id JOIN drivers d ON d.id=dr.driver_id WHERE dr.id=? AND dr.driver_id=?""",(rid,s['driver_id'])).fetchone()
     if not dr: c.close(); raise HTTPException(403)
-    rows=[dict(x) for x in c.execute("""SELECT x.id,b.code branch_code,b.name branch_name,x.document_final,x.document_return_final,x.outbound_final,x.inbound_final,x.note_final,x.signer_name,x.correction_signer_name,x.branch_signed_at,x.corrected_at,x.status FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.daily_route_id=? ORDER BY b.stop_order""",(rid,)).fetchall()]
+    rows=[dict(x) for x in c.execute("""SELECT x.id,b.code branch_code,b.name branch_name,x.document_final,x.document_return_final,x.outbound_final,x.inbound_final,x.note_final,x.signer_name,x.correction_signer_name,x.branch_signed_at,x.corrected_at,x.status FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.daily_route_id=? AND x.status<>'VOID' ORDER BY b.stop_order""",(rid,)).fetchall()]
     totals={'document':sum((x['document_final'] or 0) for x in rows),'document_return':sum((x['document_return_final'] or 0) for x in rows),'outbound':sum((x['outbound_final'] or 0) for x in rows),'inbound':sum((x['inbound_final'] or 0) for x in rows)}
     c.close(); return {'route':dict(dr),'stops':rows,'totals':totals}
 
@@ -1059,18 +1111,65 @@ def driver_route_summary(rid:int,req:Request):
 async def sign_route(rid:int,req:Request):
     s=driver_auth(req); p=await req.json();c=db();dr=c.execute('SELECT * FROM daily_routes WHERE id=? AND driver_id=?',(rid,s['driver_id'])).fetchone();
     if not dr:c.close();raise HTTPException(403)
-    n=c.execute("SELECT COUNT(*) n FROM deliveries WHERE daily_route_id=? AND status NOT IN ('STOP_COMPLETED','LATE_BRANCH_PENDING')",(rid,)).fetchone()['n']
+    n=c.execute("SELECT COUNT(*) n FROM deliveries WHERE daily_route_id=? AND status NOT IN ('STOP_COMPLETED','LATE_BRANCH_PENDING','VOID')",(rid,)).fetchone()['n']
     if n:c.close();raise HTTPException(409,'尚有站點未完成')
     if not p.get('signature',''): c.close(); raise HTTPException(400,'司機路線簽名必填')
     if is_report_locked(c,dr['service_date']): c.close(); raise HTTPException(409,'日報已鎖定')
     c.execute("UPDATE daily_routes SET status='DRIVER_SIGNED',driver_signature=?,driver_signed_at=? WHERE id=?",(p.get('signature',''),now(),rid));audit(c,'DRIVER',s['driver_id'],'DRIVER','DRIVER_ROUTE_SIGN','DAILY_ROUTE',rid,after={'signed_at':now()});c.commit();c.close();await publish({'type':'route.updated','id':rid});return {'ok':True}
+
+@app.post('/api/deliveries/{did}/void')
+async def void_delivery(did:int,req:Request):
+    u=require_user(req,['ADMIN']); p=await req.json(); reason=(p.get('reason') or '').strip()
+    if not reason: raise HTTPException(400,'作廢原因必填')
+    c=db(); x=c.execute('SELECT * FROM deliveries WHERE id=?',(did,)).fetchone()
+    if not x: c.close(); raise HTTPException(404,'找不到配送資料')
+    if x['status']=='VOID': c.close(); return {'ok':True,'already_void':True}
+    dr=c.execute('SELECT driver_signature FROM daily_routes WHERE id=?',(x['daily_route_id'],)).fetchone()
+    if x['branch_signed_at'] or x['branch_signature']:
+        c.close(); raise HTTPException(409,'分館已簽名的配送不可作廢')
+    if dr and dr['driver_signature']:
+        c.close(); raise HTTPException(409,'司機已完成路線簽名，該配送不可再作廢')
+    before=dict(x)
+    c.execute("UPDATE deliveries SET status='VOID',voided_at=?,voided_by=?,void_reason=?,row_version=row_version+1 WHERE id=?",(now(),u['id'],reason,did))
+    audit(c,'USER',u['id'],u['role'],'VOID_DELIVERY','DELIVERY',did,before=before,after={'status':'VOID','reason':reason})
+    c.commit(); c.close(); await publish({'type':'delivery.updated','id':did}); return {'ok':True}
+
+@app.get('/api/secretary/deliveries/{did}/items')
+def get_delivery_items(did:int,req:Request):
+    require_user(req,['ADMIN','SECRETARY']); c=db()
+    rows=[dict(x) for x in c.execute("SELECT id,item_type,item_name,quantity,updated_at FROM delivery_items WHERE delivery_id=? ORDER BY id",(did,)).fetchall()]
+    c.close(); return rows
+
+@app.put('/api/secretary/deliveries/{did}/items')
+async def put_delivery_items(did:int,req:Request):
+    u=require_user(req,['SECRETARY']); p=await req.json(); items=p.get('items') or []
+    if not isinstance(items,list): raise HTTPException(400,'隨車物品格式錯誤')
+    c=db(); x=c.execute('SELECT * FROM deliveries WHERE id=?',(did,)).fetchone()
+    if not x: c.close(); raise HTTPException(404,'找不到配送資料')
+    dr=c.execute('SELECT secretary_signature FROM daily_routes WHERE id=?',(x['daily_route_id'],)).fetchone()
+    if dr and dr['secretary_signature']: c.close(); raise HTTPException(409,'本路線總館已完成簽核，隨車物品已鎖定')
+    allowed={'POSTER','PROMOTION','STATIONERY','OTHER'}; clean=[]
+    for item in items:
+        typ=str(item.get('item_type') or '').upper(); name=(item.get('item_name') or '').strip()
+        try: qty=int(item.get('quantity') or 0)
+        except: c.close(); raise HTTPException(400,'隨車物品數量必須是整數')
+        if typ not in allowed: c.close(); raise HTTPException(400,'隨車物品類型錯誤')
+        if qty<0: c.close(); raise HTTPException(400,'隨車物品數量不可小於 0')
+        if typ=='OTHER' and not name: c.close(); raise HTTPException(400,'其他項目請填名稱')
+        if qty==0: continue
+        clean.append((typ,name,qty))
+    c.execute('DELETE FROM delivery_items WHERE delivery_id=?',(did,))
+    for typ,name,qty in clean:
+        c.execute('INSERT INTO delivery_items(delivery_id,item_type,item_name,quantity,created_by,updated_at) VALUES(?,?,?,?,?,?)',(did,typ,name,qty,u['id'],now()))
+    audit(c,'USER',u['id'],u['role'],'SET_DELIVERY_ITEMS','DELIVERY',did,after={'items':[{'item_type':a,'item_name':b,'quantity':q} for a,b,q in clean]})
+    c.commit(); c.close(); return {'ok':True,'items':[{'item_type':a,'item_name':b,'quantity':q} for a,b,q in clean]}
 
 @app.post('/api/branch-session/verify')
 async def branch_verify(req:Request):
     p=await req.json(); c=db(); b=c.execute('SELECT * FROM branches WHERE access_token_hash=? AND active=1',(thash(p.get('token','')),)).fetchone()
     if not b or not verify_secret(p.get('pin',''),b['pin_hash']):c.close();raise HTTPException(401,'QR或驗證碼錯誤')
     x=c.execute('''SELECT * FROM deliveries
-                   WHERE branch_id=? AND (
+                   WHERE branch_id=? AND status<>'VOID' AND (
                      (status='LATE_BRANCH_PENDING' AND branch_signed_at IS NULL)
                      OR service_date=?
                    )
@@ -1092,10 +1191,13 @@ def branch_auth(req):
     return dict(r)
 @app.get('/api/branch-session/today')
 def branch_today(req:Request):
-    s=branch_auth(req);c=db();x=c.execute('''SELECT x.*,b.name branch_name FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.id=? AND x.branch_id=?''',(s['delivery_id'],s['branch_id'])).fetchone();corr=c.execute("SELECT * FROM corrections WHERE delivery_id=? ORDER BY CASE WHEN status='PENDING' THEN 0 ELSE 1 END,id DESC LIMIT 1",(x['id'],)).fetchone();c.close();out=dict(x);out['correction']=dict(corr) if corr else None;return out
+    s=branch_auth(req);c=db();x=c.execute('''SELECT x.*,b.name branch_name FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.id=? AND x.branch_id=?''',(s['delivery_id'],s['branch_id'])).fetchone();corr=c.execute("SELECT * FROM corrections WHERE delivery_id=? ORDER BY CASE WHEN status='PENDING' THEN 0 ELSE 1 END,id DESC LIMIT 1",(x['id'],)).fetchone();items=[dict(r) for r in c.execute("SELECT item_type,item_name,quantity FROM delivery_items WHERE delivery_id=? ORDER BY id",(x['id'],)).fetchall()];c.close();out=dict(x);out['correction']=dict(corr) if corr else None;out['items']=items;return out
 @app.post('/api/branch-session/sign')
 async def branch_sign(req:Request):
     s=branch_auth(req);p=await req.json();c=db();
+    receipt_at=(p.get('receipt_at') or now()).strip()
+    try: datetime.fromisoformat(receipt_at.replace('Z','+00:00'))
+    except: c.close(); raise HTTPException(400,'實際簽收時間格式錯誤')
     x=c.execute('SELECT * FROM deliveries WHERE id=?',(s['delivery_id'],)).fetchone()
     if not x: c.close(); raise HTTPException(404,'找不到配送資料')
 
@@ -1131,10 +1233,10 @@ async def branch_sign(req:Request):
     signed_at=now(); next_status='STOP_COMPLETED' if late else 'WAITING_DRIVER_CONFIRM'
     action='BRANCH_LATE_SIGN' if late else 'BRANCH_SIGN'
     if late:
-        c.execute("UPDATE deliveries SET document_return_final=?,inbound_final=?,note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,status=?,driver_confirmed_at=COALESCE(driver_confirmed_at,?),row_version=row_version+1 WHERE id=?",(document_return,inbound,note,signer,signature,signed_at,next_status,signed_at,x['id']))
+        c.execute("UPDATE deliveries SET document_return_final=?,inbound_final=?,note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,receipt_at=?,status=?,driver_confirmed_at=COALESCE(driver_confirmed_at,?),row_version=row_version+1 WHERE id=?",(document_return,inbound,note,signer,signature,signed_at,receipt_at,next_status,signed_at,x['id']))
     else:
-        c.execute("UPDATE deliveries SET document_return_final=?,inbound_final=?,note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,status=?,row_version=row_version+1 WHERE id=?",(document_return,inbound,note,signer,signature,signed_at,next_status,x['id']))
-    audit(c,'BRANCH',s['branch_id'],'BRANCH',action,'DELIVERY',x['id'],after={'service_date':x['service_date'],'document_return':document_return,'inbound':inbound,'note':note,'signer':signer,'late':late})
+        c.execute("UPDATE deliveries SET document_return_final=?,inbound_final=?,note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,receipt_at=?,status=?,row_version=row_version+1 WHERE id=?",(document_return,inbound,note,signer,signature,signed_at,receipt_at,next_status,x['id']))
+    audit(c,'BRANCH',s['branch_id'],'BRANCH',action,'DELIVERY',x['id'],after={'service_date':x['service_date'],'document_return':document_return,'inbound':inbound,'note':note,'signer':signer,'late':late,'receipt_at':receipt_at})
     c.commit();c.close();await publish({'type':'delivery.updated','id':x['id']});return {'ok':True,'late':late,'driver_reconfirm_required':not late}
 @app.post('/api/branch-session/correct')
 async def branch_correct(req:Request):
@@ -1460,7 +1562,7 @@ async def delete_schedule_exception(eid:str,req:Request):
 @app.get('/api/secretary/sign-status')
 def secretary_sign_status(req:Request):
     require_user(req,['ADMIN','SECRETARY']); c=db()
-    rows=[dict(x) for x in c.execute("""SELECT dr.id,r.code,r.name,d.name driver_name,dr.status,dr.driver_signed_at,dr.driver_signature,dr.secretary_signature,dr.secretary_signed_at,(SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id) total,(SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status IN ('STOP_COMPLETED','LATE_BRANCH_PENDING')) completed,(SELECT COALESCE(SUM(x.document_final),0) FROM deliveries x WHERE x.daily_route_id=dr.id) document_total,(SELECT COALESCE(SUM(x.document_return_final),0) FROM deliveries x WHERE x.daily_route_id=dr.id) document_return_total,(SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.branch_signed_at IS NOT NULL) branch_signed,(SELECT COALESCE(SUM(x.outbound_final),0) FROM deliveries x WHERE x.daily_route_id=dr.id) outbound_total,(SELECT COALESCE(SUM(x.inbound_final),0) FROM deliveries x WHERE x.daily_route_id=dr.id) inbound_total FROM daily_routes dr JOIN routes r ON r.id=dr.route_id LEFT JOIN drivers d ON d.id=dr.driver_id WHERE dr.service_date=? ORDER BY r.code""",(today(),)).fetchall()]
+    rows=[dict(x) for x in c.execute("""SELECT dr.id,r.code,r.name,d.name driver_name,dr.status,dr.driver_signed_at,dr.driver_signature,dr.secretary_signature,dr.secretary_signed_at,(SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID') total,(SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status IN ('STOP_COMPLETED','LATE_BRANCH_PENDING')) completed,(SELECT COALESCE(SUM(x.document_final),0) FROM deliveries x WHERE x.daily_route_id=dr.id) document_total,(SELECT COALESCE(SUM(x.document_return_final),0) FROM deliveries x WHERE x.daily_route_id=dr.id) document_return_total,(SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID' AND x.branch_signed_at IS NOT NULL) branch_signed,(SELECT COALESCE(SUM(x.outbound_final),0) FROM deliveries x WHERE x.daily_route_id=dr.id) outbound_total,(SELECT COALESCE(SUM(x.inbound_final),0) FROM deliveries x WHERE x.daily_route_id=dr.id) inbound_total FROM daily_routes dr JOIN routes r ON r.id=dr.route_id LEFT JOIN drivers d ON d.id=dr.driver_id WHERE dr.service_date=? ORDER BY r.code""",(today(),)).fetchall()]
     report=c.execute('SELECT * FROM daily_reports WHERE service_date=?',(today(),)).fetchone(); c.close()
     active=[r for r in rows if r['total']>0]
     return {'routes':rows,'all_required_routes_signed':bool(active) and all(r['status']=='DRIVER_SIGNED' for r in active),'all_required_routes_office_signed':bool(active) and all(r['status']=='DRIVER_SIGNED' and r['secretary_signature'] for r in active),'report':dict(report) if report else None}
@@ -1470,7 +1572,7 @@ def route_signed_summary(rid:int,req:Request):
     require_user(req,['ADMIN','SECRETARY']); c=db()
     dr=c.execute("""SELECT dr.id,dr.service_date,dr.status,dr.driver_signed_at,dr.driver_signature,dr.secretary_signature,dr.secretary_signed_at,dr.secretary_signature,dr.secretary_signed_at,r.code,r.name,d.name driver_name FROM daily_routes dr JOIN routes r ON r.id=dr.route_id LEFT JOIN drivers d ON d.id=dr.driver_id WHERE dr.id=?""",(rid,)).fetchone()
     if not dr: c.close(); raise HTTPException(404)
-    rows=[dict(x) for x in c.execute("""SELECT b.code branch_code,b.name branch_name,x.document_final,x.document_return_final,x.outbound_final,x.inbound_final,x.note_final,x.signer_name,x.correction_signer_name,x.branch_signed_at,x.corrected_at,x.branch_signature,x.correction_signature,x.status FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.daily_route_id=? ORDER BY b.stop_order""",(rid,)).fetchall()]
+    rows=[dict(x) for x in c.execute("""SELECT b.code branch_code,b.name branch_name,x.document_final,x.document_return_final,x.outbound_final,x.inbound_final,x.note_final,x.signer_name,x.correction_signer_name,x.branch_signed_at,x.corrected_at,x.branch_signature,x.correction_signature,x.status FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.daily_route_id=? AND x.status<>'VOID' ORDER BY b.stop_order""",(rid,)).fetchall()]
     totals={'document':sum((x['document_final'] or 0) for x in rows),'document_return':sum((x['document_return_final'] or 0) for x in rows),'outbound':sum((x['outbound_final'] or 0) for x in rows),'inbound':sum((x['inbound_final'] or 0) for x in rows)}
     c.close(); return {'route':dict(dr),'stops':rows,'totals':totals}
 
@@ -1482,7 +1584,7 @@ async def secretary_route_sign(rid:int,req:Request):
     c=db(); dr=c.execute("SELECT * FROM daily_routes WHERE id=?",(rid,)).fetchone()
     if not dr: c.close(); raise HTTPException(404)
     if dr['status']!='DRIVER_SIGNED': c.close(); raise HTTPException(409,'需先完成司機路線簽名')
-    missing=c.execute('SELECT COUNT(*) n FROM deliveries WHERE daily_route_id=? AND document_final IS NULL',(rid,)).fetchone()['n']
+    missing=c.execute("SELECT COUNT(*) n FROM deliveries WHERE daily_route_id=? AND status<>'VOID' AND document_final IS NULL",(rid,)).fetchone()['n']
     if missing: c.close(); raise HTTPException(409,f'尚有 {missing} 站公文送出數量未填，請由總館完成後再簽核')
     c.execute('UPDATE daily_routes SET secretary_signature=?,secretary_signed_at=? WHERE id=?',(sig,now(),rid))
     audit(c,'USER',u['id'],u['role'],'SECRETARY_ROUTE_SIGN','DAILY_ROUTE',rid,after={'signed_at':now()})
@@ -1492,10 +1594,10 @@ async def secretary_route_sign(rid:int,req:Request):
 async def final_sign(req:Request):
     u=require_user(req,['SECRETARY']);p=await req.json(); sig=p.get('signature','')
     if not sig: raise HTTPException(400,'總館簽名必填')
-    c=db(); active=c.execute("""SELECT dr.id,dr.status FROM daily_routes dr WHERE dr.service_date=? AND EXISTS(SELECT 1 FROM deliveries x WHERE x.daily_route_id=dr.id)""",(today(),)).fetchall()
+    c=db(); active=c.execute("""SELECT dr.id,dr.status FROM daily_routes dr WHERE dr.service_date=? AND EXISTS(SELECT 1 FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID')""",(today(),)).fetchall()
     if not active: c.close(); raise HTTPException(409,'今日沒有配送路線')
     if any(x['status']!='DRIVER_SIGNED' for x in active): c.close(); raise HTTPException(409,'尚有配送路線未完成司機簽名')
-    unsigned=c.execute("SELECT COUNT(*) n FROM daily_routes dr WHERE dr.service_date=? AND EXISTS(SELECT 1 FROM deliveries x WHERE x.daily_route_id=dr.id) AND dr.secretary_signature IS NULL",(today(),)).fetchone()['n']
+    unsigned=c.execute("SELECT COUNT(*) n FROM daily_routes dr WHERE dr.service_date=? AND EXISTS(SELECT 1 FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID') AND dr.secretary_signature IS NULL",(today(),)).fetchone()['n']
     if unsigned: c.close(); raise HTTPException(409,f'尚有 {unsigned} 條路線未完成總館簽核')
     if is_report_locked(c): c.close(); raise HTTPException(409,'今日日報已完成簽名並鎖定')
     c.execute("INSERT INTO daily_reports(service_date,secretary_signature,secretary_signed_at,status,locked_at) VALUES(?,?,?,?,?) ON CONFLICT(service_date) DO UPDATE SET secretary_signature=excluded.secretary_signature,secretary_signed_at=excluded.secretary_signed_at,status='LOCKED',locked_at=excluded.locked_at",(today(),sig,now(),'LOCKED',now()))
@@ -1634,7 +1736,7 @@ def daily_route_list(req:Request, service_date:str|None=None):
     require_user(req,['ADMIN','SECRETARY']); d=service_date or today(); c=db()
     rows=[dict(x) for x in c.execute('''SELECT dr.id,dr.service_date,dr.status,
         r.id route_id,r.code,r.name,dv.id driver_id,dv.name driver_name,
-        (SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id) total,
+        (SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID') total,
         (SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status='STOP_COMPLETED') completed
         FROM daily_routes dr
         JOIN routes r ON r.id=dr.route_id
@@ -1665,9 +1767,9 @@ def decode_data_url(v):
 
 def official_daily_payload(c,d):
     rep=c.execute('SELECT * FROM daily_reports WHERE service_date=?',(d,)).fetchone()
-    routes=[dict(x) for x in c.execute("""SELECT dr.id,r.code,dv.name driver_name,dr.driver_signature,dr.driver_signed_at FROM daily_routes dr JOIN routes r ON r.id=dr.route_id LEFT JOIN drivers dv ON dv.id=dr.driver_id WHERE dr.service_date=? AND EXISTS(SELECT 1 FROM deliveries x WHERE x.daily_route_id=dr.id) ORDER BY r.code""",(d,)).fetchall()]
+    routes=[dict(x) for x in c.execute("""SELECT dr.id,r.code,dv.name driver_name,dr.driver_signature,dr.driver_signed_at FROM daily_routes dr JOIN routes r ON r.id=dr.route_id LEFT JOIN drivers dv ON dv.id=dr.driver_id WHERE dr.service_date=? AND EXISTS(SELECT 1 FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID') ORDER BY r.code""",(d,)).fetchall()]
     for r in routes:
-        r['stops']=[dict(x) for x in c.execute("""SELECT b.code branch_code,b.name branch_name,x.document_final,x.document_return_final,x.outbound_final,x.inbound_final,x.note_final,x.signer_name,x.correction_signer_name,x.branch_signed_at,x.corrected_at,x.branch_signature,x.correction_signature,x.status FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.daily_route_id=? ORDER BY b.stop_order""",(r['id'],)).fetchall()]
+        r['stops']=[dict(x) for x in c.execute("""SELECT b.code branch_code,b.name branch_name,x.document_final,x.document_return_final,x.outbound_final,x.inbound_final,x.note_final,x.signer_name,x.correction_signer_name,x.branch_signed_at,x.corrected_at,x.branch_signature,x.correction_signature,x.status FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.daily_route_id=? AND x.status<>'VOID' ORDER BY b.stop_order""",(r['id'],)).fetchall()]
         r['totals']={'document':sum((x['document_final'] or 0) for x in r['stops']),'document_return':sum((x['document_return_final'] or 0) for x in r['stops']),'outbound':sum((x['outbound_final'] or 0) for x in r['stops']),'inbound':sum((x['inbound_final'] or 0) for x in r['stops'])}
     grand={'document':sum(r['totals']['document'] for r in routes),'document_return':sum(r['totals']['document_return'] for r in routes),'outbound':sum(r['totals']['outbound'] for r in routes),'inbound':sum(r['totals']['inbound'] for r in routes)}
     return {'report':dict(rep) if rep else None,'routes':routes,'grand':grand}
