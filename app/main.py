@@ -28,7 +28,7 @@ DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
 DB = DATA_DIR / 'app.db'
 DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
 USE_POSTGRES = bool(DATABASE_URL)
-APP_VERSION='V19.2.9'
+APP_VERSION='V19.2.10'
 
 _PREFILL_CACHE = {}
 _PREFILL_CACHE_TTL_SECONDS = 45
@@ -325,7 +325,6 @@ def init_db():
     CREATE TABLE IF NOT EXISTS branches(id INTEGER PRIMARY KEY, code TEXT UNIQUE, name TEXT, route_id INTEGER, stop_order INTEGER, active INTEGER DEFAULT 1, pin_hash TEXT, access_token_hash TEXT UNIQUE, qr_created_at TEXT, address TEXT DEFAULT '', phone TEXT DEFAULT '', contact_name TEXT DEFAULT '', contact_info TEXT DEFAULT '', delivery_weekdays TEXT DEFAULT '1,2,3,4,5', delivery_frequency TEXT DEFAULT '每週固定');
     CREATE TABLE IF NOT EXISTS daily_routes(id INTEGER PRIMARY KEY, service_date TEXT, route_id INTEGER, driver_id INTEGER, status TEXT DEFAULT 'ACTIVE', driver_signature TEXT, driver_signed_at TEXT, UNIQUE(service_date,route_id));
     CREATE TABLE IF NOT EXISTS deliveries(id INTEGER PRIMARY KEY, service_date TEXT, daily_route_id INTEGER, branch_id INTEGER, status TEXT DEFAULT 'WAITING_SECRETARY', document_original INTEGER, document_final INTEGER, document_return_final INTEGER, outbound_original INTEGER, outbound_final INTEGER, inbound_final INTEGER, note_final TEXT, signer_name TEXT, branch_signed_at TEXT, branch_signature TEXT, receipt_at TEXT, voided_at TEXT, voided_by INTEGER, void_reason TEXT, correction_signature TEXT, correction_signer_name TEXT, correction_reason TEXT, corrected_at TEXT, driver_confirmed_at TEXT, row_version INTEGER DEFAULT 1, UNIQUE(service_date,branch_id));
-    CREATE TABLE IF NOT EXISTS delivery_items(id INTEGER PRIMARY KEY, delivery_id INTEGER, item_type TEXT, item_name TEXT DEFAULT '', quantity INTEGER DEFAULT 0, created_by INTEGER, updated_at TEXT);
     CREATE TABLE IF NOT EXISTS corrections(id INTEGER PRIMARY KEY, delivery_id INTEGER, requested_by_driver_id INTEGER, requested_at TEXT, fields_json TEXT, driver_note TEXT, status TEXT, resolved_at TEXT);
     CREATE TABLE IF NOT EXISTS audit_logs(id INTEGER PRIMARY KEY, actor_type TEXT, actor_id TEXT, role TEXT, action TEXT, entity_type TEXT, entity_id TEXT, before_json TEXT, after_json TEXT, reason TEXT, created_at TEXT);
     CREATE TABLE IF NOT EXISTS branch_sessions(token_hash TEXT PRIMARY KEY, branch_id INTEGER, delivery_id INTEGER, expires_at TEXT);
@@ -465,7 +464,7 @@ def migrate_document_return_final(c):
     c.commit()
 
 def migrate_v1929(c):
-    """V19.2.9: void metadata, carried items and editable receipt time."""
+    """V19.2.10: void metadata, carried items and editable receipt time."""
     cols=[('receipt_at','TEXT'),('voided_at','TEXT'),('voided_by','INTEGER'),('void_reason','TEXT')]
     if USE_POSTGRES:
         rows=c.execute("""SELECT column_name FROM information_schema.columns
@@ -477,15 +476,25 @@ def migrate_v1929(c):
             c.execute("SET LOCAL lock_timeout TO '8s'")
             for name,typ in missing:
                 c.execute(f'ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS {name} {typ}')
-        c.execute("""CREATE TABLE IF NOT EXISTS delivery_items(
-            id BIGSERIAL PRIMARY KEY,
-            delivery_id INTEGER NOT NULL,
-            item_type TEXT NOT NULL,
-            item_name TEXT DEFAULT '',
-            quantity INTEGER NOT NULL DEFAULT 0,
-            created_by INTEGER,
-            updated_at TEXT
-        )""")
+        # V19.2.10: Oregon/Singapore may auto-deploy the same commit concurrently
+        # while sharing one Neon database. PostgreSQL's CREATE TABLE IF NOT EXISTS
+        # can still race at pg_type creation, so serialize this schema creation.
+        c.execute("SET statement_timeout TO '60s'")
+        c.execute("SELECT pg_advisory_lock(19290)")
+        try:
+            exists=c.execute("SELECT to_regclass('public.delivery_items') AS rel").fetchone()
+            if not exists or not exists.get('rel'):
+                c.execute("""CREATE TABLE delivery_items(
+                    id BIGSERIAL PRIMARY KEY,
+                    delivery_id INTEGER NOT NULL,
+                    item_type TEXT NOT NULL,
+                    item_name TEXT DEFAULT '',
+                    quantity INTEGER NOT NULL DEFAULT 0,
+                    created_by INTEGER,
+                    updated_at TEXT
+                )""")
+        finally:
+            c.execute("SELECT pg_advisory_unlock(19290)")
     else:
         existing={r['name'] for r in c.execute('PRAGMA table_info(deliveries)').fetchall()}
         for name,typ in cols:
