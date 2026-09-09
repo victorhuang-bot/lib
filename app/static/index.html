@@ -32,7 +32,7 @@
 
 </style>
 <style>
-/* V19.2.11 route visual grouping for 總館輸入 */
+/* V19.2.12 route visual grouping for 總館輸入 */
 .route-row-group{position:relative}
 .route-row-group.route-odd{background:#f7f9fc}
 .route-row-group.route-even{background:#ffffff}
@@ -43,6 +43,23 @@
 @media (max-width:700px){
   .route-row-group td:first-child{box-shadow:inset 4px 0 0 #94a3b8}
 }
+</style>
+
+
+<style id="v19212-route-grouping">
+#delivs tr.route-odd > td,
+#nextDayDocsBody tr.route-odd > td{background:#f3f6fa !important}
+#delivs tr.route-even > td,
+#nextDayDocsBody tr.route-even > td{background:#ffffff !important}
+#delivs tr.route-start > td,
+#nextDayDocsBody tr.route-start > td{border-top:4px solid #94a3b8 !important}
+#delivs tr.route-start > td:first-child,
+#nextDayDocsBody tr.route-start > td:first-child{box-shadow:inset 6px 0 0 #64748b}
+.route-badge-v19212{
+ display:inline-block;font-weight:800;padding:5px 10px;border-radius:999px;
+ background:#e2e8f0;white-space:nowrap
+}
+.route-section-note{display:block;font-size:11px;color:#64748b;margin-top:4px;white-space:nowrap}
 </style>
 
 </head><body>
@@ -94,7 +111,7 @@
 <section id="account" class="hidden"><div class="grid"><div class="card"><h2>我的帳號</h2><div id="accountInfo" class="muted"></div><div class="formgrid"><label>目前密碼<input id="ownCurrent" type="password"></label><label>新密碼（至少 8 碼）<input id="ownNew" type="password"></label><label>再次輸入新密碼<input id="ownConfirm" type="password"></label></div><div class="toolbar"><button class="btn" onclick="changeOwnPassword()">變更我的密碼</button></div><p class="muted">系統不顯示目前密碼；資料庫僅保存密碼雜湊。</p></div><div id="adminResetCard" class="card"><h2>重設總館密碼</h2><p class="muted">僅管理者可操作；需再次輸入管理者目前密碼確認。</p><div class="formgrid"><label>管理者目前密碼<input id="adminVerify" type="password"></label><label>總館新密碼<input id="secNew" type="password"></label><label>再次輸入總館新密碼<input id="secConfirm" type="password"></label></div><div class="toolbar"><button class="btn" onclick="resetSecretaryPassword()">重設總館密碼</button></div></div></div></section>
 <section id="email" class="hidden"><div class="grid"><div class="card"><h2>Google Workspace Gmail API</h2><div id="emailProviderStatus"></div><div id="emailTestTools" class="toolbar"><input id="emailTestEmail" type="email" placeholder="測試收件信箱"><button class="btn" onclick="testEmail()">寄送測試郵件</button></div><p class="muted">OAuth Secret / Refresh Token 僅存在 Render Environment，後台永遠不顯示實際內容。</p></div><div class="card"><h2>Email 收件人</h2><div id="emailAdminTools" class="toolbar"><input id="emailAddr" type="email" placeholder="name@example.com"><select id="emailType"><option>TO</option><option>CC</option><option>BCC</option></select><button class="btn" onclick="addEmail()">新增</button></div><div id="emailRecipients"></div></div><div class="card"><h2>報表寄送 / 紀錄</h2><div class="toolbar"><button class="btn" onclick="sendReport()">寄送今日報表 Excel + PDF</button></div><div id="emailLogs"></div></div></div></section>
 <section id="audit" class="hidden"><div class="card"><h2>Audit Log</h2><div id="auditList" style="overflow:auto"></div></div></section>
-</main></div><div id="modalHost"></div><script src="/static/common.js?v=19.2.11"></script><script>
+</main></div><div id="modalHost"></div><script src="/static/common.js?v=19.2.12"></script><script>
 async function loadMonthlyRouteCumulative(){
   const m=document.querySelector('#monthlyRouteCumMonth');
   const box=document.querySelector('#monthlyRouteCumBody');
@@ -138,7 +155,7 @@ async function loadDash(){
   }
 }
 function selectRoute(code){selectedRoute=selectedRoute===code?'':code;const label=document.querySelector('#routeFilterLabel');if(label)label.textContent=selectedRoute?`目前：路線${selectedRoute}（再點一次取消）`:'目前：全部路線';loadDash();loadDeliveries()}
-async function loadDeliveries(){let q='?';const f=document.querySelector('#filter'),se=document.querySelector('#search');if(f?.value)q+='status='+f.value+'&';if(selectedRoute)q+='route='+encodeURIComponent(selectedRoute)+'&';if(se?.value)q+='search='+encodeURIComponent(se.value);let x=await api('/api/dashboard/deliveries'+q),body=document.querySelector('#delivs');body.innerHTML=x.map(d=>{const value=d.document_final??'';let doc;if(me.role==='SECRETARY'){doc=`<div class="row"><input type="number" min="0" value="${value}" style="width:88px" id="doc${d.id}"><button class="btn alt small" onclick="setDoc(${d.id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">存檔</button></div><span class="muted">總館路線簽核前皆可修改</span>`}else{doc=`<b>${value===''?'—':value}</b><br><span class="muted">管理者僅供查看</span>`}const itemBtn=me.role==='SECRETARY'?`<button class="btn alt small" onclick="editItems(${d.id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">隨車物品</button>`:'';const voidBtn=me.role==='ADMIN'&& !d.branch_signed_at && !d.driver_confirmed_at && d.status!=='VOID'?`<button class="btn danger small" onclick="voidDelivery(${d.id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">作廢</button>`:'';return `<tr><td>${d.route_code}</td><td>${d.branch_name}</td><td class="status">${statusText(d.status)}</td><td>${d.driver_name}</td><td>${d.driver_confirmed_at||d.branch_signed_at||'—'}</td><td>${doc}<div style="margin-top:6px">${itemBtn}</div></td><td>${voidBtn||'—'}</td></tr>`}).join('')}
+async function loadDeliveries(){let q='?';const f=document.querySelector('#filter'),se=document.querySelector('#search');if(f?.value)q+='status='+f.value+'&';if(selectedRoute)q+='route='+encodeURIComponent(selectedRoute)+'&';if(se?.value)q+='search='+encodeURIComponent(se.value);let x=await api('/api/dashboard/deliveries'+q),body=document.querySelector('#delivs');body.innerHTML=x.map((d,i)=>{const routeNo=Number(d.route_code)||0;const routeStart=i===0||String(x[i-1].route_code)!==String(d.route_code);const routeClass=`${routeNo%2?'route-odd':'route-even'} ${routeStart?'route-start':''}`;const routeCell=`<span class="route-badge-v19212">${d.route_code}線</span>${routeStart?'<span class="route-section-note">路線分隔</span>':''}`;const value=d.document_final??'';let doc;if(me.role==='SECRETARY'){doc=`<div class="row"><input type="number" min="0" value="${value}" style="width:88px" id="doc${d.id}"><button class="btn alt small" onclick="setDoc(${d.id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">存檔</button></div><span class="muted">總館路線簽核前皆可修改</span>`}else{doc=`<b>${value===''?'—':value}</b><br><span class="muted">管理者僅供查看</span>`}const itemBtn=me.role==='SECRETARY'?`<button class="btn alt small" onclick="editItems(${d.id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">隨車物品</button>`:'';const voidBtn=me.role==='ADMIN'&& !d.branch_signed_at && !d.driver_confirmed_at && d.status!=='VOID'?`<button class="btn danger small" onclick="voidDelivery(${d.id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">作廢</button>`:'';return `<tr class="${routeClass}"><td>${routeCell}</td><td>${d.branch_name}</td><td class="status">${statusText(d.status)}</td><td>${d.driver_name}</td><td>${d.driver_confirmed_at||d.branch_signed_at||'—'}</td><td>${doc}<div style="margin-top:6px">${itemBtn}</div></td><td>${voidBtn||'—'}</td></tr>`}).join('')}
 async function setDoc(id,branchName){try{const el=document.querySelector('#doc'+id);if(!el||el.value==='')throw new Error('請輸入公文數量');const qty=Number(el.value);if(qty<0||!Number.isInteger(qty))throw new Error('公文數量請輸入 0 以上整數');if(!confirm(`${branchName}\n確認公文數量為 ${qty}？`))return;let r=await api('/api/secretary/deliveries/'+id+'/document',{method:'PATCH',body:JSON.stringify({qty})});alert(`${branchName}\n公文送出數量 ${r.qty} 已儲存。\n該路線完成總館簽核前仍可修改。`);await loadAll()}catch(e){alert(e.message);await loadAll()}}
 async function saveAllDocs(){try{let items=[];document.querySelectorAll('#delivs input[id^="doc"]').forEach(el=>{if(el.value!==''){const qty=Number(el.value);if(!Number.isInteger(qty)||qty<0)throw new Error('公文數量請輸入 0 以上整數');items.push({id:Number(el.id.slice(3)),qty})}});if(!items.length)throw new Error('目前沒有可存檔的公文數量');const total=items.reduce((a,b)=>a+b.qty,0);if(!confirm(`確認一次存檔 ${items.length} 個分館？\n公文總數：${total}`))return;let r=await api('/api/secretary/documents/batch',{method:'POST',body:JSON.stringify({items})});alert(`已一次存檔 ${r.changed} 個分館。\n公文總數：${r.total}`);await loadAll()}catch(e){alert(e.message);await loadAll()}}
 async function zeroAll(){if(confirm('將今日尚未完成總館路線簽核的公文送出全部設為 0？')){try{let r=await api('/api/secretary/documents/zero-all',{method:'POST'});alert(`已將 ${r.changed} 個可編輯分館的公文送出設為 0。`);await loadAll()}catch(e){alert(e.message)}}}
@@ -188,10 +205,10 @@ async function loadPrefillDocs(serviceDate){
       closure.classList.add('hidden');
       tools.style.display='';
     }
-    body.innerHTML=x.rows.length?x.rows.map(d=>{
+    body.innerHTML=x.rows.length?x.rows.map((d,i)=>{const routeNo=Number(d.route_code)||0;const routeStart=i===0||String(x.rows[i-1].route_code)!==String(d.route_code);const routeClass=`${routeNo%2?'route-odd':'route-even'} ${routeStart?'route-start':''}`;const routeCell=`<span class="route-badge-v19212">${d.route_code}線</span>${routeStart?'<span class="route-section-note">路線分隔</span>':''}`;
       const value=d.document_final??'';
       const editor=`<div class="row"><input id="nextdocb${d.branch_id}" type="number" min="0" value="${value}" style="width:90px"><button class="btn alt small" onclick="setNextDoc(${d.branch_id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">存檔</button></div><span class="muted">總館路線簽核前皆可修改</span>`;
-      return `<tr><td>${d.route_name||('路線'+d.route_code)}</td><td>${d.driver_name||'未指派'}</td><td>${d.branch_code}</td><td>${d.branch_name}</td><td>${editor}</td></tr>`;
+      return `<tr class="${routeClass}"><td>${routeCell}</td><td>${d.driver_name||'未指派'}</td><td>${d.branch_code}</td><td>${d.branch_name}</td><td>${editor}</td></tr>`;
     }).join(''):`<tr><td colspan="5" class="muted">${x.service_date} 沒有符合固定排程或非固定運送的分館。</td></tr>`;
   }catch(e){
     hint.textContent=`公文預填清單讀取失敗：${e.message}`;
