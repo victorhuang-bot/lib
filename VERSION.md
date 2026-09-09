@@ -1,28 +1,22 @@
-# V19.2.20 Gmail API — 日期時間顯示統一版
+# V19.2.21 Gmail API — V19.2.20 顯示回歸修正版
 
-所有使用者可見的日期時間統一顯示為：
+## 原因
+V19.2.20 將 `fmtDateTime()` 放進：
 
-`YYYY-MM-DD HH:mm`
+`<script src="/static/common.js"> ... </script>`
 
-例如：
+瀏覽器對具有 `src` 的 script tag 會忽略其中 inline JavaScript，
+因此實際執行時出現：
 
-`2026-09-04 17:30`
+`fmtDateTime is not defined`
 
-套用範圍包含：
-- 今日 / 歷史路線總表
-- 司機簽名時間
-- 總館簽核時間
-- 分館實際簽收時間
-- 分館系統簽名時間
-- 協助修正 / 更正時間
-- 管理者行政結案時間
-- 歷史簽收查詢
-- Audit Log
-- 歷史路線 PNG
-- 歷史日總表 PNG
-- PNG 產生時間
+這會讓歷史查詢、即時配送列表等 JavaScript 在渲染途中中斷，
+所以看起來像「隨車物品」與「公文預填」也一起消失。
 
-本版只調整顯示格式。資料庫仍保留完整 timestamp 與 timezone 原始資料，
-不修改資料內容、不影響排序、稽核或簽名紀錄。
-
-完整保留 V19.2.19 與前面所有功能。
+## V19.2.21 修正
+- `fmtDateTime()` 移到真正會執行的 inline script。
+- 保留 V19.2.20 的 `YYYY-MM-DD HH:mm` 顯示格式。
+- `loadAll()` 改用 `Promise.allSettled()`，單一卡片載入失敗不再拖垮整個後台。
+- 總館登入後主動初始化並載入「公文預填」。
+- 確認今日配送表的「隨車物品」按鈕仍保留。
+- 完整保留歷史路線 / 簽收、PNG、待補簽追蹤、行政結案、Gmail API 等功能。
