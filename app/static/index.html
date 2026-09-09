@@ -32,7 +32,7 @@
 
 </style>
 <style>
-/* V19.2.17 route visual grouping for 總館輸入 */
+/* V19.2.18 route visual grouping for 總館輸入 */
 .route-row-group{position:relative}
 .route-row-group.route-odd{background:#f7f9fc}
 .route-row-group.route-even{background:#ffffff}
@@ -116,8 +116,10 @@
     <div class="toolbar">
       <button class="btn" onclick="loadHistoryReceipts()">查詢簽收資料</button>
       <button class="btn alt" onclick="loadHistoryRoutes()">查詢該日路線總表</button>
+      <button class="btn alt" onclick="downloadHistoryDayPng()">下載該日總表 PNG</button>
       <button class="btn alt" onclick="clearHistoryFilters()">清除條件</button>
     </div>
+    <div class="muted">PNG 下載會依目前選擇的日期與路線產生唯讀作業確認檔；若未指定路線則包含該日全部路線。</div>
     <div id="historyResult" style="overflow:auto"><div class="muted">請選擇日期或條件後查詢。</div></div>
   </div>
   <div id="historyDetail"></div>
@@ -150,7 +152,7 @@
 <section id="account" class="hidden"><div class="grid"><div class="card"><h2>我的帳號</h2><div id="accountInfo" class="muted"></div><div class="formgrid"><label>目前密碼<input id="ownCurrent" type="password"></label><label>新密碼（至少 8 碼）<input id="ownNew" type="password"></label><label>再次輸入新密碼<input id="ownConfirm" type="password"></label></div><div class="toolbar"><button class="btn" onclick="changeOwnPassword()">變更我的密碼</button></div><p class="muted">系統不顯示目前密碼；資料庫僅保存密碼雜湊。</p></div><div id="adminResetCard" class="card"><h2>重設總館密碼</h2><p class="muted">僅管理者可操作；需再次輸入管理者目前密碼確認。</p><div class="formgrid"><label>管理者目前密碼<input id="adminVerify" type="password"></label><label>總館新密碼<input id="secNew" type="password"></label><label>再次輸入總館新密碼<input id="secConfirm" type="password"></label></div><div class="toolbar"><button class="btn" onclick="resetSecretaryPassword()">重設總館密碼</button></div></div></div></section>
 <section id="email" class="hidden"><div class="grid"><div class="card"><h2>Google Workspace Gmail API</h2><div id="emailProviderStatus"></div><div id="emailTestTools" class="toolbar"><input id="emailTestEmail" type="email" placeholder="測試收件信箱"><button class="btn" onclick="testEmail()">寄送測試郵件</button></div><p class="muted">OAuth Secret / Refresh Token 僅存在 Render Environment，後台永遠不顯示實際內容。</p></div><div class="card"><h2>Email 收件人</h2><div id="emailAdminTools" class="toolbar"><input id="emailAddr" type="email" placeholder="name@example.com"><select id="emailType"><option>TO</option><option>CC</option><option>BCC</option></select><button class="btn" onclick="addEmail()">新增</button></div><div id="emailRecipients"></div></div><div class="card"><h2>報表寄送 / 紀錄</h2><div class="toolbar"><button class="btn" onclick="sendReport()">寄送今日報表 Excel + PDF</button></div><div id="emailLogs"></div></div></div></section>
 <section id="audit" class="hidden"><div class="card"><h2>Audit Log</h2><div id="auditList" style="overflow:auto"></div></div></section>
-</main></div><div id="modalHost"></div><script src="/static/common.js?v=19.2.17"></script><script>
+</main></div><div id="modalHost"></div><script src="/static/common.js?v=19.2.18"></script><script>
 async function loadMonthlyRouteCumulative(){
   const m=document.querySelector('#monthlyRouteCumMonth');
   const box=document.querySelector('#monthlyRouteCumBody');
@@ -497,13 +499,112 @@ function initHistory(){
 function clearHistoryFilters(){
   histDate.value='';histRoute.value='';histBranch.value='';histStatus.value='';historyResult.innerHTML='<div class="muted">已清除條件。</div>';historyDetail.innerHTML='';
 }
+
+async function downloadHistoryDayPng(){
+  try{
+    const d=histDate.value;
+    if(!d)throw new Error('請先選擇日期');
+    const qs=new URLSearchParams({service_date:d});
+    if(histRoute.value)qs.set('route',histRoute.value);
+    const routes=await api('/api/history/routes?'+qs.toString());
+    if(!routes.length)throw new Error('查無該日路線資料');
+
+    const details=[];
+    for(const r of routes){
+      details.push(await api('/api/routes/'+r.id+'/signed-summary'));
+    }
+
+    const W=1900, margin=55, titleH=155, routeHeaderH=95, colHeaderH=78, rowH=76, routeFooterH=105, footerH=90;
+    let H=titleH+footerH;
+    for(const x of details) H += routeHeaderH+colHeaderH+(x.stops.length+1)*rowH+routeFooterH;
+
+    const c=document.createElement('canvas');
+    c.width=W;c.height=H;
+    const g=c.getContext('2d');
+    g.fillStyle='#fff';g.fillRect(0,0,W,H);
+    g.fillStyle='#172230';
+    g.font='bold 43px system-ui,sans-serif';
+    g.fillText(`圖書物流配送暨電子簽收｜歷史查詢日總表`,margin,62);
+    g.font='25px system-ui,sans-serif';
+    g.fillText(`日期：${d}　路線：${histRoute.value?histRoute.value+'線':'全部路線'}　模式：唯讀作業確認`,margin,108);
+
+    let y=titleH;
+    const cols=[
+      ['分館',240],['狀態',210],['公文送出',135],['公文收回',135],
+      ['圖書送出',135],['圖書收回',135],['實際簽收',270],['簽收人',160],['備註',300]
+    ];
+    const colX=[];let cx=margin;
+    for(const [,w] of cols){colX.push(cx);cx+=w}
+
+    let grand={d:0,dr:0,o:0,i:0};
+    for(const x of details){
+      const r=x.route,t=x.totals;
+      g.fillStyle='#eef2f7';g.fillRect(margin,y,W-margin*2,routeHeaderH-12);
+      g.fillStyle='#172230';g.font='bold 30px system-ui,sans-serif';
+      g.fillText(`${r.code}線｜${r.driver_name||'—'}`,margin+18,y+39);
+      g.font='21px system-ui,sans-serif';
+      g.fillText(`司機簽名：${r.driver_signed_at||'尚未簽名'}　｜　總館簽核：${r.secretary_signed_at||'尚未簽核'}`,margin+18,y+72);
+      y+=routeHeaderH;
+
+      g.fillStyle='#f7f9fc';g.fillRect(margin,y,W-margin*2,colHeaderH);
+      g.fillStyle='#172230';g.font='bold 21px system-ui,sans-serif';
+      cols.forEach(([name],i)=>g.fillText(name,colX[i]+8,y+47));
+      y+=colHeaderH;
+
+      g.font='20px system-ui,sans-serif';
+      for(const s of x.stops){
+        const status=s.status==='ADMIN_CLOSED'?'管理者結案':statusText(s.status);
+        const values=[
+          `${s.branch_name} ${s.branch_code||''}`,status,
+          String(s.document_final??'—'),String(s.document_return_final??'—'),
+          String(s.outbound_final??'—'),String(s.inbound_final??'—'),
+          String(s.receipt_at||'—'),String(s.correction_signer_name||s.signer_name||'—'),
+          String(s.note_final||s.admin_close_reason||'—')
+        ];
+        g.fillStyle='#172230';
+        values.forEach((v,i)=>{
+          const max=i===8?22:(i===6?22:(i===0?15:12));
+          g.fillText(v.length>max?v.slice(0,max-1)+'…':v,colX[i]+8,y+47);
+        });
+        g.strokeStyle='#e1e5ea';g.beginPath();g.moveTo(margin,y+rowH-1);g.lineTo(W-margin,y+rowH-1);g.stroke();
+        y+=rowH;
+      }
+
+      g.fillStyle='#f8fafc';g.fillRect(margin,y,W-margin*2,rowH);
+      g.fillStyle='#172230';g.font='bold 21px system-ui,sans-serif';
+      g.fillText('本線總計',colX[0]+8,y+47);
+      g.fillText(String(t.document||0),colX[2]+8,y+47);
+      g.fillText(String(t.document_return||0),colX[3]+8,y+47);
+      g.fillText(String(t.outbound||0),colX[4]+8,y+47);
+      g.fillText(String(t.inbound||0),colX[5]+8,y+47);
+      grand.d+=t.document||0;grand.dr+=t.document_return||0;grand.o+=t.outbound||0;grand.i+=t.inbound||0;
+      y+=rowH;
+
+      g.font='19px system-ui,sans-serif';
+      g.fillText(`路線 ID：${r.id}　｜　司機：${r.driver_signed_at||'—'}　｜　總館：${r.secretary_signed_at||'—'}`,margin+8,y+34);
+      y+=routeFooterH;
+    }
+
+    g.fillStyle='#eef2f7';g.fillRect(margin,H-footerH,W-margin*2,footerH-15);
+    g.fillStyle='#172230';g.font='bold 23px system-ui,sans-serif';
+    g.fillText(`全部總計　公文送出 ${grand.d}　公文收回 ${grand.dr}　圖書送出 ${grand.o}　圖書收回 ${grand.i}`,margin+18,H-footerH+38);
+    g.font='18px system-ui,sans-serif';
+    g.fillText(`列印／下載時間：${new Date().toLocaleString('zh-TW')}　｜　歷史查詢唯讀作業確認檔`,margin+18,H-footerH+68);
+
+    const a=document.createElement('a');
+    a.download=`${d}_${histRoute.value?histRoute.value+'線':'全部路線'}_歷史日總表.png`;
+    a.href=c.toDataURL('image/png');
+    a.click();
+  }catch(e){alert(e.message)}
+}
+
 async function loadHistoryRoutes(){
   try{
     const d=histDate.value;if(!d)throw new Error('請先選擇日期');
     const qs=new URLSearchParams({service_date:d});if(histRoute.value)qs.set('route',histRoute.value);
     const rows=await api('/api/history/routes?'+qs.toString());
     historyResult.innerHTML=rows.length?'<table><tr><th>日期</th><th>路線</th><th>司機</th><th>運送完成</th><th>分館簽收</th><th>待補</th><th>行政結案</th><th>司機簽名</th><th>總館簽核</th><th>原始資料</th></tr>'+
-      rows.map(r=>`<tr><td>${r.service_date}</td><td>${r.code}線</td><td>${r.driver_name||'—'}</td><td>${r.completed}/${r.total}</td><td>${r.branch_signed}/${r.total}</td><td>${r.late_pending||0}</td><td>${r.admin_closed||0}</td><td>${r.driver_signed_at||'—'}</td><td>${r.secretary_signed_at||'—'}</td><td><button class="btn alt small" onclick="viewHistoryRoute(${r.id})">查看分館 / 簽名</button></td></tr>`).join('')+'</table>':'<div class="muted">查無該日路線資料。</div>';
+      rows.map(r=>`<tr><td>${r.service_date}</td><td>${r.code}線</td><td>${r.driver_name||'—'}</td><td>${r.completed}/${r.total}</td><td>${r.branch_signed}/${r.total}</td><td>${r.late_pending||0}</td><td>${r.admin_closed||0}</td><td>${r.driver_signed_at||'—'}</td><td>${r.secretary_signed_at||'—'}</td><td><button class="btn alt small" onclick="viewHistoryRoute(${r.id})">查看分館 / 簽名</button> <button class="btn alt small" onclick="downloadRoutePng(${r.id})">下載路線 PNG</button></td></tr>`).join('')+'</table>':'<div class="muted">查無該日路線資料。</div>';
   }catch(e){alert(e.message)}
 }
 async function viewHistoryRoute(id){
