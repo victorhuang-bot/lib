@@ -29,7 +29,7 @@ DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
 DB = DATA_DIR / 'app.db'
 DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
 USE_POSTGRES = bool(DATABASE_URL)
-APP_VERSION='V19.2.22'
+APP_VERSION='V19.2.23'
 
 _PREFILL_CACHE = {}
 _PREFILL_CACHE_TTL_SECONDS = 45
@@ -465,7 +465,7 @@ def migrate_document_return_final(c):
     c.commit()
 
 def migrate_v1929(c):
-    """V19.2.22: void metadata, carried items and editable receipt time."""
+    """V19.2.23: void metadata, carried items and editable receipt time."""
     cols=[('receipt_at','TEXT'),('voided_at','TEXT'),('voided_by','INTEGER'),('void_reason','TEXT'),('admin_closed_at','TEXT'),('admin_closed_by','INTEGER'),('admin_close_reason','TEXT')]
     if USE_POSTGRES:
         rows=c.execute("""SELECT column_name FROM information_schema.columns
@@ -477,7 +477,7 @@ def migrate_v1929(c):
             c.execute("SET LOCAL lock_timeout TO '8s'")
             for name,typ in missing:
                 c.execute(f'ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS {name} {typ}')
-        # V19.2.22: Oregon/Singapore may auto-deploy the same commit concurrently
+        # V19.2.23: Oregon/Singapore may auto-deploy the same commit concurrently
         # while sharing one Neon database. PostgreSQL's CREATE TABLE IF NOT EXISTS
         # can still race at pg_type creation, so serialize this schema creation.
         c.execute("SET statement_timeout TO '60s'")
@@ -1418,9 +1418,15 @@ async def branch_sign(req:Request):
         c.close()
         raise HTTPException(409,'該日日報已鎖定')
 
-    if x['status'] not in ('WAITING_BRANCH','LATE_BRANCH_PENDING') or x['branch_signed_at'] or x['branch_signature']:
+    # 同一分館 session 若因行動網路重送 / 使用者重複點擊，在第一筆已成功簽名後再次送達，
+    # 視為 idempotent success；不重新寫入、不修改既有已簽資料。
+    if x['branch_signed_at'] or x['branch_signature']:
+        signed_at=x['branch_signed_at']
         c.close()
-        raise HTTPException(409,'此筆資料已填寫或已簽名，不能再次修改')
+        return {'ok':True,'already_signed':True,'signed_at':signed_at,'status':x['status']}
+    if x['status'] not in ('WAITING_BRANCH','LATE_BRANCH_PENDING'):
+        c.close()
+        raise HTTPException(409,'此筆目前不是可簽收狀態')
 
     try:
         document=int(p.get('document',x['document_final'] if x['document_final'] is not None else 0) or 0)
