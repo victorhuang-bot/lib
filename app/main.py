@@ -28,7 +28,7 @@ DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
 DB = DATA_DIR / 'app.db'
 DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
 USE_POSTGRES = bool(DATABASE_URL)
-APP_VERSION='V19.2.13'
+APP_VERSION='V19.2.14'
 
 _PREFILL_CACHE = {}
 _PREFILL_CACHE_TTL_SECONDS = 45
@@ -464,7 +464,7 @@ def migrate_document_return_final(c):
     c.commit()
 
 def migrate_v1929(c):
-    """V19.2.13: void metadata, carried items and editable receipt time."""
+    """V19.2.14: void metadata, carried items and editable receipt time."""
     cols=[('receipt_at','TEXT'),('voided_at','TEXT'),('voided_by','INTEGER'),('void_reason','TEXT')]
     if USE_POSTGRES:
         rows=c.execute("""SELECT column_name FROM information_schema.columns
@@ -476,7 +476,7 @@ def migrate_v1929(c):
             c.execute("SET LOCAL lock_timeout TO '8s'")
             for name,typ in missing:
                 c.execute(f'ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS {name} {typ}')
-        # V19.2.13: Oregon/Singapore may auto-deploy the same commit concurrently
+        # V19.2.14: Oregon/Singapore may auto-deploy the same commit concurrently
         # while sharing one Neon database. PostgreSQL's CREATE TABLE IF NOT EXISTS
         # can still race at pg_type creation, so serialize this schema creation.
         c.execute("SET statement_timeout TO '60s'")
@@ -1246,50 +1246,112 @@ def branch_today(req:Request):
     s=branch_auth(req);c=db();x=c.execute('''SELECT x.*,b.name branch_name FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.id=? AND x.branch_id=?''',(s['delivery_id'],s['branch_id'])).fetchone();corr=c.execute("SELECT * FROM corrections WHERE delivery_id=? ORDER BY CASE WHEN status='PENDING' THEN 0 ELSE 1 END,id DESC LIMIT 1",(x['id'],)).fetchone();items=[dict(r) for r in c.execute("SELECT item_type,item_name,quantity FROM delivery_items WHERE delivery_id=? ORDER BY id",(x['id'],)).fetchall()];c.close();out=dict(x);out['correction']=dict(corr) if corr else None;out['items']=items;return out
 @app.post('/api/branch-session/sign')
 async def branch_sign(req:Request):
-    s=branch_auth(req);p=await req.json();c=db();
-    receipt_at=(p.get('receipt_at') or now()).strip()
-    try: datetime.fromisoformat(receipt_at.replace('Z','+00:00'))
-    except: c.close(); raise HTTPException(400,'實際簽收時間格式錯誤')
-    x=c.execute('SELECT * FROM deliveries WHERE id=?',(s['delivery_id'],)).fetchone()
-    if not x: c.close(); raise HTTPException(404,'找不到配送資料')
+    sess=branch_auth(req)
+    p=await req.json()
+    c=db()
 
-    # V19.2.8: 分館跨日待補 FIFO 強制規則。
-    # 即使分館持有較新日期的舊 session，也不得跳過更早的待補簽。
+    receipt_at=(p.get('receipt_at') or now()).strip()
+    try:
+        datetime.fromisoformat(receipt_at.replace('Z','+00:00'))
+    except Exception:
+        c.close()
+        raise HTTPException(400,'實際簽收時間格式錯誤')
+
+    x=c.execute('SELECT * FROM deliveries WHERE id=?',(sess['delivery_id'],)).fetchone()
+    if not x:
+        c.close()
+        raise HTTPException(404,'找不到配送資料')
+
+    # 歷史待補 FIFO：有更早的待補簽時，不可跳到較新日期。
     older_pending=c.execute(
-        '''SELECT id,service_date FROM deliveries
+        """SELECT id,service_date FROM deliveries
            WHERE branch_id=?
              AND status='LATE_BRANCH_PENDING'
              AND branch_signed_at IS NULL
              AND branch_signature IS NULL
              AND service_date<?
            ORDER BY service_date ASC,id ASC
-           LIMIT 1''',
-        (s['branch_id'],x['service_date'])
+           LIMIT 1""",
+        (sess['branch_id'],x['service_date'])
     ).fetchone()
     if older_pending:
         old_date=older_pending['service_date']
         c.close()
         raise HTTPException(409,f'尚有較早待補簽：{old_date}，請先完成該筆後才能處理 {x["service_date"]}')
+
     late=(x['status']=='LATE_BRANCH_PENDING' and not x['branch_signed_at'] and not x['branch_signature'])
-    if not late and is_report_locked(c,x['service_date']): c.close(); raise HTTPException(409,'該日日報已鎖定')
+    if not late and is_report_locked(c,x['service_date']):
+        c.close()
+        raise HTTPException(409,'該日日報已鎖定')
+
     if x['status'] not in ('WAITING_BRANCH','LATE_BRANCH_PENDING') or x['branch_signed_at'] or x['branch_signature']:
-        c.close();raise HTTPException(409,'此筆資料已填寫或已簽名，不能再次修改')
+        c.close()
+        raise HTTPException(409,'此筆資料已填寫或已簽名，不能再次修改')
+
     try:
-        document_return=int(p.get('document_return',0) or 0)
-        inbound=int(p.get('inbound',0) or 0)
+        document=int(p.get('document',x['document_final'] if x['document_final'] is not None else 0) or 0)
+        document_return=int(p.get('document_return',x['document_return_final'] if x['document_return_final'] is not None else 0) or 0)
+        outbound=int(p.get('outbound',x['outbound_final'] if x['outbound_final'] is not None else 0) or 0)
+        inbound=int(p.get('inbound',x['inbound_final'] if x['inbound_final'] is not None else 0) or 0)
     except (TypeError,ValueError):
-        c.close(); raise HTTPException(400,'公文收回與圖書收回數量格式錯誤')
-    note=p.get('note',''); signer=p.get('signer','').strip(); signature=p.get('signature','')
-    if min(document_return,inbound)<0: c.close(); raise HTTPException(400,'數量不可小於 0')
-    if not signer or not signature:c.close();raise HTTPException(400,'姓名與簽名必填')
-    signed_at=now(); next_status='STOP_COMPLETED' if late else 'WAITING_DRIVER_CONFIRM'
+        c.close()
+        raise HTTPException(400,'四個數量欄位格式錯誤')
+
+    if min(document,document_return,outbound,inbound) < 0:
+        c.close()
+        raise HTTPException(400,'數量不可小於 0')
+
+    note=p.get('note','')
+    signer=(p.get('signer') or '').strip()
+    signature=p.get('signature') or ''
+    if not signer or not signature:
+        c.close()
+        raise HTTPException(400,'姓名與簽名必填')
+
+    signed_at=now()
+    next_status='STOP_COMPLETED' if late else 'WAITING_DRIVER_CONFIRM'
     action='BRANCH_LATE_SIGN' if late else 'BRANCH_SIGN'
+
     if late:
-        c.execute("UPDATE deliveries SET document_final=?,document_return_final=?,outbound_final=?,inbound_final=?,note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,receipt_at=?,status=?,driver_confirmed_at=COALESCE(driver_confirmed_at,?),row_version=row_version+1 WHERE id=?",(document_return,inbound,note,signer,signature,signed_at,receipt_at,next_status,signed_at,x['id']))
+        c.execute(
+            """UPDATE deliveries
+               SET document_final=?,document_return_final=?,outbound_final=?,inbound_final=?,
+                   note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,receipt_at=?,
+                   status=?,driver_confirmed_at=COALESCE(driver_confirmed_at,?),row_version=row_version+1
+               WHERE id=?""",
+            (document,document_return,outbound,inbound,note,signer,signature,signed_at,receipt_at,
+             next_status,signed_at,x['id'])
+        )
     else:
-        c.execute("UPDATE deliveries SET document_final=?,document_return_final=?,outbound_final=?,inbound_final=?,note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,receipt_at=?,status=?,row_version=row_version+1 WHERE id=?",(document_return,inbound,note,signer,signature,signed_at,receipt_at,next_status,x['id']))
-    audit(c,'BRANCH',s['branch_id'],'BRANCH',action,'DELIVERY',x['id'],after={'service_date':x['service_date'],'document_return':document_return,'inbound':inbound,'note':note,'signer':signer,'late':late,'receipt_at':receipt_at})
-    c.commit();c.close();await publish({'type':'delivery.updated','id':x['id']});return {'ok':True,'late':late,'driver_reconfirm_required':not late}
+        c.execute(
+            """UPDATE deliveries
+               SET document_final=?,document_return_final=?,outbound_final=?,inbound_final=?,
+                   note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,receipt_at=?,
+                   status=?,row_version=row_version+1
+               WHERE id=?""",
+            (document,document_return,outbound,inbound,note,signer,signature,signed_at,receipt_at,
+             next_status,x['id'])
+        )
+
+    audit(
+        c,'BRANCH',sess['branch_id'],'BRANCH',action,'DELIVERY',x['id'],
+        after={
+            'service_date':x['service_date'],
+            'document':document,
+            'document_return':document_return,
+            'outbound':outbound,
+            'inbound':inbound,
+            'note':note,
+            'signer':signer,
+            'late':late,
+            'receipt_at':receipt_at
+        }
+    )
+    c.commit()
+    c.close()
+    await publish({'type':'delivery.updated','id':x['id']})
+    return {'ok':True,'late':late,'driver_reconfirm_required':not late}
+
 @app.post('/api/branch-session/correct')
 async def branch_correct(req:Request):
     s=branch_auth(req);p=await req.json();c=db();

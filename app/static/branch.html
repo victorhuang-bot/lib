@@ -9,7 +9,7 @@
   </div>
 </div><main class="mobile"><div class="card"><h1>分館簽收驗證</h1><div id="verify"><p class="muted">請輸入 4 位分館驗證碼</p><input id="pin" inputmode="numeric" maxlength="4" placeholder="○ ○ ○ ○" style="width:100%;font-size:26px;text-align:center"><button class="btn big" style="margin-top:10px" onclick="verifyBranch()">確認</button></div><div id="work" class="hidden"></div><div id="msg"></div></div></main><script src="/static/common.js"></script><script>
 const branchToken='__BRANCH_TOKEN__';let session=null,data=null,getSig=null;
-async function bapi(url,opt={}){opt.headers={...(opt.headers||{}),'Authorization':'Bearer '+session,'Content-Type':'application/json'};let r=await fetch(url,opt);let j=await r.json();if(!r.ok)throw new Error(j.detail||'錯誤');return j}
+async function bapi(url,opt={}){opt.headers={...(opt.headers||{}),'Authorization':'Bearer '+session,'Content-Type':'application/json'};let r=await fetch(url,opt);let text=await r.text(),j=null;try{j=text?JSON.parse(text):{}}catch(_){j={detail:text||('HTTP '+r.status)}}if(!r.ok)throw new Error(j.detail||('HTTP '+r.status));return j}
 
 async function desktopLogin(){
   try{
@@ -20,7 +20,7 @@ async function desktopLogin(){
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({branch_code,pin})
-    }).then(async r=>{const j=await r.json();if(!r.ok)throw new Error(j.detail||'登入失敗');return j});
+    }).then(async r=>{const t=await r.text();let j;try{j=t?JSON.parse(t):{}}catch(_){j={detail:t||('HTTP '+r.status)}}if(!r.ok)throw new Error(j.detail||'登入失敗');return j});
     session=x.session;
     sessionStorage.setItem('branch_session',session);
     document.querySelector('#desktopLogin').classList.add('hidden');
@@ -40,6 +40,6 @@ function renderSign(){const late=data.status==='LATE_BRANCH_PENDING';work.innerH
         </div><p>備註</p><textarea id="note" style="width:100%">${data.note_final||''}</textarea><p>實際簽收時間</p><input id="receiptAt" type="datetime-local" value="${receiptInputValue(data.receipt_at)}" style="width:100%"><div class="muted">預設目前時間，可依實際簽收時間修改；系統真正送出簽名時間會另外保留。</div><p>簽收人姓名</p><input id="signer" style="width:100%"> <p>請簽名</p>${canvasBlock()}<button class="btn big" style="margin-top:12px" onclick="sign()">${late?'確認補填並完成簽名':'確認簽收'}</button>`;getSig=sigPad(document.querySelector('#sig'))}
 function renderCorrection(){let c=data.correction;work.innerHTML=`<h2>${data.branch_name}</h2><div class="notice"><b>司機要求更正</b><br>${c?.driver_note||'請重新確認數量；只需填寫需要修改的欄位'}</div><div class="ok" style="margin-top:10px">數量欄位為選填。留白代表沿用目前數量，不會被改成 0。</div><div class="ok"><b>總館公文送出：</b>${data.document_final??'尚未填寫'}<br><b>司機圖書送出：</b>${data.outbound_final??0}<br><b>總館其他隨車物品：</b>${carriedItemsText()}</div><p>公文收回（目前：${data.document_return_final??0}）</p><input id="document_return" type="number" min="0" placeholder="若不修改請留白" style="width:100%"><p>圖書收回（目前：${data.inbound_final??0}）</p><input id="inbound" type="number" min="0" placeholder="若不修改請留白" style="width:100%"><p>更正原因＊</p><textarea id="reason" style="width:100%"></textarea><p>更正人姓名＊</p><input id="signer" style="width:100%"><p>請重新簽名</p>${canvasBlock()}<button class="btn big" style="margin-top:12px" onclick="correct()">送出更正並重新簽名</button>`;getSig=sigPad(document.querySelector('#sig'))}
 function clearSig(){let c=document.querySelector('#sig');c.getContext('2d').clearRect(0,0,c.width,c.height)}
-async function sign(){if(!confirm(data.status==='LATE_BRANCH_PENDING'?'確認補填數量並完成簽名？送出後即不可再修改。':'確認完成本次簽收？'))return;try{await bapi('/api/branch-session/sign',{method:'POST',body:JSON.stringify({document_return:+docReturn.value,inbound:+inn.value,note:note.value,signer:signer.value,signature:getSig(),receipt_at:receiptAt.value})});await load()}catch(e){alert(e.message)}}
+async function sign(){if(!confirm(data.status==='LATE_BRANCH_PENDING'?'確認補填數量並完成簽名？送出後即不可再修改。':'確認完成本次簽收？'))return;try{await bapi('/api/branch-session/sign',{method:'POST',body:JSON.stringify({document:+doc.value,document_return:+docReturn.value,outbound:+out.value,inbound:+inn.value,note:note.value,signer:signer.value,signature:getSig(),receipt_at:receiptAt.value})});await load()}catch(e){alert(e.message)}}
 async function correct(){try{const val=id=>{const v=document.getElementById(id).value.trim();return v===''?null:Number(v)};await bapi('/api/branch-session/correct',{method:'POST',body:JSON.stringify({document_return:val('document_return'),inbound:val('inbound'),reason:reason.value,signer:signer.value,signature:getSig()})});await load()}catch(e){alert(e.message)}}
 </script></body></html>
