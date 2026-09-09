@@ -7,7 +7,22 @@
     <label>4 位 PIN<input id="desktopBranchPin" type="password" inputmode="numeric" maxlength="4"></label>
     <button class="btn" onclick="desktopLogin()">登入</button>
   </div>
-</div><main class="mobile"><div class="card"><h1>分館簽收驗證</h1><div id="verify"><p class="muted">請輸入 4 位分館驗證碼</p><input id="pin" inputmode="numeric" maxlength="4" placeholder="○ ○ ○ ○" style="width:100%;font-size:26px;text-align:center"><button class="btn big" style="margin-top:10px" onclick="verifyBranch()">確認</button></div><div id="work" class="hidden"></div><div id="msg"></div></div></main><script src="/static/common.js"></script><script>
+</div><main class="mobile"><div class="card"><h1>分館簽收驗證</h1><div id="verify"><p class="muted">請輸入 4 位分館驗證碼</p><input id="pin" inputmode="numeric" maxlength="4" placeholder="○ ○ ○ ○" style="width:100%;font-size:26px;text-align:center"><button class="btn big" style="margin-top:10px" onclick="verifyBranch()">確認</button></div><div id="work" class="hidden"></div><div id="msg"></div></div></main><script src="/static/common.js">
+
+function fmtDateTime(v){
+  if(v===null||v===undefined||v==='') return '—';
+  const s=String(v).trim();
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m=s.match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})/);
+  if(m) return `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}`;
+  const d=new Date(s);
+  if(!Number.isNaN(d.getTime())){
+    const p=n=>String(n).padStart(2,'0');
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  return s;
+}
+</script><script>
 const branchToken='__BRANCH_TOKEN__';let session=null,data=null,getSig=null;
 async function bapi(url,opt={}){opt.headers={...(opt.headers||{}),'Authorization':'Bearer '+session,'Content-Type':'application/json'};let r=await fetch(url,opt);let text=await r.text(),j=null;try{j=text?JSON.parse(text):{}}catch(_){j={detail:text||('HTTP '+r.status)}}if(!r.ok)throw new Error(j.detail||('HTTP '+r.status));return j}
 
@@ -28,7 +43,7 @@ async function desktopLogin(){
   }catch(e){alert(e.message)}
 }
 async function verifyBranch(){try{let x=await api('/api/branch-session/verify',{method:'POST',body:JSON.stringify({token:branchToken,pin:document.querySelector('#pin').value})});session=x.session;document.querySelector('#verify').classList.add('hidden');work.classList.remove('hidden');await load()}catch(e){msg.innerHTML='<div class="error">'+e.message+'</div>'}}
-async function load(){data=await bapi('/api/branch-session/today');if(data.status==='WAITING_BRANCH'||data.status==='LATE_BRANCH_PENDING')renderSign();else if(data.status==='WAITING_BRANCH_CORRECTION')renderCorrection();else work.innerHTML=`<h2>${data.branch_name}</h2><div class="ok">今日狀態：${statusText(data.status)}</div><p>簽收人：${data.correction_signer_name||data.signer_name||'—'}</p><p>簽收時間：${data.receipt_at||data.corrected_at||data.branch_signed_at||'—'}</p>`}
+async function load(){data=await bapi('/api/branch-session/today');if(data.status==='WAITING_BRANCH'||data.status==='LATE_BRANCH_PENDING')renderSign();else if(data.status==='WAITING_BRANCH_CORRECTION')renderCorrection();else work.innerHTML=`<h2>${data.branch_name}</h2><div class="ok">今日狀態：${statusText(data.status)}</div><p>簽收人：${data.correction_signer_name||data.signer_name||'—'}</p><p>簽收時間：${fmtDateTime(data.receipt_at||data.corrected_at||data.branch_signed_at)}</p>`}
 function canvasBlock(){return `<canvas id="sig" class="sig" width="600" height="220"></canvas><button class="btn alt" onclick="clearSig()">清除簽名</button>`}
 function carriedItemsText(){const names={POSTER:'海報',PROMOTION:'文宣',STATIONERY:'文具'};const a=data.items||[];return a.length?a.map(x=>`${x.item_type==='OTHER'?(x.item_name||'其他'):(names[x.item_type]||x.item_type)} ${x.quantity}`).join('、'):'無'}
 function receiptInputValue(v){if(v){return String(v).replace(' ','T').slice(0,16)}const d=new Date(),p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`}

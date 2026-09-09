@@ -32,7 +32,7 @@
 
 </style>
 <style>
-/* V19.2.19 route visual grouping for 總館輸入 */
+/* V19.2.20 route visual grouping for 總館輸入 */
 .route-row-group{position:relative}
 .route-row-group.route-odd{background:#f7f9fc}
 .route-row-group.route-even{background:#ffffff}
@@ -152,7 +152,22 @@
 <section id="account" class="hidden"><div class="grid"><div class="card"><h2>我的帳號</h2><div id="accountInfo" class="muted"></div><div class="formgrid"><label>目前密碼<input id="ownCurrent" type="password"></label><label>新密碼（至少 8 碼）<input id="ownNew" type="password"></label><label>再次輸入新密碼<input id="ownConfirm" type="password"></label></div><div class="toolbar"><button class="btn" onclick="changeOwnPassword()">變更我的密碼</button></div><p class="muted">系統不顯示目前密碼；資料庫僅保存密碼雜湊。</p></div><div id="adminResetCard" class="card"><h2>重設總館密碼</h2><p class="muted">僅管理者可操作；需再次輸入管理者目前密碼確認。</p><div class="formgrid"><label>管理者目前密碼<input id="adminVerify" type="password"></label><label>總館新密碼<input id="secNew" type="password"></label><label>再次輸入總館新密碼<input id="secConfirm" type="password"></label></div><div class="toolbar"><button class="btn" onclick="resetSecretaryPassword()">重設總館密碼</button></div></div></div></section>
 <section id="email" class="hidden"><div class="grid"><div class="card"><h2>Google Workspace Gmail API</h2><div id="emailProviderStatus"></div><div id="emailTestTools" class="toolbar"><input id="emailTestEmail" type="email" placeholder="測試收件信箱"><button class="btn" onclick="testEmail()">寄送測試郵件</button></div><p class="muted">OAuth Secret / Refresh Token 僅存在 Render Environment，後台永遠不顯示實際內容。</p></div><div class="card"><h2>Email 收件人</h2><div id="emailAdminTools" class="toolbar"><input id="emailAddr" type="email" placeholder="name@example.com"><select id="emailType"><option>TO</option><option>CC</option><option>BCC</option></select><button class="btn" onclick="addEmail()">新增</button></div><div id="emailRecipients"></div></div><div class="card"><h2>報表寄送 / 紀錄</h2><div class="toolbar"><button class="btn" onclick="sendReport()">寄送今日報表 Excel + PDF</button></div><div id="emailLogs"></div></div></div></section>
 <section id="audit" class="hidden"><div class="card"><h2>Audit Log</h2><div id="auditList" style="overflow:auto"></div></div></section>
-</main></div><div id="modalHost"></div><script src="/static/common.js?v=19.2.19"></script><script>
+</main></div><div id="modalHost"></div><script src="/static/common.js?v=19.2.20">
+
+function fmtDateTime(v){
+  if(v===null||v===undefined||v==='') return '—';
+  const s=String(v).trim();
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m=s.match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})/);
+  if(m) return `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}`;
+  const d=new Date(s);
+  if(!Number.isNaN(d.getTime())){
+    const p=n=>String(n).padStart(2,'0');
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  return s;
+}
+</script><script>
 async function loadMonthlyRouteCumulative(){
   const m=document.querySelector('#monthlyRouteCumMonth');
   const box=document.querySelector('#monthlyRouteCumBody');
@@ -196,7 +211,7 @@ async function loadDash(){
   }
 }
 function selectRoute(code){selectedRoute=selectedRoute===code?'':code;const label=document.querySelector('#routeFilterLabel');if(label)label.textContent=selectedRoute?`目前：路線${selectedRoute}（再點一次取消）`:'目前：全部路線';loadDash();loadDeliveries()}
-async function loadDeliveries(){let q='?';const f=document.querySelector('#filter'),se=document.querySelector('#search');if(f?.value)q+='status='+f.value+'&';if(selectedRoute)q+='route='+encodeURIComponent(selectedRoute)+'&';if(se?.value)q+='search='+encodeURIComponent(se.value);let x=await api('/api/dashboard/deliveries'+q),body=document.querySelector('#delivs');body.innerHTML=x.map((d,i)=>{const routeNo=Number(d.route_code)||0;const routeStart=i===0||String(x[i-1].route_code)!==String(d.route_code);const routeClass=`${routeNo%2?'route-odd':'route-even'} ${routeStart?'route-start':''}`;const routeCell=`<span class="route-badge-v19212">${d.route_code}線</span>${routeStart?'<span class="route-section-note">路線分隔</span>':''}`;const value=d.document_final??'';let doc;if(me.role==='SECRETARY'){doc=`<div class="row"><input type="number" min="0" value="${value}" style="width:88px" id="doc${d.id}"><button class="btn alt small" onclick="setDoc(${d.id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">存檔</button></div><span class="muted">總館路線簽核前皆可修改</span>`}else{doc=`<b>${value===''?'—':value}</b><br><span class="muted">管理者僅供查看</span>`}const itemBtn=me.role==='SECRETARY'?`<button class="btn alt small" onclick="editItems(${d.id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">隨車物品</button>`:'';const voidBtn=me.role==='ADMIN'&& !d.branch_signed_at && !d.driver_confirmed_at && d.status!=='VOID'?`<button class="btn danger small" onclick="voidDelivery(${d.id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">作廢</button>`:'';return `<tr class="${routeClass}"><td>${routeCell}</td><td>${d.branch_name}</td><td class="status">${statusText(d.status)}</td><td>${d.driver_name}</td><td>${d.driver_confirmed_at||d.branch_signed_at||'—'}</td><td>${doc}<div style="margin-top:6px">${itemBtn}</div></td><td>${voidBtn||'—'}</td></tr>`}).join('')}
+async function loadDeliveries(){let q='?';const f=document.querySelector('#filter'),se=document.querySelector('#search');if(f?.value)q+='status='+f.value+'&';if(selectedRoute)q+='route='+encodeURIComponent(selectedRoute)+'&';if(se?.value)q+='search='+encodeURIComponent(se.value);let x=await api('/api/dashboard/deliveries'+q),body=document.querySelector('#delivs');body.innerHTML=x.map((d,i)=>{const routeNo=Number(d.route_code)||0;const routeStart=i===0||String(x[i-1].route_code)!==String(d.route_code);const routeClass=`${routeNo%2?'route-odd':'route-even'} ${routeStart?'route-start':''}`;const routeCell=`<span class="route-badge-v19212">${d.route_code}線</span>${routeStart?'<span class="route-section-note">路線分隔</span>':''}`;const value=d.document_final??'';let doc;if(me.role==='SECRETARY'){doc=`<div class="row"><input type="number" min="0" value="${value}" style="width:88px" id="doc${d.id}"><button class="btn alt small" onclick="setDoc(${d.id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">存檔</button></div><span class="muted">總館路線簽核前皆可修改</span>`}else{doc=`<b>${value===''?'—':value}</b><br><span class="muted">管理者僅供查看</span>`}const itemBtn=me.role==='SECRETARY'?`<button class="btn alt small" onclick="editItems(${d.id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">隨車物品</button>`:'';const voidBtn=me.role==='ADMIN'&& !d.branch_signed_at && !d.driver_confirmed_at && d.status!=='VOID'?`<button class="btn danger small" onclick="voidDelivery(${d.id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">作廢</button>`:'';return `<tr class="${routeClass}"><td>${routeCell}</td><td>${d.branch_name}</td><td class="status">${statusText(d.status)}</td><td>${d.driver_name}</td><td>${fmtDateTime(d.driver_confirmed_at||d.branch_signed_at)}</td><td>${doc}<div style="margin-top:6px">${itemBtn}</div></td><td>${voidBtn||'—'}</td></tr>`}).join('')}
 async function setDoc(id,branchName){try{const el=document.querySelector('#doc'+id);if(!el||el.value==='')throw new Error('請輸入公文數量');const qty=Number(el.value);if(qty<0||!Number.isInteger(qty))throw new Error('公文數量請輸入 0 以上整數');if(!confirm(`${branchName}\n確認公文數量為 ${qty}？`))return;let r=await api('/api/secretary/deliveries/'+id+'/document',{method:'PATCH',body:JSON.stringify({qty})});alert(`${branchName}\n公文送出數量 ${r.qty} 已儲存。\n該路線完成總館簽核前仍可修改。`);await loadAll()}catch(e){alert(e.message);await loadAll()}}
 async function saveAllDocs(){try{let items=[];document.querySelectorAll('#delivs input[id^="doc"]').forEach(el=>{if(el.value!==''){const qty=Number(el.value);if(!Number.isInteger(qty)||qty<0)throw new Error('公文數量請輸入 0 以上整數');items.push({id:Number(el.id.slice(3)),qty})}});if(!items.length)throw new Error('目前沒有可存檔的公文數量');const total=items.reduce((a,b)=>a+b.qty,0);if(!confirm(`確認一次存檔 ${items.length} 個分館？\n公文總數：${total}`))return;let r=await api('/api/secretary/documents/batch',{method:'POST',body:JSON.stringify({items})});alert(`已一次存檔 ${r.changed} 個分館。\n公文總數：${r.total}`);await loadAll()}catch(e){alert(e.message);await loadAll()}}
 async function zeroAll(){if(confirm('將今日尚未完成總館路線簽核的公文送出全部設為 0？')){try{let r=await api('/api/secretary/documents/zero-all',{method:'POST'});alert(`已將 ${r.changed} 個可編輯分館的公文送出設為 0。`);await loadAll()}catch(e){alert(e.message)}}}
@@ -380,14 +395,14 @@ async function loadSignStatus(){
   routeReportTitle.textContent=`${d} 路線總表 / 三方簽核`;
   routeReportReadonlyHint.textContent=isToday?'今日資料可依既有流程簽核；查看原始資料仍為唯讀。':'歷史日期：唯讀查詢，不提供直接修改或補簽。';
   routeSignStatus.innerHTML='<table><tr><th>路線</th><th>司機</th><th>運送完成</th><th>分館簽收</th><th>待補</th><th>行政結案</th><th>公文送出</th><th>公文收回</th><th>圖書送出</th><th>圖書收回</th><th>司機簽名</th><th>總館簽核</th><th></th></tr>'+
-    active.map(r=>`<tr><td>${r.code}線</td><td>${r.driver_name||'—'}</td><td>${r.completed}/${r.total}</td><td>${r.branch_signed||0}/${r.total}</td><td>${r.late_pending||0}</td><td>${r.admin_closed||0}</td><td>${r.document_total||0}</td><td>${r.document_return_total||0}</td><td>${r.outbound_total||0}</td><td>${r.inbound_total||0}</td><td>${r.driver_signed_at?`✅ ${r.driver_signed_at}`:'—'}</td><td>${r.secretary_signed_at?`✅ ${r.secretary_signed_at}`:'—'}</td><td><button class="btn alt small" onclick="viewRouteSummary(${r.id},true)">查看原始分館 / 簽名</button></td></tr>`).join('')+'</table>';
+    active.map(r=>`<tr><td>${r.code}線</td><td>${r.driver_name||'—'}</td><td>${r.completed}/${r.total}</td><td>${r.branch_signed||0}/${r.total}</td><td>${r.late_pending||0}</td><td>${r.admin_closed||0}</td><td>${r.document_total||0}</td><td>${r.document_return_total||0}</td><td>${r.outbound_total||0}</td><td>${r.inbound_total||0}</td><td>${r.driver_signed_at?`✅ ${fmtDateTime(r.driver_signed_at)}`:'—'}</td><td>${r.secretary_signed_at?`✅ ${fmtDateTime(r.secretary_signed_at)}`:'—'}</td><td><button class="btn alt small" onclick="viewRouteSummary(${r.id},true)">查看原始分館 / 簽名</button></td></tr>`).join('')+'</table>';
   const gd=active.reduce((a,r)=>({d:a.d+(r.document_total||0),dr:a.dr+(r.document_return_total||0),o:a.o+(r.outbound_total||0),i:a.i+(r.inbound_total||0)}),{d:0,dr:0,o:0,i:0});
   dailyGrandTotal.classList.toggle('hidden',!active.length);
   dailyGrandTotal.textContent=`${d} 全部路線總計：公文送出 ${gd.d}｜公文收回 ${gd.dr}｜圖書送出 ${gd.o}｜圖書收回 ${gd.i}`;
   const locked=x.report&&x.report.status==='LOCKED';
   reportLocked.classList.toggle('hidden',!locked);
   secretarySignBox.classList.toggle('hidden',!isToday||locked||me.role!=='SECRETARY'||!x.all_required_routes_office_signed);
-  if(locked)reportLocked.innerHTML=`${d} 日報已於 ${x.report.locked_at||x.report.secretary_signed_at} 完成總館最終簽名。`;
+  if(locked)reportLocked.innerHTML=`${d} 日報已於 ${fmtDateTime(x.report.locked_at||x.report.secretary_signed_at)} 完成總館最終簽名。`;
   if(isToday&&!locked&&x.all_required_routes_office_signed&&me.role==='SECRETARY')setTimeout(()=>setupCanvas('secSig'),20);
 }
 
@@ -397,7 +412,7 @@ async function viewRouteSummary(id,readonly=true){
     routeDetailHost.innerHTML=`<div class="card" style="margin-top:12px">
       <div class="row" style="justify-content:space-between"><div><h3>${r.service_date}｜${r.code}線｜${r.driver_name||'—'}｜原始簽收明細</h3><div class="muted">歷史檢視為唯讀；所有修改應走協助修正／更正／行政結案流程。</div></div><div class="row"><button class="btn" onclick="downloadRoutePng(${id})">下載本路線 PNG</button><button class="btn alt small" onclick="routeDetailHost.innerHTML=''">關閉</button></div></div>
       <div style="overflow:auto"><table><tr><th>分館</th><th>狀態</th><th>公文送出</th><th>公文收回</th><th>圖書送出</th><th>圖書收回</th><th>備註</th><th>實際簽收時間</th><th>系統簽名時間</th><th>簽收人</th><th>分館簽名</th></tr>
-      ${x.stops.map(s=>`<tr><td>${s.branch_name}<br><span class="muted">${s.branch_code}</span></td><td>${s.status==='ADMIN_CLOSED'?'管理者結案／未取得分館簽名':statusText(s.status)}${s.admin_close_reason?`<br><span class="muted">${s.admin_close_reason}</span>`:''}</td><td>${s.document_final??'—'}</td><td>${s.document_return_final??'—'}</td><td>${s.outbound_final??'—'}</td><td>${s.inbound_final??'—'}</td><td>${s.note_final||'—'}</td><td>${s.receipt_at||'—'}</td><td>${s.corrected_at||s.branch_signed_at||'—'}</td><td>${s.correction_signer_name||s.signer_name||'—'}</td><td>${(s.correction_signature||s.branch_signature)?`<img src="${s.correction_signature||s.branch_signature}" style="max-width:150px;max-height:65px;border:1px solid #ddd">`:'—'}</td></tr>`).join('')}
+      ${x.stops.map(s=>`<tr><td>${s.branch_name}<br><span class="muted">${s.branch_code}</span></td><td>${s.status==='ADMIN_CLOSED'?'管理者結案／未取得分館簽名':statusText(s.status)}${s.admin_close_reason?`<br><span class="muted">${s.admin_close_reason}</span>`:''}</td><td>${s.document_final??'—'}</td><td>${s.document_return_final??'—'}</td><td>${s.outbound_final??'—'}</td><td>${s.inbound_final??'—'}</td><td>${s.note_final||'—'}</td><td>${fmtDateTime(s.receipt_at)}</td><td>${fmtDateTime(s.corrected_at||s.branch_signed_at)}</td><td>${s.correction_signer_name||s.signer_name||'—'}</td><td>${(s.correction_signature||s.branch_signature)?`<img src="${s.correction_signature||s.branch_signature}" style="max-width:150px;max-height:65px;border:1px solid #ddd">`:'—'}</td></tr>`).join('')}
       <tr><th>本線總計</th><th></th><th>${t.document}</th><th>${t.document_return}</th><th>${t.outbound}</th><th>${t.inbound}</th><th colspan="5"></th></tr></table></div>
       <div class="grid" style="grid-template-columns:1fr 1fr;margin-top:16px">
         <div><h4>司機路線簽名</h4>${r.driver_signature?`<img src="${r.driver_signature}" style="max-width:320px;max-height:100px;border:1px solid #ddd">`:'尚未簽名'}<div class="muted">${r.driver_signed_at||''}</div></div>
@@ -460,7 +475,7 @@ async function showPendingDetails(opts={}){
     document.querySelector('#modalHost').innerHTML=`<div class="modal"><div class="modalbox" style="max-width:1100px">
       <div class="sectiontitle"><div><h2>待補簽分館明細</h2><p class="muted">${opts.service_date||opts.month||'全部'} ${opts.route?('｜'+opts.route+'線'):''}</p></div><button class="btn alt" onclick="closeModal()">關閉</button></div>
       <div style="overflow:auto"><table><thead><tr><th>日期</th><th>路線</th><th>分館</th><th>公文送出</th><th>公文收回</th><th>圖書送出</th><th>圖書收回</th><th>實際簽收時間</th><th>操作</th></tr></thead>
-      <tbody>${rows.length?rows.map(x=>`<tr><td>${x.service_date}</td><td>${x.route_code}線</td><td><b>${x.branch_name}</b><br><span class="muted">${x.branch_code}</span></td><td>${x.document_final??'—'}</td><td>${x.document_return_final??'—'}</td><td>${x.outbound_final??'—'}</td><td>${x.inbound_final??'—'}</td><td>${x.receipt_at||'—'}</td><td>${canAssist?`<button class="btn alt small" onclick='assistPending(${JSON.stringify(x)})'>協助修正</button>`:''}${canClose?` <button class="btn danger small" onclick='adminClosePending(${x.id},${JSON.stringify(x.branch_name)})'>行政結案</button>`:''}</td></tr>`).join(''):`<tr><td colspan="9" class="muted">目前沒有待補簽分館。</td></tr>`}</tbody></table></div>
+      <tbody>${rows.length?rows.map(x=>`<tr><td>${x.service_date}</td><td>${x.route_code}線</td><td><b>${x.branch_name}</b><br><span class="muted">${x.branch_code}</span></td><td>${x.document_final??'—'}</td><td>${x.document_return_final??'—'}</td><td>${x.outbound_final??'—'}</td><td>${x.inbound_final??'—'}</td><td>${fmtDateTime(x.receipt_at)}</td><td>${canAssist?`<button class="btn alt small" onclick='assistPending(${JSON.stringify(x)})'>協助修正</button>`:''}${canClose?` <button class="btn danger small" onclick='adminClosePending(${x.id},${JSON.stringify(x.branch_name)})'>行政結案</button>`:''}</td></tr>`).join(''):`<tr><td colspan="9" class="muted">目前沒有待補簽分館。</td></tr>`}</tbody></table></div>
       <div class="notice" style="margin-top:12px">協助修正只修改尚未簽名資料；管理者行政結案會保留「未取得分館簽名」標記與 Audit Log。</div>
     </div></div>`;
   }catch(e){alert(e.message)}
@@ -567,7 +582,7 @@ async function downloadHistoryDayPng(){
       g.fillStyle='#172230';g.font='bold 30px system-ui,sans-serif';
       g.fillText(`${r.code}線｜${r.driver_name||'—'}`,margin+18,y+39);
       g.font='21px system-ui,sans-serif';
-      g.fillText(`司機簽名：${r.driver_signed_at||'尚未簽名'}　｜　總館簽核：${r.secretary_signed_at||'尚未簽核'}`,margin+18,y+72);
+      g.fillText(`司機簽名：${r.driver_signed_at?fmtDateTime(r.driver_signed_at):'尚未簽名'}　｜　總館簽核：${r.secretary_signed_at?fmtDateTime(r.secretary_signed_at):'尚未簽核'}`,margin+18,y+72);
       y+=routeHeaderH;
 
       g.fillStyle='#f7f9fc';g.fillRect(margin,y,W-margin*2,colHeaderH);
@@ -582,7 +597,7 @@ async function downloadHistoryDayPng(){
           `${s.branch_name} ${s.branch_code||''}`,status,
           String(s.document_final??'—'),String(s.document_return_final??'—'),
           String(s.outbound_final??'—'),String(s.inbound_final??'—'),
-          String(s.receipt_at||'—'),String(s.correction_signer_name||s.signer_name||'—'),
+          fmtDateTime(s.receipt_at),String(s.correction_signer_name||s.signer_name||'—'),
           String(s.note_final||s.admin_close_reason||'—')
         ];
         g.fillStyle='#172230';
@@ -605,7 +620,7 @@ async function downloadHistoryDayPng(){
       y+=rowH;
 
       g.font='19px system-ui,sans-serif';
-      g.fillText(`路線 ID：${r.id}　｜　司機：${r.driver_signed_at||'—'}　｜　總館：${r.secretary_signed_at||'—'}`,margin+8,y+34);
+      g.fillText(`路線 ID：${r.id}　｜　司機：${fmtDateTime(r.driver_signed_at)}　｜　總館：${fmtDateTime(r.secretary_signed_at)}`,margin+8,y+34);
       y+=routeFooterH;
     }
 
@@ -613,7 +628,7 @@ async function downloadHistoryDayPng(){
     g.fillStyle='#172230';g.font='bold 23px system-ui,sans-serif';
     g.fillText(`全部總計　公文送出 ${grand.d}　公文收回 ${grand.dr}　圖書送出 ${grand.o}　圖書收回 ${grand.i}`,margin+18,H-footerH+38);
     g.font='18px system-ui,sans-serif';
-    g.fillText(`列印／下載時間：${new Date().toLocaleString('zh-TW')}　｜　歷史查詢唯讀作業確認檔`,margin+18,H-footerH+68);
+    g.fillText(`列印／下載時間：${fmtDateTime(new Date().toISOString())}　｜　歷史查詢唯讀作業確認檔`,margin+18,H-footerH+68);
 
     const a=document.createElement('a');
     a.download=`${d}_${histRoute.value?histRoute.value+'線':'全部路線'}_歷史日總表.png`;
@@ -628,7 +643,7 @@ async function loadHistoryRoutes(){
     const qs=new URLSearchParams({service_date:d});if(histRoute.value)qs.set('route',histRoute.value);
     const rows=await api('/api/history/routes?'+qs.toString());
     historyResult.innerHTML=rows.length?'<table><tr><th>日期</th><th>路線</th><th>司機</th><th>運送完成</th><th>分館簽收</th><th>待補</th><th>行政結案</th><th>司機簽名</th><th>總館簽核</th><th>原始資料</th></tr>'+
-      rows.map(r=>`<tr><td>${r.service_date}</td><td>${r.code}線</td><td>${r.driver_name||'—'}</td><td>${r.completed}/${r.total}</td><td>${r.branch_signed}/${r.total}</td><td>${r.late_pending||0}</td><td>${r.admin_closed||0}</td><td>${r.driver_signed_at||'—'}</td><td>${r.secretary_signed_at||'—'}</td><td><button class="btn alt small" onclick="viewHistoryRoute(${r.id})">查看分館 / 簽名</button> <button class="btn alt small" onclick="downloadRoutePng(${r.id})">下載路線 PNG</button></td></tr>`).join('')+'</table>':'<div class="muted">查無該日路線資料。</div>';
+      rows.map(r=>`<tr><td>${r.service_date}</td><td>${r.code}線</td><td>${r.driver_name||'—'}</td><td>${r.completed}/${r.total}</td><td>${r.branch_signed}/${r.total}</td><td>${r.late_pending||0}</td><td>${r.admin_closed||0}</td><td>${fmtDateTime(r.driver_signed_at)}</td><td>${fmtDateTime(r.secretary_signed_at)}</td><td><button class="btn alt small" onclick="viewHistoryRoute(${r.id})">查看分館 / 簽名</button> <button class="btn alt small" onclick="downloadRoutePng(${r.id})">下載路線 PNG</button></td></tr>`).join('')+'</table>':'<div class="muted">查無該日路線資料。</div>';
   }catch(e){alert(e.message)}
 }
 async function viewHistoryRoute(id){
@@ -636,7 +651,7 @@ async function viewHistoryRoute(id){
     const x=await api('/api/routes/'+id+'/signed-summary'),r=x.route,t=x.totals;
     historyDetail.innerHTML=`<div class="card"><div class="row" style="justify-content:space-between"><div><h3>${r.service_date}｜${r.code}線｜原始分館 / 簽名</h3><div class="muted">唯讀檢視</div></div><button class="btn alt small" onclick="historyDetail.innerHTML=''">關閉</button></div>
     <div style="overflow:auto"><table><tr><th>分館</th><th>狀態</th><th>公文送出</th><th>公文收回</th><th>圖書送出</th><th>圖書收回</th><th>實際簽收</th><th>系統簽名</th><th>簽收人</th><th>簽名</th></tr>
-    ${x.stops.map(s=>`<tr><td>${s.branch_name}<br><span class="muted">${s.branch_code}</span></td><td>${s.status==='ADMIN_CLOSED'?'管理者結案／未取得分館簽名':statusText(s.status)}</td><td>${s.document_final??'—'}</td><td>${s.document_return_final??'—'}</td><td>${s.outbound_final??'—'}</td><td>${s.inbound_final??'—'}</td><td>${s.receipt_at||'—'}</td><td>${s.corrected_at||s.branch_signed_at||'—'}</td><td>${s.correction_signer_name||s.signer_name||'—'}</td><td>${(s.correction_signature||s.branch_signature)?`<img src="${s.correction_signature||s.branch_signature}" style="max-width:140px;max-height:60px;border:1px solid #ddd">`:'—'}</td></tr>`).join('')}</table></div>
+    ${x.stops.map(s=>`<tr><td>${s.branch_name}<br><span class="muted">${s.branch_code}</span></td><td>${s.status==='ADMIN_CLOSED'?'管理者結案／未取得分館簽名':statusText(s.status)}</td><td>${s.document_final??'—'}</td><td>${s.document_return_final??'—'}</td><td>${s.outbound_final??'—'}</td><td>${s.inbound_final??'—'}</td><td>${fmtDateTime(s.receipt_at)}</td><td>${fmtDateTime(s.corrected_at||s.branch_signed_at)}</td><td>${s.correction_signer_name||s.signer_name||'—'}</td><td>${(s.correction_signature||s.branch_signature)?`<img src="${s.correction_signature||s.branch_signature}" style="max-width:140px;max-height:60px;border:1px solid #ddd">`:'—'}</td></tr>`).join('')}</table></div>
     <div class="grid" style="grid-template-columns:1fr 1fr"><div><h4>司機簽名</h4>${r.driver_signature?`<img src="${r.driver_signature}" style="max-width:300px;max-height:90px">`:'—'}<div class="muted">${r.driver_signed_at||''}</div></div><div><h4>總館簽核</h4>${r.secretary_signature?`<img src="${r.secretary_signature}" style="max-width:300px;max-height:90px">`:'—'}<div class="muted">${r.secretary_signed_at||''}</div></div></div></div>`;
   }catch(e){alert(e.message)}
 }
@@ -649,7 +664,7 @@ async function loadHistoryReceipts(){
     if(histStatus.value)qs.set('status',histStatus.value);
     const rows=await api('/api/history/receipts?'+qs.toString());
     historyResult.innerHTML=rows.length?'<table><tr><th>日期</th><th>路線</th><th>分館</th><th>司機</th><th>狀態</th><th>公文送出</th><th>公文收回</th><th>圖書送出</th><th>圖書收回</th><th>實際簽收</th><th>系統簽名</th><th>原始資料</th></tr>'+
-      rows.map(x=>`<tr><td>${x.service_date}</td><td>${x.route_code}線</td><td>${x.branch_name}<br><span class="muted">${x.branch_code}</span></td><td>${x.driver_name||'—'}</td><td>${x.status==='ADMIN_CLOSED'?'管理者結案／未取得分館簽名':statusText(x.status)}</td><td>${x.document_final??'—'}</td><td>${x.document_return_final??'—'}</td><td>${x.outbound_final??'—'}</td><td>${x.inbound_final??'—'}</td><td>${x.receipt_at||'—'}</td><td>${x.corrected_at||x.branch_signed_at||'—'}</td><td><button class="btn alt small" onclick="viewHistoryReceipt(${x.id})">查看原始資料</button></td></tr>`).join('')+'</table>':'<div class="muted">查無符合條件的簽收資料。</div>';
+      rows.map(x=>`<tr><td>${x.service_date}</td><td>${x.route_code}線</td><td>${x.branch_name}<br><span class="muted">${x.branch_code}</span></td><td>${x.driver_name||'—'}</td><td>${x.status==='ADMIN_CLOSED'?'管理者結案／未取得分館簽名':statusText(x.status)}</td><td>${x.document_final??'—'}</td><td>${x.document_return_final??'—'}</td><td>${x.outbound_final??'—'}</td><td>${x.inbound_final??'—'}</td><td>${fmtDateTime(x.receipt_at)}</td><td>${fmtDateTime(x.corrected_at||x.branch_signed_at)}</td><td><button class="btn alt small" onclick="viewHistoryReceipt(${x.id})">查看原始資料</button></td></tr>`).join('')+'</table>':'<div class="muted">查無符合條件的簽收資料。</div>';
   }catch(e){alert(e.message)}
 }
 async function viewHistoryReceipt(id){
@@ -658,9 +673,9 @@ async function viewHistoryReceipt(id){
     const itemNames={POSTER:'海報',PROMOTION:'文宣',STATIONERY:'文具'};
     const items=(x.items||[]).map(i=>`${i.item_type==='OTHER'?(i.item_name||'其他'):(itemNames[i.item_type]||i.item_type)} ${i.quantity}`).join('、')||'無';
     historyDetail.innerHTML=`<div class="card"><div class="row" style="justify-content:space-between"><div><h3>${d.service_date}｜${d.route_code}線｜${d.branch_name}｜原始資料</h3><div class="muted">唯讀檢視；Audit Log 同步保留。</div></div><button class="btn alt small" onclick="historyDetail.innerHTML=''">關閉</button></div>
-    <div class="grid"><div><b>狀態</b><div>${d.status==='ADMIN_CLOSED'?'管理者結案／未取得分館簽名':statusText(d.status)}</div></div><div><b>司機</b><div>${d.driver_name||'—'}</div></div><div><b>公文送出 / 收回</b><div>${d.document_final??'—'} / ${d.document_return_final??'—'}</div></div><div><b>圖書送出 / 收回</b><div>${d.outbound_final??'—'} / ${d.inbound_final??'—'}</div></div><div><b>隨車物品</b><div>${items}</div></div><div><b>備註</b><div>${d.note_final||'—'}</div></div><div><b>實際簽收時間</b><div>${d.receipt_at||'—'}</div></div><div><b>系統分館簽名時間</b><div>${d.branch_signed_at||'—'}</div></div><div><b>簽收人</b><div>${d.correction_signer_name||d.signer_name||'—'}</div></div><div><b>行政結案</b><div>${d.admin_closed_at?`${d.admin_closed_at}<br>${d.admin_close_reason||''}`:'—'}</div></div></div>
+    <div class="grid"><div><b>狀態</b><div>${d.status==='ADMIN_CLOSED'?'管理者結案／未取得分館簽名':statusText(d.status)}</div></div><div><b>司機</b><div>${d.driver_name||'—'}</div></div><div><b>公文送出 / 收回</b><div>${d.document_final??'—'} / ${d.document_return_final??'—'}</div></div><div><b>圖書送出 / 收回</b><div>${d.outbound_final??'—'} / ${d.inbound_final??'—'}</div></div><div><b>隨車物品</b><div>${items}</div></div><div><b>備註</b><div>${d.note_final||'—'}</div></div><div><b>實際簽收時間</b><div>${fmtDateTime(d.receipt_at)}</div></div><div><b>系統分館簽名時間</b><div>${fmtDateTime(d.branch_signed_at)}</div></div><div><b>簽收人</b><div>${d.correction_signer_name||d.signer_name||'—'}</div></div><div><b>行政結案</b><div>${d.admin_closed_at?`${fmtDateTime(d.admin_closed_at)}<br>${d.admin_close_reason||''}`:'—'}</div></div></div>
     <div class="grid" style="grid-template-columns:1fr 1fr;margin-top:14px"><div><h4>分館簽名</h4>${(d.correction_signature||d.branch_signature)?`<img src="${d.correction_signature||d.branch_signature}" style="max-width:320px;max-height:110px;border:1px solid #ddd">`:'—'}</div><div><h4>司機 / 總館路線簽名</h4><div>司機：${d.driver_signed_at||'—'}</div>${d.driver_signature?`<img src="${d.driver_signature}" style="max-width:260px;max-height:90px">`:''}<div style="margin-top:8px">總館：${d.secretary_signed_at||'—'}</div>${d.secretary_signature?`<img src="${d.secretary_signature}" style="max-width:260px;max-height:90px">`:''}</div></div>
-    <h4>Audit Log</h4><div style="overflow:auto"><table><tr><th>時間</th><th>角色</th><th>動作</th><th>原因</th></tr>${(x.audit||[]).map(a=>`<tr><td>${a.created_at}</td><td>${a.role||a.actor_type}</td><td>${a.action}</td><td>${a.reason||'—'}</td></tr>`).join('')||'<tr><td colspan="4">無</td></tr>'}</table></div></div>`;
+    <h4>Audit Log</h4><div style="overflow:auto"><table><tr><th>時間</th><th>角色</th><th>動作</th><th>原因</th></tr>${(x.audit||[]).map(a=>`<tr><td>${fmtDateTime(a.created_at)}</td><td>${a.role||a.actor_type}</td><td>${a.action}</td><td>${a.reason||'—'}</td></tr>`).join('')||'<tr><td colspan="4">無</td></tr>'}</table></div></div>`;
   }catch(e){alert(e.message)}
 }
 
@@ -683,5 +698,5 @@ async function loadEmail(){
 }
 async function testEmail(){try{let x=await api('/api/email/test',{method:'POST',body:JSON.stringify({email:emailTestEmail.value})});alert(x.message||x.error);loadEmail()}catch(e){alert(e.message)}}
 async function addEmail(){try{await api('/api/email/recipients',{method:'POST',body:JSON.stringify({email:emailAddr.value,recipient_type:emailType.value})});emailAddr.value='';loadEmail()}catch(e){alert(e.message)}}async function toggleEmail(id){await api('/api/email/recipients/'+id+'/toggle',{method:'POST'});loadEmail()}async function deleteEmail(id){if(!confirm('確定刪除此收件人？'))return;await api('/api/email/recipients/'+id,{method:'DELETE'});loadEmail()}async function sendReport(){try{let x=await api('/api/email/send-report',{method:'POST',body:JSON.stringify({report_type:'DAILY',period:todayStr})});alert('寄送完成：'+x.status);loadEmail()}catch(e){alert(e.message);loadEmail()}}async function resend(id){try{let x=await api('/api/email/logs/'+id+'/resend',{method:'POST'});alert('重新寄送完成：'+x.status);loadEmail()}catch(e){alert(e.message);loadEmail()}}
-async function loadAudit(){let x=await api('/api/audit?limit=200');auditList.innerHTML='<table><tr><th>時間</th><th>角色</th><th>動作</th><th>對象</th><th>原因</th></tr>'+x.map(a=>`<tr><td>${a.created_at}</td><td>${a.role}</td><td>${a.action}</td><td>${a.entity_type} ${a.entity_id}</td><td>${a.reason||''}</td></tr>`).join('')+'</table>'}function connect(){let es=new EventSource('/api/events');es.addEventListener('update',()=>loadAll())}
+async function loadAudit(){let x=await api('/api/audit?limit=200');auditList.innerHTML='<table><tr><th>時間</th><th>角色</th><th>動作</th><th>對象</th><th>原因</th></tr>'+x.map(a=>`<tr><td>${fmtDateTime(a.created_at)}</td><td>${a.role}</td><td>${a.action}</td><td>${a.entity_type} ${a.entity_id}</td><td>${a.reason||''}</td></tr>`).join('')+'</table>'}function connect(){let es=new EventSource('/api/events');es.addEventListener('update',()=>loadAll())}
 </script></body></html>
