@@ -30,7 +30,22 @@
 #monthlyRouteSummaryTable .daytotal { background: rgba(226,232,240,.45); }
 #monthlyRouteSummaryTable th, #monthlyRouteSummaryTable td { text-align:center; }
 
-</style></head><body>
+</style>
+<style>
+/* V19.2.11 route visual grouping for 總館輸入 */
+.route-row-group{position:relative}
+.route-row-group.route-odd{background:#f7f9fc}
+.route-row-group.route-even{background:#ffffff}
+.route-row-group.route-start td{border-top:3px solid #cbd5e1 !important}
+.route-row-group td:first-child{box-shadow:inset 5px 0 0 #94a3b8}
+.route-badge{display:inline-flex;align-items:center;gap:6px;font-weight:700;padding:4px 10px;border-radius:999px;background:#eef2f7}
+.route-divider-label{font-size:12px;color:#64748b;margin-left:8px}
+@media (max-width:700px){
+  .route-row-group td:first-child{box-shadow:inset 4px 0 0 #94a3b8}
+}
+</style>
+
+</head><body>
 <div id="login" class="login card"><h1>圖書物流配送暨電子簽收</h1><p class="muted">管理者 / 總館</p><input id="u" placeholder="帳號" style="width:100%;margin:6px 0"><input id="p" type="password" placeholder="密碼" style="width:100%;margin:6px 0"><button class="btn big" onclick="login()">登入</button><button class="btn alt big" style="margin-top:8px" onclick="forgot()">忘記密碼</button><div id="msg"></div></div>
 <div id="app" class="hidden"><header class="top"><div class="brand">圖書物流配送暨電子簽收管理系統</div><div><span id="who"></span> <button class="btn alt" onclick="logout()">登出</button></div></header><main class="wrap">
 <div class="nav"><span class="pill" onclick="show('dash')">即時看板</span><span class="pill" onclick="show('branches')">分館管理</span><span class="pill" onclick="show('routes')">路線 / 每日指派</span><span class="pill" onclick="show('drivers')">司機 / 裝置</span><span class="pill" onclick="show('schedule')">休館 / 停送 / 非固定運送</span><span class="pill" onclick="show('records')">配送 / 更正</span><span class="pill" onclick="show('reports')">日報 / 月報</span><span class="pill" onclick="show('account')">帳號與安全性</span><span class="pill" onclick="show('email')">Email</span><span class="pill" onclick="show('audit')">Audit Log</span></div>
@@ -79,7 +94,7 @@
 <section id="account" class="hidden"><div class="grid"><div class="card"><h2>我的帳號</h2><div id="accountInfo" class="muted"></div><div class="formgrid"><label>目前密碼<input id="ownCurrent" type="password"></label><label>新密碼（至少 8 碼）<input id="ownNew" type="password"></label><label>再次輸入新密碼<input id="ownConfirm" type="password"></label></div><div class="toolbar"><button class="btn" onclick="changeOwnPassword()">變更我的密碼</button></div><p class="muted">系統不顯示目前密碼；資料庫僅保存密碼雜湊。</p></div><div id="adminResetCard" class="card"><h2>重設總館密碼</h2><p class="muted">僅管理者可操作；需再次輸入管理者目前密碼確認。</p><div class="formgrid"><label>管理者目前密碼<input id="adminVerify" type="password"></label><label>總館新密碼<input id="secNew" type="password"></label><label>再次輸入總館新密碼<input id="secConfirm" type="password"></label></div><div class="toolbar"><button class="btn" onclick="resetSecretaryPassword()">重設總館密碼</button></div></div></div></section>
 <section id="email" class="hidden"><div class="grid"><div class="card"><h2>Google Workspace Gmail API</h2><div id="emailProviderStatus"></div><div id="emailTestTools" class="toolbar"><input id="emailTestEmail" type="email" placeholder="測試收件信箱"><button class="btn" onclick="testEmail()">寄送測試郵件</button></div><p class="muted">OAuth Secret / Refresh Token 僅存在 Render Environment，後台永遠不顯示實際內容。</p></div><div class="card"><h2>Email 收件人</h2><div id="emailAdminTools" class="toolbar"><input id="emailAddr" type="email" placeholder="name@example.com"><select id="emailType"><option>TO</option><option>CC</option><option>BCC</option></select><button class="btn" onclick="addEmail()">新增</button></div><div id="emailRecipients"></div></div><div class="card"><h2>報表寄送 / 紀錄</h2><div class="toolbar"><button class="btn" onclick="sendReport()">寄送今日報表 Excel + PDF</button></div><div id="emailLogs"></div></div></div></section>
 <section id="audit" class="hidden"><div class="card"><h2>Audit Log</h2><div id="auditList" style="overflow:auto"></div></div></section>
-</main></div><div id="modalHost"></div><script src="/static/common.js?v=19.2.10"></script><script>
+</main></div><div id="modalHost"></div><script src="/static/common.js?v=19.2.11"></script><script>
 async function loadMonthlyRouteCumulative(){
   const m=document.querySelector('#monthlyRouteCumMonth');
   const box=document.querySelector('#monthlyRouteCumBody');
