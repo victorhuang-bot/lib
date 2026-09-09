@@ -1,21 +1,27 @@
-# V19.2.14 Gmail API — 分館桌機簽名 500 修正
+# V19.2.15 Gmail API — 待補簽追蹤 / 協助修正 / 行政結案
 
-## 原因
-V19.2.13 桌機分館畫面已顯示四個可修改數量欄位，
-但送出時前端仍只傳公文收回 / 圖書收回。
-後端 UPDATE 已改成四欄位，參數數量卻仍是舊版 tuple，
-造成 PostgreSQL 執行時 500 Internal Server Error。
-前端又直接呼叫 response.json()，因此使用者只看到：
-Unexpected token 'I', "Internal S"... is not valid JSON
+1. 待補簽明細
+- 管理者 / 總館可依日期、月份、路線查看待補簽分館。
+- 顯示日期、路線、分館、四個數量與實際簽收時間。
 
-## V19.2.14
-- 分館送出簽名時傳送四欄：
-  公文送出 / 公文收回 / 圖書送出 / 圖書收回
-- 後端 branch_sign 重新整理為正確 placeholder / tuple 數量
-- 正常簽收與 LATE_BRANCH_PENDING 補簽皆支援四欄
-- receipt_at 保留可修改
-- branch_signed_at 仍由系統產生
-- bapi 改成可處理 JSON 與 plain-text 500 錯誤，不再顯示 JSON parse error
+2. 今日路線總表
+- 新增「查看今日待補簽分館」入口。
 
-完整保留 V19.2.13 桌機登入、responsive、FIFO、V19.2.12 路線辨識、
-V19.2.10 migration-safe、VOID、隨車物品與 Gmail API。
+3. 總館 / 管理者協助修正
+- 僅限尚未取得分館簽名的 WAITING_BRANCH / LATE_BRANCH_PENDING。
+- 可修正四個數量、備註、實際簽收時間。
+- Audit Log：ASSIST_CORRECT_PENDING。
+
+4. 管理者行政結案
+- 僅 ADMIN。
+- 必填原因。
+- 狀態 ADMIN_CLOSED。
+- 不冒充分館簽名。
+- Audit Log：ADMIN_CLOSE_DELIVERY。
+- ADMIN_CLOSED 視為 operational completed，不阻擋路線完成。
+
+5. 報表
+- 行政結案資料保留 admin_close_reason / status，供日報月報標示
+  「管理者結案／未取得分館簽名」。
+
+完整保留 V19.2.14、V19.2.13、V19.2.12、V19.2.10 與 Gmail API 功能。
