@@ -28,7 +28,7 @@ DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
 DB = DATA_DIR / 'app.db'
 DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
 USE_POSTGRES = bool(DATABASE_URL)
-APP_VERSION='V19.2.12'
+APP_VERSION='V19.2.13'
 
 _PREFILL_CACHE = {}
 _PREFILL_CACHE_TTL_SECONDS = 45
@@ -464,7 +464,7 @@ def migrate_document_return_final(c):
     c.commit()
 
 def migrate_v1929(c):
-    """V19.2.12: void metadata, carried items and editable receipt time."""
+    """V19.2.13: void metadata, carried items and editable receipt time."""
     cols=[('receipt_at','TEXT'),('voided_at','TEXT'),('voided_by','INTEGER'),('void_reason','TEXT')]
     if USE_POSTGRES:
         rows=c.execute("""SELECT column_name FROM information_schema.columns
@@ -476,7 +476,7 @@ def migrate_v1929(c):
             c.execute("SET LOCAL lock_timeout TO '8s'")
             for name,typ in missing:
                 c.execute(f'ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS {name} {typ}')
-        # V19.2.12: Oregon/Singapore may auto-deploy the same commit concurrently
+        # V19.2.13: Oregon/Singapore may auto-deploy the same commit concurrently
         # while sharing one Neon database. PostgreSQL's CREATE TABLE IF NOT EXISTS
         # can still race at pg_type creation, so serialize this schema creation.
         c.execute("SET statement_timeout TO '60s'")
@@ -1173,6 +1173,49 @@ async def put_delivery_items(did:int,req:Request):
     audit(c,'USER',u['id'],u['role'],'SET_DELIVERY_ITEMS','DELIVERY',did,after={'items':[{'item_type':a,'item_name':b,'quantity':q} for a,b,q in clean]})
     c.commit(); c.close(); return {'ok':True,'items':[{'item_type':a,'item_name':b,'quantity':q} for a,b,q in clean]}
 
+
+@app.post('/api/branch-session/desktop-login')
+async def branch_desktop_login(req:Request):
+    p=await req.json()
+    code=(p.get('branch_code') or '').strip().upper()
+    pin=(p.get('pin') or '').strip()
+    if not code or not pin:
+        raise HTTPException(400,'請輸入分館代碼與 PIN')
+    c=db()
+    b=c.execute('SELECT * FROM branches WHERE upper(code)=? AND active=1',(code,)).fetchone()
+    if not b:
+        c.close(); raise HTTPException(404,'找不到啟用中的分館')
+    if not verify_secret(pin,b['pin_hash']):
+        c.close(); raise HTTPException(401,'PIN 錯誤')
+
+    # Same FIFO priority as QR flow: oldest unresolved late-sign first,
+    # otherwise today's delivery.
+    x=c.execute(
+        """SELECT * FROM deliveries
+           WHERE branch_id=?
+             AND status='LATE_BRANCH_PENDING'
+             AND branch_signed_at IS NULL
+             AND branch_signature IS NULL
+           ORDER BY service_date ASC,id ASC LIMIT 1""",
+        (b['id'],)
+    ).fetchone()
+    if not x:
+        x=c.execute(
+            """SELECT * FROM deliveries
+               WHERE branch_id=? AND service_date=? AND status<>'VOID'
+               ORDER BY id DESC LIMIT 1""",
+            (b['id'],today())
+        ).fetchone()
+    if not x:
+        c.close(); raise HTTPException(404,'目前沒有待簽收配送')
+
+    raw=secrets.token_urlsafe(32)
+    c.execute('DELETE FROM branch_sessions WHERE branch_id=?',(b['id'],))
+    c.execute('INSERT INTO branch_sessions(token_hash,branch_id,delivery_id,expires_at) VALUES(?,?,?,?)',
+              (thash(raw),b['id'],x['id'],future_iso(hours=12)))
+    c.commit(); c.close()
+    return {'session':raw,'branch':b['name'],'branch_code':b['code'],'delivery_id':x['id'],'service_date':x['service_date']}
+
 @app.post('/api/branch-session/verify')
 async def branch_verify(req:Request):
     p=await req.json(); c=db(); b=c.execute('SELECT * FROM branches WHERE access_token_hash=? AND active=1',(thash(p.get('token','')),)).fetchone()
@@ -1242,9 +1285,9 @@ async def branch_sign(req:Request):
     signed_at=now(); next_status='STOP_COMPLETED' if late else 'WAITING_DRIVER_CONFIRM'
     action='BRANCH_LATE_SIGN' if late else 'BRANCH_SIGN'
     if late:
-        c.execute("UPDATE deliveries SET document_return_final=?,inbound_final=?,note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,receipt_at=?,status=?,driver_confirmed_at=COALESCE(driver_confirmed_at,?),row_version=row_version+1 WHERE id=?",(document_return,inbound,note,signer,signature,signed_at,receipt_at,next_status,signed_at,x['id']))
+        c.execute("UPDATE deliveries SET document_final=?,document_return_final=?,outbound_final=?,inbound_final=?,note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,receipt_at=?,status=?,driver_confirmed_at=COALESCE(driver_confirmed_at,?),row_version=row_version+1 WHERE id=?",(document_return,inbound,note,signer,signature,signed_at,receipt_at,next_status,signed_at,x['id']))
     else:
-        c.execute("UPDATE deliveries SET document_return_final=?,inbound_final=?,note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,receipt_at=?,status=?,row_version=row_version+1 WHERE id=?",(document_return,inbound,note,signer,signature,signed_at,receipt_at,next_status,x['id']))
+        c.execute("UPDATE deliveries SET document_final=?,document_return_final=?,outbound_final=?,inbound_final=?,note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,receipt_at=?,status=?,row_version=row_version+1 WHERE id=?",(document_return,inbound,note,signer,signature,signed_at,receipt_at,next_status,x['id']))
     audit(c,'BRANCH',s['branch_id'],'BRANCH',action,'DELIVERY',x['id'],after={'service_date':x['service_date'],'document_return':document_return,'inbound':inbound,'note':note,'signer':signer,'late':late,'receipt_at':receipt_at})
     c.commit();c.close();await publish({'type':'delivery.updated','id':x['id']});return {'ok':True,'late':late,'driver_reconfirm_required':not late}
 @app.post('/api/branch-session/correct')
