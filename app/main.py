@@ -28,7 +28,7 @@ DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
 DB = DATA_DIR / 'app.db'
 DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
 USE_POSTGRES = bool(DATABASE_URL)
-APP_VERSION='V19.2.15'
+APP_VERSION='V19.2.16'
 
 _PREFILL_CACHE = {}
 _PREFILL_CACHE_TTL_SECONDS = 45
@@ -464,7 +464,7 @@ def migrate_document_return_final(c):
     c.commit()
 
 def migrate_v1929(c):
-    """V19.2.15: void metadata, carried items and editable receipt time."""
+    """V19.2.16: void metadata, carried items and editable receipt time."""
     cols=[('receipt_at','TEXT'),('voided_at','TEXT'),('voided_by','INTEGER'),('void_reason','TEXT'),('admin_closed_at','TEXT'),('admin_closed_by','INTEGER'),('admin_close_reason','TEXT')]
     if USE_POSTGRES:
         rows=c.execute("""SELECT column_name FROM information_schema.columns
@@ -476,7 +476,7 @@ def migrate_v1929(c):
             c.execute("SET LOCAL lock_timeout TO '8s'")
             for name,typ in missing:
                 c.execute(f'ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS {name} {typ}')
-        # V19.2.15: Oregon/Singapore may auto-deploy the same commit concurrently
+        # V19.2.16: Oregon/Singapore may auto-deploy the same commit concurrently
         # while sharing one Neon database. PostgreSQL's CREATE TABLE IF NOT EXISTS
         # can still race at pg_type creation, so serialize this schema creation.
         c.execute("SET statement_timeout TO '60s'")
@@ -1127,11 +1127,43 @@ async def sign_route(rid:int,req:Request):
     c.execute("UPDATE daily_routes SET status='DRIVER_SIGNED',driver_signature=?,driver_signed_at=? WHERE id=?",(p.get('signature',''),now(),rid));audit(c,'DRIVER',s['driver_id'],'DRIVER','DRIVER_ROUTE_SIGN','DAILY_ROUTE',rid,after={'signed_at':now()});c.commit();c.close();await publish({'type':'route.updated','id':rid});return {'ok':True}
 
 
+
+@app.get('/api/pending-summary')
+def pending_summary(req:Request, service_date:str|None=None, month:str|None=None):
+    require_user(req,['ADMIN','SECRETARY'])
+    c=db()
+    where=[
+        "x.status IN ('WAITING_BRANCH','LATE_BRANCH_PENDING')",
+        "x.branch_signed_at IS NULL",
+        "x.branch_signature IS NULL"
+    ]
+    params=[]
+    if service_date:
+        where.append("x.service_date=?")
+        params.append(service_date)
+    if month:
+        where.append("x.service_date LIKE ?")
+        params.append(month+'%')
+    rows=[dict(r) for r in c.execute(
+        f"""SELECT x.service_date,r.code route_code,COUNT(*) pending_count,
+                   STRING_AGG(b.name, '、' ORDER BY b.stop_order) branch_names
+            FROM deliveries x
+            JOIN branches b ON b.id=x.branch_id
+            JOIN daily_routes dr ON dr.id=x.daily_route_id
+            JOIN routes r ON r.id=dr.route_id
+            WHERE {' AND '.join(where)}
+            GROUP BY x.service_date,r.code
+            ORDER BY x.service_date,CAST(r.code AS INTEGER)""",
+        tuple(params)
+    ).fetchall()]
+    c.close()
+    return rows
+
 @app.get('/api/pending-branches')
 def pending_branches(req:Request, service_date:str|None=None, route:str|None=None, month:str|None=None):
     require_user(req,['ADMIN','SECRETARY'])
     c=db()
-    where=["x.status='LATE_BRANCH_PENDING'","x.branch_signed_at IS NULL","x.branch_signature IS NULL"]
+    where=["x.status IN ('WAITING_BRANCH','LATE_BRANCH_PENDING')","x.branch_signed_at IS NULL","x.branch_signature IS NULL"]
     params=[]
     if service_date:
         where.append("x.service_date=?"); params.append(service_date)
