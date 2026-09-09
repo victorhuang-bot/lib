@@ -1,22 +1,22 @@
-# V19.2.21 Gmail API — V19.2.20 顯示回歸修正版
+# V19.2.22 Gmail API — 分館固定 QR 查看 / 列印修正
 
-## 原因
-V19.2.20 將 `fmtDateTime()` 放進：
+## 問題
+原本「查看/列印」流程有兩個瀏覽器問題：
 
-`<script src="/static/common.js"> ... </script>`
+1. `qr()` 先 `await api(...)` 再 `window.open()`，
+   Chrome / Safari 可能把後開的視窗判定為非使用者直接操作而阻擋。
 
-瀏覽器對具有 `src` 的 script tag 會忽略其中 inline JavaScript，
-因此實際執行時出現：
+2. 彈出視窗裡的 `<img src="/api/branches/{id}/qr.png">`
+   會直接請求受保護 API，但圖片標籤無法帶後台 Bearer Authorization header，
+   因此 QR 圖片可能無法載入。
 
-`fmtDateTime is not defined`
+## V19.2.22 修正
+- 點「查看/列印」時立即同步開啟 QR 視窗，避免 popup blocker。
+- `/api/branches/{id}/qr` 在已驗證的 JSON 回應內直接提供 `png_data_url`。
+- QR 視窗使用 data URL 顯示圖片，不再讓 img 標籤直接打受保護 API。
+- 顯示固定分館網址，方便管理者核對。
+- QR 視窗內可直接「列印 QR Code」。
+- 若瀏覽器仍阻擋 popup，會顯示清楚提示。
+- 若 QR API 失敗，錯誤會顯示在新視窗中，不會無反應。
 
-這會讓歷史查詢、即時配送列表等 JavaScript 在渲染途中中斷，
-所以看起來像「隨車物品」與「公文預填」也一起消失。
-
-## V19.2.21 修正
-- `fmtDateTime()` 移到真正會執行的 inline script。
-- 保留 V19.2.20 的 `YYYY-MM-DD HH:mm` 顯示格式。
-- `loadAll()` 改用 `Promise.allSettled()`，單一卡片載入失敗不再拖垮整個後台。
-- 總館登入後主動初始化並載入「公文預填」。
-- 確認今日配送表的「隨車物品」按鈕仍保留。
-- 完整保留歷史路線 / 簽收、PNG、待補簽追蹤、行政結案、Gmail API 等功能。
+完整保留 V19.2.21 與前面所有功能。

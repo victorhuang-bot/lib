@@ -32,7 +32,7 @@
 
 </style>
 <style>
-/* V19.2.21 route visual grouping for 總館輸入 */
+/* V19.2.22 route visual grouping for 總館輸入 */
 .route-row-group{position:relative}
 .route-row-group.route-odd{background:#f7f9fc}
 .route-row-group.route-even{background:#ffffff}
@@ -152,7 +152,7 @@
 <section id="account" class="hidden"><div class="grid"><div class="card"><h2>我的帳號</h2><div id="accountInfo" class="muted"></div><div class="formgrid"><label>目前密碼<input id="ownCurrent" type="password"></label><label>新密碼（至少 8 碼）<input id="ownNew" type="password"></label><label>再次輸入新密碼<input id="ownConfirm" type="password"></label></div><div class="toolbar"><button class="btn" onclick="changeOwnPassword()">變更我的密碼</button></div><p class="muted">系統不顯示目前密碼；資料庫僅保存密碼雜湊。</p></div><div id="adminResetCard" class="card"><h2>重設總館密碼</h2><p class="muted">僅管理者可操作；需再次輸入管理者目前密碼確認。</p><div class="formgrid"><label>管理者目前密碼<input id="adminVerify" type="password"></label><label>總館新密碼<input id="secNew" type="password"></label><label>再次輸入總館新密碼<input id="secConfirm" type="password"></label></div><div class="toolbar"><button class="btn" onclick="resetSecretaryPassword()">重設總館密碼</button></div></div></div></section>
 <section id="email" class="hidden"><div class="grid"><div class="card"><h2>Google Workspace Gmail API</h2><div id="emailProviderStatus"></div><div id="emailTestTools" class="toolbar"><input id="emailTestEmail" type="email" placeholder="測試收件信箱"><button class="btn" onclick="testEmail()">寄送測試郵件</button></div><p class="muted">OAuth Secret / Refresh Token 僅存在 Render Environment，後台永遠不顯示實際內容。</p></div><div class="card"><h2>Email 收件人</h2><div id="emailAdminTools" class="toolbar"><input id="emailAddr" type="email" placeholder="name@example.com"><select id="emailType"><option>TO</option><option>CC</option><option>BCC</option></select><button class="btn" onclick="addEmail()">新增</button></div><div id="emailRecipients"></div></div><div class="card"><h2>報表寄送 / 紀錄</h2><div class="toolbar"><button class="btn" onclick="sendReport()">寄送今日報表 Excel + PDF</button></div><div id="emailLogs"></div></div></div></section>
 <section id="audit" class="hidden"><div class="card"><h2>Audit Log</h2><div id="auditList" style="overflow:auto"></div></div></section>
-</main></div><div id="modalHost"></div><script src="/static/common.js?v=19.2.21"></script><script>
+</main></div><div id="modalHost"></div><script src="/static/common.js?v=19.2.22"></script><script>
 function fmtDateTime(v){
   if(v===null||v===undefined||v==='') return '—';
   const s=String(v).trim();
@@ -327,7 +327,43 @@ async function saveBranch(id){try{const g=x=>document.querySelector(x);let body=
 async function toggleBranch(id,a){if(confirm(a?'停用後仍保留所有歷史紀錄，確定停用？':'重新啟用此分館？')){try{await api(`/api/branches/${id}/${a?'deactivate':'activate'}`,{method:'POST'});await loadBranches()}catch(e){alert(e.message)}}}
 async function deleteBranch(id,name){if(!confirm(`永久刪除「${name}」？\n已有配送歷史的分館系統會拒絕刪除，請改用停用。`))return;try{await api('/api/branches/'+id,{method:'DELETE'});await loadBranches();alert('已刪除')}catch(e){alert(e.message)}}
 async function resetBranchPin(id){let pin=prompt('輸入新的4位分館驗證碼');if(pin)try{await api('/api/branches/'+id+'/pin',{method:'POST',body:JSON.stringify({pin})});alert('已重設');await loadBranches()}catch(e){alert(e.message)}}
-async function qr(id,name){let x=await api('/api/branches/'+id+'/qr');let w=open('','qr','width=500,height=650');w.document.write(`<style>body{text-align:center;font-family:sans-serif;padding:30px}img{width:320px}</style><h1>圖書物流簽收</h1><h2>${name}</h2><img src="/api/branches/${id}/qr.png"><p>1. 掃描 QR Code<br>2. 輸入 4 位分館驗證碼<br>3. 確認數量<br>4. 完成簽名</p><button onclick="print()">列印</button>`)}
+async function qr(id,name){
+  // Must open synchronously from the click event, otherwise browsers may block the popup after await.
+  const w=window.open('','branch_qr_'+id,'width=560,height=760');
+  if(!w){
+    alert('瀏覽器阻擋了 QR 視窗，請允許 lib.moving-match.com 的彈出式視窗。');
+    return;
+  }
+  w.document.open();
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>QR 載入中</title></head><body style="font-family:sans-serif;text-align:center;padding:40px">QR Code 載入中…</body></html>');
+  w.document.close();
+  try{
+    const x=await api('/api/branches/'+id+'/qr');
+    const safeName=String(x.branch||name||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const safeUrl=String(x.url||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    w.document.open();
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${safeName}｜固定 QR</title>
+      <style>
+        body{font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif;text-align:center;padding:28px;color:#172230}
+        .sheet{max-width:460px;margin:auto;border:1px solid #dfe5ec;border-radius:18px;padding:26px}
+        img{width:320px;max-width:90%}
+        .url{font-size:12px;word-break:break-all;color:#667085;margin:14px 0}
+        button{font-size:18px;padding:12px 22px;border:0;border-radius:10px;background:#172230;color:#fff;cursor:pointer}
+        @media print{button{display:none}.sheet{border:0}}
+      </style></head><body><div class="sheet">
+      <h1>圖書物流簽收</h1><h2>${safeName}</h2>
+      <img src="${x.png_data_url}" alt="${safeName} QR Code">
+      <p>1. 掃描 QR Code<br>2. 輸入 4 位分館驗證碼<br>3. 確認數量<br>4. 完成簽名</p>
+      <div class="url">${safeUrl}</div>
+      <button onclick="window.print()">列印 QR Code</button>
+      </div></body></html>`);
+    w.document.close();
+  }catch(e){
+    w.document.open();
+    w.document.write(`<body style="font-family:sans-serif;padding:30px"><h2>QR Code 讀取失敗</h2><p>${String(e.message||e)}</p><button onclick="window.close()">關閉</button></body>`);
+    w.document.close();
+  }
+}
 async function rotate(id){if(confirm('舊 QR 將立即失效。確定重新產生？')){try{await api('/api/branches/'+id+'/qr/rotate',{method:'POST'});await loadBranches();alert('已產生新的固定QR；舊QR已失效')}catch(e){alert(e.message)}}}
 async function loadRoutesPage(){
   const admin=me.role==='ADMIN';

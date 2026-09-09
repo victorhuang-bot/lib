@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request, Response, HTTPException, Form
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
+import base64
 import sqlite3, os, secrets, hashlib, hmac, base64, io, json, asyncio, csv, re
 try:
     import psycopg
@@ -28,7 +29,7 @@ DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
 DB = DATA_DIR / 'app.db'
 DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
 USE_POSTGRES = bool(DATABASE_URL)
-APP_VERSION='V19.2.21'
+APP_VERSION='V19.2.22'
 
 _PREFILL_CACHE = {}
 _PREFILL_CACHE_TTL_SECONDS = 45
@@ -464,7 +465,7 @@ def migrate_document_return_final(c):
     c.commit()
 
 def migrate_v1929(c):
-    """V19.2.21: void metadata, carried items and editable receipt time."""
+    """V19.2.22: void metadata, carried items and editable receipt time."""
     cols=[('receipt_at','TEXT'),('voided_at','TEXT'),('voided_by','INTEGER'),('void_reason','TEXT'),('admin_closed_at','TEXT'),('admin_closed_by','INTEGER'),('admin_close_reason','TEXT')]
     if USE_POSTGRES:
         rows=c.execute("""SELECT column_name FROM information_schema.columns
@@ -476,7 +477,7 @@ def migrate_v1929(c):
             c.execute("SET LOCAL lock_timeout TO '8s'")
             for name,typ in missing:
                 c.execute(f'ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS {name} {typ}')
-        # V19.2.21: Oregon/Singapore may auto-deploy the same commit concurrently
+        # V19.2.22: Oregon/Singapore may auto-deploy the same commit concurrently
         # while sharing one Neon database. PostgreSQL's CREATE TABLE IF NOT EXISTS
         # can still race at pg_type creation, so serialize this schema creation.
         c.execute("SET statement_timeout TO '60s'")
@@ -996,9 +997,19 @@ def raw_branch_token(c,bid):
     return json.loads(rows['after_json'])['token'] if rows else None
 @app.get('/api/branches/{bid}/qr')
 def branch_qr(req:Request,bid:int):
-    require_user(req,['ADMIN','SECRETARY']); c=db(); b=c.execute('SELECT * FROM branches WHERE id=?',(bid,)).fetchone(); raw=raw_branch_token(c,bid); c.close()
-    if not b or not raw: raise HTTPException(404)
-    return {'branch':b['name'],'url':public_base_url(req)+'/branch/'+raw}
+    require_user(req,['ADMIN','SECRETARY'])
+    c=db()
+    b=c.execute('SELECT * FROM branches WHERE id=?',(bid,)).fetchone()
+    raw=raw_branch_token(c,bid)
+    c.close()
+    if not b or not raw:
+        raise HTTPException(404,'找不到分館固定 QR')
+    url=public_base_url(req)+'/branch/'+raw
+    im=qrcode.make(url)
+    bio=io.BytesIO()
+    im.save(bio,'PNG')
+    png_data_url='data:image/png;base64,'+base64.b64encode(bio.getvalue()).decode('ascii')
+    return {'branch':b['name'],'url':url,'png_data_url':png_data_url}
 @app.get('/api/branches/{bid}/qr.png')
 def branch_qr_png(req:Request,bid:int):
     require_user(req,['ADMIN','SECRETARY']); c=db(); raw=raw_branch_token(c,bid); c.close();
