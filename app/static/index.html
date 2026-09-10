@@ -32,7 +32,7 @@
 
 </style>
 <style>
-/* V19.2.26 route visual grouping for 總館輸入 */
+/* V19.2.27 route visual grouping for 總館輸入 */
 .route-row-group{position:relative}
 .route-row-group.route-odd{background:#f7f9fc}
 .route-row-group.route-even{background:#ffffff}
@@ -418,7 +418,25 @@ async function saveDriver(id){try{const name=document.querySelector('#driverName
 async function toggleDriver(id,a){if(!confirm(a?'確定停用此司機？':'重新啟用此司機？'))return;try{await api('/api/drivers/'+id,{method:'PATCH',body:JSON.stringify({active:a?0:1})});await loadDrivers()}catch(e){alert(e.message)}}
 async function deleteDriver(id,name){if(!confirm(`永久刪除「${name}」？\n已有配送或裝置歷史的司機系統會拒絕刪除，請改用停用。`))return;try{await api('/api/drivers/'+id,{method:'DELETE'});await loadDrivers();alert('已刪除')}catch(e){alert(e.message)}}
 async function resetDriverPin(id){let pin=prompt('新的4位司機PIN');if(pin)try{await api('/api/drivers/'+id+'/pin',{method:'POST',body:JSON.stringify({pin})});alert('已重設');await loadDrivers()}catch(e){alert(e.message)}}
-async function act(id){try{let x=await api('/api/drivers/'+id+'/activation',{method:'POST'});let qr='/api/qr.png?data='+encodeURIComponent(x.url);let w=open('','act','width=500,height=650');w.document.write(`<style>body{text-align:center;font-family:sans-serif;padding:30px}img{width:300px}</style><h2>司機裝置啟用</h2><p>建立後最長10分鐘有效；成功使用一次立即失效。</p><img src="${qr}"><p style="word-break:break-all">${x.url}</p>`)}catch(e){alert(e.message)}}
+async function act(id){
+  const w=window.open('','driver_activation_'+id,'width=560,height=720');
+  if(!w){alert('瀏覽器阻擋了司機啟用 QR 視窗，請允許 lib.moving-match.com 的彈出式視窗。');return}
+  w.document.open();
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>QR 載入中</title></head><body style="font-family:sans-serif;text-align:center;padding:40px">司機啟用 QR 載入中…</body></html>');
+  w.document.close();
+  try{
+    const x=await api('/api/drivers/'+id+'/activation',{method:'POST'});
+    w.document.open();
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>司機裝置啟用 QR</title>
+      <style>body{font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif;text-align:center;padding:28px;color:#172230}.sheet{max-width:450px;margin:auto;border:1px solid #dfe5ec;border-radius:18px;padding:24px}img{width:320px;max-width:92%}.url{font-size:12px;word-break:break-all;color:#667085;margin:12px 0}.warn{background:#fff7e8;border-radius:10px;padding:10px;margin:12px 0}button{font-size:17px;padding:10px 18px;border:0;border-radius:10px;background:#172230;color:white}@media print{button{display:none}.sheet{border:0}}</style></head>
+      <body><div class="sheet"><h2>司機裝置啟用</h2><div class="warn">此 QR 最長 10 分鐘有效；成功使用一次立即失效。</div>
+      <img src="${x.png_data_url}" alt="司機裝置啟用 QR"><div class="url">${x.url}</div>
+      <button onclick="window.print()">列印 QR</button></div></body></html>`);
+    w.document.close();
+  }catch(e){
+    w.document.open();w.document.write(`<body style="font-family:sans-serif;padding:30px"><h2>司機 QR 產生失敗</h2><p>${String(e.message||e)}</p><button onclick="window.close()">關閉</button></body>`);w.document.close();
+  }
+}
 async function devices(id,name){try{let x=await api('/api/drivers/'+id+'/devices');document.querySelector('#modalHost').innerHTML=`<div class="modal"><div class="modalbox"><h2>${name}｜裝置</h2>${x.length?x.map(d=>`<div class="card">啟用：${d.activated_at}<br>狀態：${d.revoked_at?'已解除':'有效'} ${!d.revoked_at?`<button class="btn danger small" onclick="revokeDevice(${d.id},${id},${JSON.stringify(name).replace(/"/g,'&quot;')})">解除綁定</button>`:''}</div>`).join(''):'尚無綁定裝置'}<button class="btn alt" onclick="closeModal()">關閉</button></div></div>`}catch(e){alert(e.message)}}
 async function revokeDevice(dev,id,name){await api('/api/driver-devices/'+dev+'/revoke',{method:'POST'});devices(id,name)}
 let calDragging=false;

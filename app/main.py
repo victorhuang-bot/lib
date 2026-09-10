@@ -29,7 +29,7 @@ DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
 DB = DATA_DIR / 'app.db'
 DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
 USE_POSTGRES = bool(DATABASE_URL)
-APP_VERSION='V19.2.26'
+APP_VERSION='V19.2.27'
 
 _PREFILL_CACHE = {}
 _PREFILL_CACHE_TTL_SECONDS = 45
@@ -465,7 +465,7 @@ def migrate_document_return_final(c):
     c.commit()
 
 def migrate_v1929(c):
-    """V19.2.26: void metadata, carried items and editable receipt time."""
+    """V19.2.27: void metadata, carried items and editable receipt time."""
     cols=[('receipt_at','TEXT'),('voided_at','TEXT'),('voided_by','INTEGER'),('void_reason','TEXT'),('admin_closed_at','TEXT'),('admin_closed_by','INTEGER'),('admin_close_reason','TEXT')]
     if USE_POSTGRES:
         rows=c.execute("""SELECT column_name FROM information_schema.columns
@@ -477,7 +477,7 @@ def migrate_v1929(c):
             c.execute("SET LOCAL lock_timeout TO '8s'")
             for name,typ in missing:
                 c.execute(f'ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS {name} {typ}')
-        # V19.2.26: Oregon/Singapore may auto-deploy the same commit concurrently
+        # V19.2.27: Oregon/Singapore may auto-deploy the same commit concurrently
         # while sharing one Neon database. PostgreSQL's CREATE TABLE IF NOT EXISTS
         # can still race at pg_type creation, so serialize this schema creation.
         c.execute("SET statement_timeout TO '60s'")
@@ -1039,7 +1039,11 @@ async def activation(req:Request,did:int):
     c.execute('UPDATE driver_activation_tokens SET revoked_at=? WHERE driver_id=? AND used_at IS NULL AND revoked_at IS NULL',(now(),did))
     c.execute('INSERT INTO driver_activation_tokens(driver_id,token_hash,created_at,expires_at,created_by) VALUES(?,?,?,?,?)',(did,thash(raw),now(),future_iso(minutes=10),u['id']))
     audit(c,'USER',u['id'],u['role'],'CREATE_DRIVER_ACTIVATION_QR','DRIVER',did,after={'expires_in_seconds':600})
-    c.commit();c.close();return {'url':public_base_url(req)+'/activate-driver/'+raw,'expires_in_seconds':600}
+    c.commit();c.close()
+    url=public_base_url(req)+'/activate-driver/'+raw
+    im=qrcode.make(url); bio=io.BytesIO(); im.save(bio,'PNG')
+    png_data_url='data:image/png;base64,'+base64.b64encode(bio.getvalue()).decode('ascii')
+    return {'url':url,'png_data_url':png_data_url,'expires_in_seconds':600}
 @app.get('/api/driver-activation/{token}')
 def activation_info(token:str):
     c=db(); r=c.execute('''SELECT t.*,d.name FROM driver_activation_tokens t JOIN drivers d ON d.id=t.driver_id WHERE t.token_hash=?''',(thash(token),)).fetchone();c.close();

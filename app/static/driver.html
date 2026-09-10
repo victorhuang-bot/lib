@@ -111,7 +111,19 @@ function renderSelectedRoute(){
     notice+
     x.map(d=>`<div class="card"><h2>${d.route_code}線｜${d.branch_name}</h2><div class="status">${statusText(d.status)}</div>${outboundEditor(d)}${d.status==='WAITING_DRIVER_CONFIRM'||d.status==='WAITING_DRIVER_RECONFIRM'?review(d):''}${d.status==='WAITING_BRANCH'?`<div class="notice" style="margin-top:10px">送出數量已儲存，等待分館簽收。若分館今日無法簽名，可先完成今日運送並改為稍後補簽。</div><button class="btn alt big" style="margin-top:8px" onclick="deferBranchSign(${d.id})">本站運送完成・分館稍後補簽</button>`:''}${d.status==='LATE_BRANCH_PENDING'?`<div class="ok" style="margin-top:10px">本站今日運送已完成，分館可於之後補填數量與簽名；司機不需再次確認。</div>`:''}${d.status==='WAITING_BRANCH_CORRECTION'?`<div class="notice" style="margin-top:10px">已請分館更正，等待分館重新簽名。</div>`:''}${d.status==='STOP_COMPLETED'?`<div class="ok">本站完成 ${fmtDateTime(d.driver_confirmed_at)}</div>`:''}</div>`).join('');
 }
-function itemText(id){const names={DOCUMENT_BAG:'公文袋',ATTACHMENT_BAG:'附件袋',PRIZE:'獎品',CONSUMABLE:'耗材',POSTER:'海報',NEWBORN_GIFT:'新生兒閱讀好禮',BOOKCLUB_RESOURCE:'讀書會資源庫用書',PROMOTION:'文宣',STATIONERY:'文具',OTHER:'其他'};const a=itemMap[id]||[];return a.length?a.map(x=>`${x.item_type==='OTHER'?(x.item_name||'其他'):(names[x.item_type]||x.item_type)} × ${x.quantity}`).join('、'):'無'}
+const DRIVER_ITEM_LABELS={
+  DOCUMENT_BAG:'公文袋',ATTACHMENT_BAG:'附件袋',PRIZE:'獎品',CONSUMABLE:'耗材',
+  POSTER:'海報',NEWBORN_GIFT:'新生兒閱讀好禮',BOOKCLUB_RESOURCE:'讀書會資源庫用書',
+  PROMOTION:'文宣',STATIONERY:'文具',OTHER:'其他'
+};
+function driverItemName(x){
+  if(x.item_type==='OTHER')return x.item_name||'其他';
+  return DRIVER_ITEM_LABELS[x.item_type]||x.item_name||'其他物品';
+}
+function itemText(id){
+  const a=itemMap[id]||[];
+  return a.length?a.map(x=>`${driverItemName(x)} × ${x.quantity}`).join('、'):'無';
+}
 function outboundEditor(d){if(!['WAITING_DRIVER','WAITING_SECRETARY','WAITING_BRANCH'].includes(d.status))return '';let saved=d.outbound_final;return `<p>總館公文送出：${d.document_final??'尚未填寫'}</p><p><b>其他隨車物品：</b>${itemText(d.id)}</p><p><b>圖書送出：${saved==null?'尚未輸入':saved+' 箱'}</b></p><input id="o${d.id}" type="number" min="0" value="${saved??''}" placeholder="圖書送出箱數" style="width:100%"><button class="btn big" onclick="setOut(${d.id})">${saved==null?'儲存送出數量':'更新送出數量'}</button>`}
 function review(d){return `<hr><p>公文送出 ${d.document_final??'—'}｜公文收回 ${d.document_return_final??'—'}｜圖書送出 ${d.outbound_final??'—'}｜圖書收回 <b data-inbound="${d.id}" data-value="${d.inbound_final??''}">${d.inbound_final??'—'}</b></p><p>備註：${d.note_final||'無'}</p><p>簽收人：${d.correction_signer_name||d.signer_name}</p>${d.correction_reason?`<div class="notice">最近更正原因：${d.correction_reason}</div>`:''}<button class="btn big" onclick="confirmStop(${d.id})">確認無誤・完成本站</button><button class="btn warn big" style="margin-top:8px" onclick="corr(${d.id})">資料有誤・請分館更正</button>`}
 async function setOut(id){try{let el=document.querySelector('#o'+id);if(el.value==='')throw new Error('請輸入送出數量');await dapi('/api/driver/deliveries/'+id+'/outbound',{method:'PATCH',body:JSON.stringify({qty:+el.value})});load()}catch(e){alert(e.message)}}
