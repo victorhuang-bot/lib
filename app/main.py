@@ -29,7 +29,7 @@ DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
 DB = DATA_DIR / 'app.db'
 DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
 USE_POSTGRES = bool(DATABASE_URL)
-APP_VERSION='V19.2.24'
+APP_VERSION='V19.2.25'
 
 _PREFILL_CACHE = {}
 _PREFILL_CACHE_TTL_SECONDS = 45
@@ -465,7 +465,7 @@ def migrate_document_return_final(c):
     c.commit()
 
 def migrate_v1929(c):
-    """V19.2.24: void metadata, carried items and editable receipt time."""
+    """V19.2.25: void metadata, carried items and editable receipt time."""
     cols=[('receipt_at','TEXT'),('voided_at','TEXT'),('voided_by','INTEGER'),('void_reason','TEXT'),('admin_closed_at','TEXT'),('admin_closed_by','INTEGER'),('admin_close_reason','TEXT')]
     if USE_POSTGRES:
         rows=c.execute("""SELECT column_name FROM information_schema.columns
@@ -477,7 +477,7 @@ def migrate_v1929(c):
             c.execute("SET LOCAL lock_timeout TO '8s'")
             for name,typ in missing:
                 c.execute(f'ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS {name} {typ}')
-        # V19.2.24: Oregon/Singapore may auto-deploy the same commit concurrently
+        # V19.2.25: Oregon/Singapore may auto-deploy the same commit concurrently
         # while sharing one Neon database. PostgreSQL's CREATE TABLE IF NOT EXISTS
         # can still race at pg_type creation, so serialize this schema creation.
         c.execute("SET statement_timeout TO '60s'")
