@@ -32,7 +32,7 @@
 
 </style>
 <style>
-/* V19.2.23 route visual grouping for 總館輸入 */
+/* V19.2.24 route visual grouping for 總館輸入 */
 .route-row-group{position:relative}
 .route-row-group.route-odd{background:#f7f9fc}
 .route-row-group.route-even{background:#ffffff}
@@ -152,7 +152,7 @@
 <section id="account" class="hidden"><div class="grid"><div class="card"><h2>我的帳號</h2><div id="accountInfo" class="muted"></div><div class="formgrid"><label>目前密碼<input id="ownCurrent" type="password"></label><label>新密碼（至少 8 碼）<input id="ownNew" type="password"></label><label>再次輸入新密碼<input id="ownConfirm" type="password"></label></div><div class="toolbar"><button class="btn" onclick="changeOwnPassword()">變更我的密碼</button></div><p class="muted">系統不顯示目前密碼；資料庫僅保存密碼雜湊。</p></div><div id="adminResetCard" class="card"><h2>重設總館密碼</h2><p class="muted">僅管理者可操作；需再次輸入管理者目前密碼確認。</p><div class="formgrid"><label>管理者目前密碼<input id="adminVerify" type="password"></label><label>總館新密碼<input id="secNew" type="password"></label><label>再次輸入總館新密碼<input id="secConfirm" type="password"></label></div><div class="toolbar"><button class="btn" onclick="resetSecretaryPassword()">重設總館密碼</button></div></div></div></section>
 <section id="email" class="hidden"><div class="grid"><div class="card"><h2>Google Workspace Gmail API</h2><div id="emailProviderStatus"></div><div id="emailTestTools" class="toolbar"><input id="emailTestEmail" type="email" placeholder="測試收件信箱"><button class="btn" onclick="testEmail()">寄送測試郵件</button></div><p class="muted">OAuth Secret / Refresh Token 僅存在 Render Environment，後台永遠不顯示實際內容。</p></div><div class="card"><h2>Email 收件人</h2><div id="emailAdminTools" class="toolbar"><input id="emailAddr" type="email" placeholder="name@example.com"><select id="emailType"><option>TO</option><option>CC</option><option>BCC</option></select><button class="btn" onclick="addEmail()">新增</button></div><div id="emailRecipients"></div></div><div class="card"><h2>報表寄送 / 紀錄</h2><div class="toolbar"><button class="btn" onclick="sendReport()">寄送今日報表 Excel + PDF</button></div><div id="emailLogs"></div></div></div></section>
 <section id="audit" class="hidden"><div class="card"><h2>Audit Log</h2><div id="auditList" style="overflow:auto"></div></div></section>
-</main></div><div id="modalHost"></div><script src="/static/common.js?v=19.2.23"></script><script>
+</main></div><div id="modalHost"></div><script src="/static/common.js?v=19.2.24"></script><script>
 function fmtDateTime(v){
   if(v===null||v===undefined||v==='') return '—';
   const s=String(v).trim();
@@ -566,9 +566,76 @@ async function adminClosePending(id,name){
 }
 
 async function voidDelivery(id,name){const reason=prompt(`作廢「${name}」這筆配送的原因：`,'測試/錯誤建立');if(!reason||!reason.trim())return;if(!confirm(`確定作廢「${name}」？\n作廢後不再列入司機路線站點分母。`))return;try{await api('/api/deliveries/'+id+'/void',{method:'POST',body:JSON.stringify({reason})});alert('已作廢，路線完成數將重新計算');await loadAll()}catch(e){alert(e.message)}}
-async function editItems(id,name){try{const rows=await api('/api/secretary/deliveries/'+id+'/items');const by={POSTER:0,PROMOTION:0,STATIONERY:0};const others=[];for(const x of rows){if(x.item_type==='OTHER')others.push(x);else by[x.item_type]=x.quantity||0}document.querySelector('#modalHost').innerHTML=`<div class="modal"><div class="modalbox"><h2>${name}｜隨車物品</h2><p class="muted">可同時勾選多種；數量為 0 代表不運送。</p><div class="formgrid"><label><input id="itPosterOn" type="checkbox" ${by.POSTER?'checked':''}> 海報<input id="itPoster" type="number" min="0" value="${by.POSTER||0}"></label><label><input id="itPromotionOn" type="checkbox" ${by.PROMOTION?'checked':''}> 文宣<input id="itPromotion" type="number" min="0" value="${by.PROMOTION||0}"></label><label><input id="itStationeryOn" type="checkbox" ${by.STATIONERY?'checked':''}> 文具<input id="itStationery" type="number" min="0" value="${by.STATIONERY||0}"></label></div><h3>其他</h3><div id="otherItems">${others.map((x,i)=>`<div class="row" style="margin:6px 0"><input class="otherName" placeholder="其他項目名稱" value="${x.item_name||''}"><input class="otherQty" type="number" min="0" value="${x.quantity||0}" style="width:120px"><button class="btn alt small" onclick="this.parentElement.remove()">刪除</button></div>`).join('')}</div><button class="btn alt small" onclick="addOtherItem()">＋新增其他項目</button><div class="toolbar"><button class="btn" onclick="saveItems(${id})">儲存隨車物品</button><button class="btn alt" onclick="closeModal()">取消</button></div></div></div>`}catch(e){alert(e.message)}}
-function addOtherItem(){document.querySelector('#otherItems').insertAdjacentHTML('beforeend',`<div class="row" style="margin:6px 0"><input class="otherName" placeholder="其他項目名稱"><input class="otherQty" type="number" min="0" value="1" style="width:120px"><button class="btn alt small" onclick="this.parentElement.remove()">刪除</button></div>`)}
-async function saveItems(id){try{const items=[];const add=(on,q,type)=>{if(document.querySelector(on).checked){const n=Number(document.querySelector(q).value||0);if(n<0||!Number.isInteger(n))throw new Error('數量請輸入 0 以上整數');if(n>0)items.push({item_type:type,quantity:n})}};add('#itPosterOn','#itPoster','POSTER');add('#itPromotionOn','#itPromotion','PROMOTION');add('#itStationeryOn','#itStationery','STATIONERY');const ns=[...document.querySelectorAll('.otherName')],qs=[...document.querySelectorAll('.otherQty')];ns.forEach((el,i)=>{const name=el.value.trim(),q=Number(qs[i].value||0);if(name&&q>0)items.push({item_type:'OTHER',item_name:name,quantity:q})});await api('/api/secretary/deliveries/'+id+'/items',{method:'PUT',body:JSON.stringify({items})});closeModal();alert('隨車物品已儲存')}catch(e){alert(e.message)}}
+
+const CARRIED_ITEM_TYPES=[
+  ['DOCUMENT_BAG','公文袋'],
+  ['ATTACHMENT_BAG','附件袋'],
+  ['PRIZE','獎品'],
+  ['CONSUMABLE','耗材'],
+  ['POSTER','海報'],
+  ['NEWBORN_GIFT','新生兒閱讀好禮'],
+  ['BOOKCLUB_RESOURCE','讀書會資源庫用書']
+];
+const CARRIED_ITEM_LABELS={
+  DOCUMENT_BAG:'公文袋',ATTACHMENT_BAG:'附件袋',PRIZE:'獎品',CONSUMABLE:'耗材',
+  POSTER:'海報',NEWBORN_GIFT:'新生兒閱讀好禮',BOOKCLUB_RESOURCE:'讀書會資源庫用書',
+  PROMOTION:'文宣',STATIONERY:'文具',OTHER:'其他'
+};
+async function editItems(id,name){
+  try{
+    const rows=await api('/api/secretary/deliveries/'+id+'/items');
+    const by={};
+    const others=[];
+    for(const x of rows){
+      if(x.item_type==='OTHER') others.push(x);
+      else by[x.item_type]=x.quantity||0;
+    }
+    const presetHtml=CARRIED_ITEM_TYPES.map(([type,label],i)=>`
+      <label class="carried-item-row" style="display:grid;grid-template-columns:auto 1fr 120px;gap:10px;align-items:center">
+        <input id="itOn_${i}" type="checkbox" ${by[type]?'checked':''}>
+        <span>${label}</span>
+        <input id="itQty_${i}" type="number" min="0" value="${by[type]||0}">
+      </label>`).join('');
+    const legacyRows=rows.filter(x=>['PROMOTION','STATIONERY'].includes(x.item_type));
+    const legacyHtml=legacyRows.length?`<div class="notice" style="margin-top:10px"><b>既有歷史類別：</b> ${legacyRows.map(x=>`${CARRIED_ITEM_LABELS[x.item_type]} ${x.quantity}`).join('、')}<br><span class="muted">儲存新資料時可改用上方新分類。</span></div>`:'';
+    document.querySelector('#modalHost').innerHTML=`<div class="modal"><div class="modalbox">
+      <h2>${name}｜隨車物品</h2>
+      <p class="muted">可同時選擇多種；有運送才輸入數量。數量為 0 不會儲存。</p>
+      <div class="formgrid" style="grid-template-columns:1fr">${presetHtml}</div>
+      ${legacyHtml}
+      <h3>其他</h3>
+      <div id="otherItems">${others.map(x=>`<div class="row" style="margin:6px 0"><input class="otherName" placeholder="其他項目名稱" value="${x.item_name||''}"><input class="otherQty" type="number" min="0" value="${x.quantity||0}" style="width:120px"><button class="btn alt small" onclick="this.parentElement.remove()">刪除</button></div>`).join('')}</div>
+      <button class="btn alt small" onclick="addOtherItem()">＋新增其他項目</button>
+      <div class="toolbar"><button class="btn" onclick="saveItems(${id})">儲存隨車物品</button><button class="btn alt" onclick="closeModal()">取消</button></div>
+    </div></div>`;
+  }catch(e){alert(e.message)}
+}
+function addOtherItem(){
+  document.querySelector('#otherItems').insertAdjacentHTML('beforeend',`<div class="row" style="margin:6px 0"><input class="otherName" placeholder="其他項目名稱"><input class="otherQty" type="number" min="0" value="1" style="width:120px"><button class="btn alt small" onclick="this.parentElement.remove()">刪除</button></div>`)
+}
+async function saveItems(id){
+  try{
+    const items=[];
+    CARRIED_ITEM_TYPES.forEach(([type],i)=>{
+      const on=document.querySelector('#itOn_'+i);
+      const q=document.querySelector('#itQty_'+i);
+      if(on?.checked){
+        const n=Number(q?.value||0);
+        if(n<0||!Number.isInteger(n))throw new Error('數量請輸入 0 以上整數');
+        if(n>0)items.push({item_type:type,quantity:n});
+      }
+    });
+    const ns=[...document.querySelectorAll('.otherName')],qs=[...document.querySelectorAll('.otherQty')];
+    ns.forEach((el,i)=>{
+      const name=el.value.trim(),q=Number(qs[i].value||0);
+      if(q<0||!Number.isInteger(q))throw new Error('其他項目數量請輸入 0 以上整數');
+      if(name&&q>0)items.push({item_type:'OTHER',item_name:name,quantity:q});
+    });
+    await api('/api/secretary/deliveries/'+id+'/items',{method:'PUT',body:JSON.stringify({items})});
+    closeModal();
+    alert('隨車物品已儲存');
+  }catch(e){alert(e.message)}
+}
 
 
 function initHistory(){
@@ -710,8 +777,8 @@ async function loadHistoryReceipts(){
 async function viewHistoryReceipt(id){
   try{
     const x=await api('/api/history/receipts/'+id),d=x.delivery;
-    const itemNames={POSTER:'海報',PROMOTION:'文宣',STATIONERY:'文具'};
-    const items=(x.items||[]).map(i=>`${i.item_type==='OTHER'?(i.item_name||'其他'):(itemNames[i.item_type]||i.item_type)} ${i.quantity}`).join('、')||'無';
+    const itemNames=CARRIED_ITEM_LABELS;
+    const items=(x.items||[]).map(i=>`${i.item_type==='OTHER'?(i.item_name||'其他'):(CARRIED_ITEM_LABELS[i.item_type]||i.item_type)} ${i.quantity}`).join('、')||'無';
     historyDetail.innerHTML=`<div class="card"><div class="row" style="justify-content:space-between"><div><h3>${d.service_date}｜${d.route_code}線｜${d.branch_name}｜原始資料</h3><div class="muted">唯讀檢視；Audit Log 同步保留。</div></div><button class="btn alt small" onclick="historyDetail.innerHTML=''">關閉</button></div>
     <div class="grid"><div><b>狀態</b><div>${d.status==='ADMIN_CLOSED'?'管理者結案／未取得分館簽名':statusText(d.status)}</div></div><div><b>司機</b><div>${d.driver_name||'—'}</div></div><div><b>公文送出 / 收回</b><div>${d.document_final??'—'} / ${d.document_return_final??'—'}</div></div><div><b>圖書送出 / 收回</b><div>${d.outbound_final??'—'} / ${d.inbound_final??'—'}</div></div><div><b>隨車物品</b><div>${items}</div></div><div><b>備註</b><div>${d.note_final||'—'}</div></div><div><b>實際簽收時間</b><div>${fmtDateTime(d.receipt_at)}</div></div><div><b>系統分館簽名時間</b><div>${fmtDateTime(d.branch_signed_at)}</div></div><div><b>簽收人</b><div>${d.correction_signer_name||d.signer_name||'—'}</div></div><div><b>行政結案</b><div>${d.admin_closed_at?`${fmtDateTime(d.admin_closed_at)}<br>${d.admin_close_reason||''}`:'—'}</div></div></div>
     <div class="grid" style="grid-template-columns:1fr 1fr;margin-top:14px"><div><h4>分館簽名</h4>${(d.correction_signature||d.branch_signature)?`<img src="${d.correction_signature||d.branch_signature}" style="max-width:320px;max-height:110px;border:1px solid #ddd">`:'—'}</div><div><h4>司機 / 總館路線簽名</h4><div>司機：${d.driver_signed_at||'—'}</div>${d.driver_signature?`<img src="${d.driver_signature}" style="max-width:260px;max-height:90px">`:''}<div style="margin-top:8px">總館：${d.secretary_signed_at||'—'}</div>${d.secretary_signature?`<img src="${d.secretary_signature}" style="max-width:260px;max-height:90px">`:''}</div></div>

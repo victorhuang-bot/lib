@@ -29,7 +29,7 @@ DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
 DB = DATA_DIR / 'app.db'
 DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
 USE_POSTGRES = bool(DATABASE_URL)
-APP_VERSION='V19.2.23'
+APP_VERSION='V19.2.24'
 
 _PREFILL_CACHE = {}
 _PREFILL_CACHE_TTL_SECONDS = 45
@@ -465,7 +465,7 @@ def migrate_document_return_final(c):
     c.commit()
 
 def migrate_v1929(c):
-    """V19.2.23: void metadata, carried items and editable receipt time."""
+    """V19.2.24: void metadata, carried items and editable receipt time."""
     cols=[('receipt_at','TEXT'),('voided_at','TEXT'),('voided_by','INTEGER'),('void_reason','TEXT'),('admin_closed_at','TEXT'),('admin_closed_by','INTEGER'),('admin_close_reason','TEXT')]
     if USE_POSTGRES:
         rows=c.execute("""SELECT column_name FROM information_schema.columns
@@ -477,7 +477,7 @@ def migrate_v1929(c):
             c.execute("SET LOCAL lock_timeout TO '8s'")
             for name,typ in missing:
                 c.execute(f'ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS {name} {typ}')
-        # V19.2.23: Oregon/Singapore may auto-deploy the same commit concurrently
+        # V19.2.24: Oregon/Singapore may auto-deploy the same commit concurrently
         # while sharing one Neon database. PostgreSQL's CREATE TABLE IF NOT EXISTS
         # can still race at pg_type creation, so serialize this schema creation.
         c.execute("SET statement_timeout TO '60s'")
@@ -1291,7 +1291,7 @@ async def put_delivery_items(did:int,req:Request):
     if not x: c.close(); raise HTTPException(404,'找不到配送資料')
     dr=c.execute('SELECT secretary_signature FROM daily_routes WHERE id=?',(x['daily_route_id'],)).fetchone()
     if dr and dr['secretary_signature']: c.close(); raise HTTPException(409,'本路線總館已完成簽核，隨車物品已鎖定')
-    allowed={'POSTER','PROMOTION','STATIONERY','OTHER'}; clean=[]
+    allowed={'DOCUMENT_BAG','ATTACHMENT_BAG','PRIZE','CONSUMABLE','POSTER','NEWBORN_GIFT','BOOKCLUB_RESOURCE','PROMOTION','STATIONERY','OTHER'}; clean=[]
     for item in items:
         typ=str(item.get('item_type') or '').upper(); name=(item.get('item_name') or '').strip()
         try: qty=int(item.get('quantity') or 0)
