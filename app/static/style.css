@@ -20,3 +20,11 @@
 #email .card{min-width:0;overflow:hidden}
 @media(max-width:980px){#email .grid{grid-template-columns:1fr}.email-log-table{min-width:700px}}
 @media(max-width:700px){#email .email-log-table th,#email .email-log-table td{display:table-cell!important}}
+
+
+/* Active admin navigation — selected panel stays visually identifiable. */
+.nav .nav-tab{font:inherit;border:1px solid transparent;color:#293545;transition:background-color .15s ease,color .15s ease,border-color .15s ease;display:inline-flex;align-items:center;gap:6px}
+.nav .nav-tab:hover:not(.active){background:#dbeafe;color:#174e7a}
+.nav .nav-tab.active{background:#1e6091;color:#fff;font-weight:700;border-color:#144b73}
+.nav .nav-tab.active::before{content:"✓";font-weight:800}
+.nav .nav-tab:focus-visible{outline:3px solid #f59e0b;outline-offset:3px}
