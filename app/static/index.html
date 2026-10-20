@@ -139,7 +139,7 @@
 </div></section>
 <section id="reports" class="hidden"><div class="grid"><div class="card"><h2 id="routeReportTitle">路線總表 / 三方簽核</h2>
 <div class="toolbar"><label>查詢日期 <input id="routeReportDate" type="date"></label><label>路線 <select id="routeReportRoute"><option value="">全部路線</option><option value="1">1線</option><option value="2">2線</option><option value="3">3線</option><option value="4">4線</option><option value="5">5線</option><option value="6">6線</option></select></label><button class="btn alt small" onclick="loadSignStatus()">查詢</button><span id="routeReportReadonlyHint" class="muted"></span></div>
-<button class="btn alt small" onclick="showPendingDetails({service_date:(document.querySelector('#routeReportDate')?.value||new Date().toISOString().slice(0,10)),route:(document.querySelector('#routeReportRoute')?.value||undefined)})">查看所選日期待補簽分館</button><p class="muted">分館可當日簽收；若分館無法當日簽名，司機可先標記「運送完成・待分館補簽」並完成路線簽名，總館亦可先完成簽核。未曾簽名的分館資料之後可補填一次，且不需司機再次確認。</p><div id="routeSignStatus"></div><div id="dailyGrandTotal" class="notice hidden"></div><div id="routeDetailHost"></div><div id="secretarySignBox" class="hidden"><h3>總館－今日路線總表最終簽名</h3><p class="muted">待補簽分館不阻擋今日簽核；已簽名資料仍維持鎖定，未曾簽名的待補資料可於之後補填一次。</p><canvas id="secSig" width="650" height="180" style="width:100%;border:2px dashed #b8c0cc;border-radius:12px;touch-action:none"></canvas><div class="toolbar"><button class="btn alt" onclick="clearSig('secSig')">清除簽名</button><button class="btn" onclick="secretaryFinalSign()">確認今日路線總表並完成最終簽名</button></div></div><div id="reportLocked" class="ok hidden"></div></div><div><div class="card"><div class="sectiontitle"><div><h2>本月日期 / 路線累積</h2><button class="btn alt small" onclick="showPendingDetails({month:(document.querySelector('#monthlyCumulativeMonth')?.value||new Date().toISOString().slice(0,7))})">查看本月待補簽分館</button><p class="muted">依配送日期列出 1～6 線的公文送出、公文收回、圖書送出、圖書收回；月底自動結算，下個月重新累積。分館補簽後會自動更新。</p></div><input type="month" id="monthlyCumMonth" onchange="loadMonthlyRouteSummary()"></div><div id="monthlyRouteSummary" style="overflow:auto"><div class="muted">載入中…</div></div></div>
+<button class="btn alt small" onclick="showPendingDetails({service_date:(document.querySelector('#routeReportDate')?.value||new Date().toISOString().slice(0,10)),route:(document.querySelector('#routeReportRoute')?.value||undefined)})">查看所選日期待補簽分館</button><p class="muted">分館可當日簽收；若分館無法當日簽名，司機可先標記「運送完成・待分館補簽」並完成路線簽名，總館亦可先完成簽核。未曾簽名的分館資料之後可補填一次，且不需司機再次確認。</p><div id="routeSignReminder" class="notice" role="status" style="margin:12px 0"></div><div id="routeSignStatus" style="overflow-x:auto;max-width:100%"></div><div id="routeOfficeSignatureHost"></div><div id="dailyGrandTotal" class="notice hidden"></div><div id="routeDetailHost"></div><div id="secretarySignBox" class="hidden"><h3>總館－今日路線總表最終簽名</h3><p class="muted">待補簽分館不阻擋今日簽核；已簽名資料仍維持鎖定，未曾簽名的待補資料可於之後補填一次。</p><canvas id="secSig" width="650" height="180" style="width:100%;border:2px dashed #b8c0cc;border-radius:12px;touch-action:none"></canvas><div class="toolbar"><button class="btn alt" onclick="clearSig('secSig')">清除簽名</button><button class="btn" onclick="secretaryFinalSign()">確認今日路線總表並完成最終簽名</button></div></div><div id="reportLocked" class="ok hidden"></div></div><div><div class="card"><div class="sectiontitle"><div><h2>本月日期 / 路線累積</h2><button class="btn alt small" onclick="showPendingDetails({month:(document.querySelector('#monthlyCumulativeMonth')?.value||new Date().toISOString().slice(0,7))})">查看本月待補簽分館</button><p class="muted">依配送日期列出 1～6 線的公文送出、公文收回、圖書送出、圖書收回；月底自動結算，下個月重新累積。分館補簽後會自動更新。</p></div><input type="month" id="monthlyCumMonth" onchange="loadMonthlyRouteSummary()"></div><div id="monthlyRouteSummary" style="overflow:auto"><div class="muted">載入中…</div></div></div>
 <div class="card" id="monthlyRouteCumCard" style="margin-bottom:18px">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
     <div><h2>查詢月份路線總計</h2>
@@ -469,8 +469,12 @@ async function loadSignStatus(){
   const isToday=d===localToday();
   routeReportTitle.textContent=`${d} 路線總表 / 三方簽核`;
   routeReportReadonlyHint.textContent=isToday?'今日資料可依既有流程簽核；查看原始資料仍為唯讀。':'歷史日期：唯讀查詢，不提供直接修改或補簽。';
-  routeSignStatus.innerHTML='<table><tr><th>路線</th><th>司機</th><th>運送完成</th><th>分館簽收</th><th>待補</th><th>行政結案</th><th>公文送出</th><th>公文收回</th><th>圖書送出</th><th>圖書收回</th><th>司機簽名</th><th>總館簽核</th><th></th></tr>'+
-    active.map(r=>`<tr><td>${r.code}線</td><td>${r.driver_name||'—'}</td><td>${r.completed}/${r.total}</td><td>${r.branch_signed||0}/${r.total}</td><td>${r.late_pending||0}</td><td>${r.admin_closed||0}</td><td>${r.document_total||0}</td><td>${r.document_return_total||0}</td><td>${r.outbound_total||0}</td><td>${r.inbound_total||0}</td><td>${r.driver_signed_at?`✅ ${fmtDateTime(r.driver_signed_at)}`:'—'}</td><td>${r.secretary_signed_at?`✅ ${fmtDateTime(r.secretary_signed_at)}`:'—'}</td><td><button class="btn alt small" onclick="viewRouteSummary(${r.id},true)">查看原始分館 / 簽名</button></td></tr>`).join('')+'</table>';
+  routeSignStatus.innerHTML='<table style="min-width:1180px;table-layout:auto"><tr><th>路線</th><th>司機</th><th>運送完成</th><th>分館簽收</th><th>待補</th><th>行政結案</th><th>公文送出</th><th>公文收回</th><th>圖書送出</th><th>圖書收回</th><th>司機簽名</th><th>總館簽核</th><th style="min-width:185px">操作</th></tr>'+
+    active.map(r=>`<tr><td>${r.code}線</td><td>${r.driver_name||'—'}</td><td>${r.completed}/${r.total}</td><td>${r.branch_signed||0}/${r.total}</td><td>${r.late_pending||0}</td><td>${r.admin_closed||0}</td><td>${r.document_total||0}</td><td>${r.document_return_total||0}</td><td>${r.outbound_total||0}</td><td>${r.inbound_total||0}</td><td>${r.driver_signed_at?`✅ ${fmtDateTime(r.driver_signed_at)}`:'—'}</td><td>${r.secretary_signed_at?`✅ ${fmtDateTime(r.secretary_signed_at)}`:'—'}</td><td style="min-width:185px"><button class="btn alt small" style="white-space:nowrap;width:100%" onclick="viewRouteSummary(${r.id},true)">查看原始分館／簽名</button>${isToday&&me.role==='SECRETARY'&&!r.secretary_signed_at?`<button class="btn small" style="white-space:nowrap;width:100%;margin-top:8px" onclick="openOfficeRouteSign(${r.id})">${r.driver_signed_at?'總館路線簽核':'查看簽核條件'}</button>`:''} </td></tr>`).join('')+'</table>';
+  const unsigned=active.filter(r=>!r.secretary_signed_at);
+  const awaitingDriver=unsigned.filter(r=>!r.driver_signed_at);
+  const ready=unsigned.filter(r=>r.driver_signed_at);
+  routeSignReminder.textContent=!isToday?'歷史日期僅供查看，不提供補簽。':me.role!=='SECRETARY'?'目前帳號僅能查看；請使用總館秘書帳號簽核。':unsigned.length===0&&active.length?'所有路線均已完成總館路線簽核。請在下方進行總館最終簽名；如已鎖定則無須重簽。':`總館簽核提醒：${ready.length} 條路線已有司機簽名可進行總館簽核；${awaitingDriver.length} 條尚待司機簽名；${unsigned.length} 條尚未完成總館簽核。請使用表格最右側按鈕。所有路線完成後，下方才會顯示總館最終簽名。`;
   const gd=active.reduce((a,r)=>({d:a.d+(r.document_total||0),dr:a.dr+(r.document_return_total||0),o:a.o+(r.outbound_total||0),i:a.i+(r.inbound_total||0)}),{d:0,dr:0,o:0,i:0});
   dailyGrandTotal.classList.toggle('hidden',!active.length);
   dailyGrandTotal.textContent=`${d} 全部路線總計：公文送出 ${gd.d}｜公文收回 ${gd.dr}｜圖書送出 ${gd.o}｜圖書收回 ${gd.i}`;
@@ -481,6 +485,23 @@ async function loadSignStatus(){
   if(isToday&&!locked&&x.all_required_routes_office_signed&&me.role==='SECRETARY')setTimeout(()=>setupCanvas('secSig'),20);
 }
 
+async function openOfficeRouteSign(id){
+  try{
+    const x=await api('/api/secretary/sign-status?service_date='+encodeURIComponent(localToday()));
+    const r=x.routes.find(v=>v.id===id);
+    if(!r)throw Error('找不到今日路線');
+    if(r.secretary_signed_at)throw Error('本路線已完成總館簽核');
+    const host=document.getElementById('routeOfficeSignatureHost');
+    if(!r.driver_signed_at){host.innerHTML='<div class="notice">本路線尚待司機完成路線簽名，完成後才能總館簽核。</div>';host.scrollIntoView({behavior:'smooth'});return}
+    host.innerHTML='<div class="card"><h3>第 '+r.code+' 線｜總館路線簽核</h3><p class="notice">請核對本線四項數量，確認所有公文送出數量已填妥。此簽名不同於當日總館最終簽名。</p><canvas id="officeRouteSig" width="650" height="180" style="width:100%;border:2px dashed #b8c0cc;border-radius:12px;touch-action:none"></canvas><div class="toolbar"><button class="btn alt" onclick="clearSig(\'officeRouteSig\')">清除簽名</button><button class="btn" onclick="submitOfficeRouteSign('+id+')">確認並簽核本路線</button><button class="btn alt" onclick="routeOfficeSignatureHost.innerHTML=\'\'">取消</button></div></div>';
+    setupCanvas('officeRouteSig');host.scrollIntoView({behavior:'smooth'});
+  }catch(e){alert(e.message)}
+}
+async function submitOfficeRouteSign(id){
+  const c=document.getElementById('officeRouteSig');if(!c)return;
+  if(!confirm('確認本路線資料已核對無誤並完成總館路線簽核？'))return;
+  try{await api('/api/secretary/routes/'+id+'/sign',{method:'POST',body:JSON.stringify({signature:c.toDataURL('image/png')})});routeOfficeSignatureHost.innerHTML='';await loadSignStatus();alert('本路線總館簽核完成')}catch(e){alert(e.message)}
+}
 async function viewRouteSummary(id,readonly=true){
   try{
     const x=await api('/api/routes/'+id+'/signed-summary'),r=x.route,t=x.totals;
