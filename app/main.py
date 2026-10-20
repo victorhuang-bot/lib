@@ -1326,24 +1326,12 @@ async def branch_desktop_login(req:Request):
     if not verify_secret(pin,b['pin_hash']):
         c.close(); raise HTTPException(401,'PIN 錯誤')
 
-    # Same FIFO priority as QR flow: oldest unresolved late-sign first,
-    # otherwise today's delivery.
-    x=c.execute(
-        """SELECT * FROM deliveries
-           WHERE branch_id=?
-             AND status='LATE_BRANCH_PENDING'
-             AND branch_signed_at IS NULL
-             AND branch_signature IS NULL
-           ORDER BY service_date ASC,id ASC LIMIT 1""",
-        (b['id'],)
-    ).fetchone()
+    # 今日配送優先；歷史補簽由分館登入後自行選擇。
+    x=c.execute("SELECT * FROM deliveries WHERE branch_id=? AND service_date=? AND status<>'VOID' ORDER BY id DESC LIMIT 1",(b['id'],today())).fetchone()
     if not x:
-        x=c.execute(
-            """SELECT * FROM deliveries
-               WHERE branch_id=? AND service_date=? AND status<>'VOID'
-               ORDER BY id DESC LIMIT 1""",
-            (b['id'],today())
-        ).fetchone()
+        x=c.execute("""SELECT * FROM deliveries WHERE branch_id=? AND status='LATE_BRANCH_PENDING'
+                         AND branch_signed_at IS NULL AND branch_signature IS NULL
+                         ORDER BY service_date DESC,id DESC LIMIT 1""",(b['id'],)).fetchone()
     if not x:
         c.close(); raise HTTPException(404,'目前沒有待簽收配送')
 
@@ -1358,14 +1346,11 @@ async def branch_desktop_login(req:Request):
 async def branch_verify(req:Request):
     p=await req.json(); c=db(); b=c.execute('SELECT * FROM branches WHERE access_token_hash=? AND active=1',(thash(p.get('token','')),)).fetchone()
     if not b or not verify_secret(p.get('pin',''),b['pin_hash']):c.close();raise HTTPException(401,'QR或驗證碼錯誤')
-    x=c.execute('''SELECT * FROM deliveries
-                   WHERE branch_id=? AND status<>'VOID' AND (
-                     (status='LATE_BRANCH_PENDING' AND branch_signed_at IS NULL)
-                     OR service_date=?
-                   )
-                   ORDER BY CASE WHEN status='LATE_BRANCH_PENDING' AND service_date<? THEN 0 ELSE 1 END,
-                            service_date ASC, id ASC
-                   LIMIT 1''',(b['id'],today(),today())).fetchone()
+    x=c.execute("SELECT * FROM deliveries WHERE branch_id=? AND service_date=? AND status<>'VOID' ORDER BY id DESC LIMIT 1",(b['id'],today())).fetchone()
+    if not x:
+        x=c.execute("""SELECT * FROM deliveries WHERE branch_id=? AND status='LATE_BRANCH_PENDING'
+                         AND branch_signed_at IS NULL AND branch_signature IS NULL
+                         ORDER BY service_date DESC,id DESC LIMIT 1""",(b['id'],)).fetchone()
     if not x:c.close();raise HTTPException(404,'目前沒有待簽收或待補簽的配送任務')
     raw=secrets.token_urlsafe(32);c.execute('INSERT INTO branch_sessions(token_hash,branch_id,delivery_id,expires_at) VALUES(?,?,?,?)',(thash(raw),b['id'],x['id'],future_iso(minutes=30)));c.commit()
     is_historical_late=(x['status']=='LATE_BRANCH_PENDING' and x['service_date']<today())
@@ -1382,6 +1367,36 @@ def branch_auth(req):
 @app.get('/api/branch-session/today')
 def branch_today(req:Request):
     s=branch_auth(req);c=db();x=c.execute('''SELECT x.*,b.name branch_name FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.id=? AND x.branch_id=?''',(s['delivery_id'],s['branch_id'])).fetchone();corr=c.execute("SELECT * FROM corrections WHERE delivery_id=? ORDER BY CASE WHEN status='PENDING' THEN 0 ELSE 1 END,id DESC LIMIT 1",(x['id'],)).fetchone();items=[dict(r) for r in c.execute("SELECT item_type,item_name,quantity FROM delivery_items WHERE delivery_id=? ORDER BY id",(x['id'],)).fetchall()];c.close();out=dict(x);out['correction']=dict(corr) if corr else None;out['items']=items;return out
+@app.get('/api/branch-session/tasks')
+def branch_session_tasks(req:Request):
+    sess=branch_auth(req)
+    c=db()
+    current=c.execute("SELECT id,service_date,status FROM deliveries WHERE branch_id=? AND service_date=? AND status<>'VOID' ORDER BY id DESC LIMIT 1",(sess['branch_id'],today())).fetchone()
+    historical=c.execute("""SELECT id,service_date,status FROM deliveries
+        WHERE branch_id=? AND service_date<? AND status='LATE_BRANCH_PENDING'
+        AND branch_signed_at IS NULL AND branch_signature IS NULL
+        ORDER BY service_date DESC,id DESC""",(sess['branch_id'],today())).fetchall()
+    selected=c.execute("SELECT id,service_date FROM deliveries WHERE id=? AND branch_id=?",(sess['delivery_id'],sess['branch_id'])).fetchone()
+    c.close()
+    return {'today':dict(current) if current else None,'historical':[dict(x) for x in historical],
+            'selected':dict(selected) if selected else None}
+
+@app.post('/api/branch-session/select-task')
+async def branch_session_select_task(req:Request):
+    sess=branch_auth(req)
+    p=await req.json()
+    try: did=int(p.get('delivery_id'))
+    except (ValueError,TypeError): raise HTTPException(400,'配送紀錄編號錯誤')
+    c=db()
+    x=c.execute("SELECT id,service_date,status,branch_signed_at,branch_signature FROM deliveries WHERE id=? AND branch_id=?",(did,sess['branch_id'])).fetchone()
+    if not x or not (x['service_date']==today() and x['status']!='VOID' or
+        x['service_date']<today() and x['status']=='LATE_BRANCH_PENDING' and not x['branch_signed_at'] and not x['branch_signature']):
+        c.close()
+        raise HTTPException(403,'此分館無法選擇該配送紀錄')
+    c.execute("UPDATE branch_sessions SET delivery_id=? WHERE token_hash=? AND branch_id=?",(did,sess['token_hash'],sess['branch_id']))
+    c.commit();c.close()
+    return {'ok':True,'delivery_id':did,'service_date':x['service_date']}
+
 @app.post('/api/branch-session/sign')
 async def branch_sign(req:Request):
     sess=branch_auth(req)
@@ -1399,23 +1414,6 @@ async def branch_sign(req:Request):
     if not x:
         c.close()
         raise HTTPException(404,'找不到配送資料')
-
-    # 歷史待補 FIFO：有更早的待補簽時，不可跳到較新日期。
-    older_pending=c.execute(
-        """SELECT id,service_date FROM deliveries
-           WHERE branch_id=?
-             AND status='LATE_BRANCH_PENDING'
-             AND branch_signed_at IS NULL
-             AND branch_signature IS NULL
-             AND service_date<?
-           ORDER BY service_date ASC,id ASC
-           LIMIT 1""",
-        (sess['branch_id'],x['service_date'])
-    ).fetchone()
-    if older_pending:
-        old_date=older_pending['service_date']
-        c.close()
-        raise HTTPException(409,f'尚有較早待補簽：{old_date}，請先完成該筆後才能處理 {x["service_date"]}')
 
     late=(x['status']=='LATE_BRANCH_PENDING' and not x['branch_signed_at'] and not x['branch_signature'])
     if not late and is_report_locked(c,x['service_date']):
