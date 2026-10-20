@@ -42,7 +42,25 @@ async function desktopLogin(){
   }catch(e){alert(e.message)}
 }
 async function verifyBranch(){try{let x=await api('/api/branch-session/verify',{method:'POST',body:JSON.stringify({token:branchToken,pin:document.querySelector('#pin').value})});session=x.session;document.querySelector('#verify').classList.add('hidden');work.classList.remove('hidden');await load()}catch(e){msg.innerHTML='<div class="error">'+e.message+'</div>'}}
-async function load(){data=await bapi('/api/branch-session/today');if(data.status==='WAITING_BRANCH'||data.status==='LATE_BRANCH_PENDING')renderSign();else if(data.status==='WAITING_BRANCH_CORRECTION')renderCorrection();else work.innerHTML=`<h2>${data.branch_name}</h2><div class="ok"><b>簽收已送出完成</b><br>目前狀態：${statusText(data.status)}</div><p>簽收人：${data.correction_signer_name||data.signer_name||'—'}</p><p>實際簽收時間：${fmtDateTime(data.receipt_at||data.corrected_at||data.branch_signed_at)}</p><p class="muted">系統已保存本次簽名，請勿重複送出。</p>`}
+async function load(){data=await bapi('/api/branch-session/today');await renderTaskChooser();if(data.status==='WAITING_BRANCH'||data.status==='LATE_BRANCH_PENDING')renderSign();else if(data.status==='WAITING_BRANCH_CORRECTION')renderCorrection();else work.innerHTML=`<h2>${data.branch_name}</h2><p><b>配送日期：${data.service_date}</b></p><div class="ok"><b>簽收已送出完成</b><br>目前狀態：${statusText(data.status)}</div><p>簽收人：${data.correction_signer_name||data.signer_name||'—'}</p><p>實際簽收時間：${fmtDateTime(data.receipt_at||data.corrected_at||data.branch_signed_at)}</p><p class="muted">系統已保存本次簽名，請勿重複送出。</p>`}
+async function renderTaskChooser(){
+  const tasks=await bapi('/api/branch-session/tasks');
+  let host=document.querySelector('#branchTaskChooser');
+  if(!host){host=document.createElement('div');host.id='branchTaskChooser';work.parentNode.insertBefore(host,work)}
+  const selected=tasks.selected?.id;
+  const todayTask=tasks.today;
+  const history=tasks.historical||[];
+  host.innerHTML=`<div class="card" style="margin-bottom:14px"><h3>選擇配送日期</h3>
+    <p class="muted">今日配送優先，歷史待補簽可自行選擇，不必先補完舊日期。</p>
+    ${todayTask?`<button class="btn ${selected===todayTask.id?'':'alt'}" onclick="selectBranchTask(${todayTask.id})">今日配送｜${todayTask.service_date}${selected===todayTask.id?' ✓':''}</button>`:'<p class="muted">今日尚無配送紀錄。</p>'}
+    <details style="margin-top:12px" ${!todayTask?'open':''}><summary>歷史待補簽（${history.length} 筆）</summary>
+    ${history.length?history.map(x=>`<button class="btn ${selected===x.id?'':'alt'}" style="margin:6px" onclick="selectBranchTask(${x.id})">補簽 ${x.service_date}${selected===x.id?' ✓':''}</button>`).join(''):'<p class="muted">沒有歷史待補簽紀錄。</p>'}</details>
+    </div>`;
+}
+async function selectBranchTask(id){
+  try{await bapi('/api/branch-session/select-task',{method:'POST',body:JSON.stringify({delivery_id:id})});await load()}
+  catch(e){alert(e.message)}
+}
 function canvasBlock(){return `<canvas id="sig" class="sig" width="600" height="220"></canvas><button class="btn alt" onclick="clearSig()">清除簽名</button>`}
 function carriedItemsText(){const names={DOCUMENT_BAG:'公文袋',ATTACHMENT_BAG:'附件袋',PRIZE:'獎品',CONSUMABLE:'耗材',POSTER:'海報',NEWBORN_GIFT:'新生兒閱讀好禮',BOOKCLUB_RESOURCE:'讀書會資源庫用書',PROMOTION:'文宣',STATIONERY:'文具'};const a=data.items||[];return a.length?a.map(x=>`${x.item_type==='OTHER'?(x.item_name||'其他'):(names[x.item_type]||x.item_type)} ${x.quantity}`).join('、'):'無'}
 function receiptInputValue(v){if(v){return String(v).replace(' ','T').slice(0,16)}const d=new Date(),p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`}
@@ -52,10 +70,10 @@ function renderSign(){const late=data.status==='LATE_BRANCH_PENDING';work.innerH
         <label>圖書送出<input id="out" type="number" min="0" value="${data.outbound_final??0}"></label>
         <label>圖書收回<input id="inn" type="number" min="0" value="${data.inbound_final??0}"></label>
         </div><p>備註</p><textarea id="note" style="width:100%">${data.note_final||''}</textarea><p>實際簽收時間</p><input id="receiptAt" type="datetime-local" value="${receiptInputValue(data.receipt_at)}" style="width:100%"><div class="muted">預設目前時間，可依實際簽收時間修改；系統真正送出簽名時間會另外保留。</div><p>簽收人姓名</p><input id="signer" style="width:100%"> <p>請簽名</p>${canvasBlock()}<button id="branchSignBtn" class="btn big" style="margin-top:12px" onclick="sign()">${late?'確認補填並完成簽名':'確認簽收'}</button>`;getSig=sigPad(document.querySelector('#sig'))}
-function renderCorrection(){let c=data.correction;work.innerHTML=`<h2>${data.branch_name}</h2><div class="notice"><b>司機要求更正</b><br>${c?.driver_note||'請重新確認數量；只需填寫需要修改的欄位'}</div><div class="ok" style="margin-top:10px">數量欄位為選填。留白代表沿用目前數量，不會被改成 0。</div><div class="ok"><b>總館公文送出：</b>${data.document_final??'尚未填寫'}<br><b>司機圖書送出：</b>${data.outbound_final??0}<br><b>總館其他隨車物品：</b>${carriedItemsText()}</div><p>公文收回（目前：${data.document_return_final??0}）</p><input id="document_return" type="number" min="0" placeholder="若不修改請留白" style="width:100%"><p>圖書收回（目前：${data.inbound_final??0}）</p><input id="inbound" type="number" min="0" placeholder="若不修改請留白" style="width:100%"><p>更正原因＊</p><textarea id="reason" style="width:100%"></textarea><p>更正人姓名＊</p><input id="signer" style="width:100%"><p>請重新簽名</p>${canvasBlock()}<button class="btn big" style="margin-top:12px" onclick="correct()">送出更正並重新簽名</button>`;getSig=sigPad(document.querySelector('#sig'))}
+function renderCorrection(){let c=data.correction;work.innerHTML=`<h2>${data.branch_name}</h2><p><b>配送日期：${data.service_date}</b></p><div class="notice"><b>司機要求更正</b><br>${c?.driver_note||'請重新確認數量；只需填寫需要修改的欄位'}</div><div class="ok" style="margin-top:10px">數量欄位為選填。留白代表沿用目前數量，不會被改成 0。</div><div class="ok"><b>總館公文送出：</b>${data.document_final??'尚未填寫'}<br><b>司機圖書送出：</b>${data.outbound_final??0}<br><b>總館其他隨車物品：</b>${carriedItemsText()}</div><p>公文收回（目前：${data.document_return_final??0}）</p><input id="document_return" type="number" min="0" placeholder="若不修改請留白" style="width:100%"><p>圖書收回（目前：${data.inbound_final??0}）</p><input id="inbound" type="number" min="0" placeholder="若不修改請留白" style="width:100%"><p>更正原因＊</p><textarea id="reason" style="width:100%"></textarea><p>更正人姓名＊</p><input id="signer" style="width:100%"><p>請重新簽名</p>${canvasBlock()}<button class="btn big" style="margin-top:12px" onclick="correct()">送出更正並重新簽名</button>`;getSig=sigPad(document.querySelector('#sig'))}
 function clearSig(){let c=document.querySelector('#sig');c.getContext('2d').clearRect(0,0,c.width,c.height)}
 async function sign(){
-  if(!confirm(data.status==='LATE_BRANCH_PENDING'?'確認補填數量並完成簽名？送出後即不可再修改。':'確認完成本次簽收？'))return;
+  if(!confirm('配送日期：'+data.service_date+'\\n'+(data.status==='LATE_BRANCH_PENDING'?'確認補填數量並完成簽名？送出後即不可再修改。':'確認完成本次簽收？')))return;
   const btn=document.querySelector('#branchSignBtn');
   if(btn?.disabled)return;
   const signature=getSig();
@@ -75,5 +93,5 @@ async function sign(){
     if(btn){btn.disabled=false;btn.textContent=data.status==='LATE_BRANCH_PENDING'?'確認補填並完成簽名':'確認簽收'}
   }
 }
-async function correct(){try{const val=id=>{const v=document.getElementById(id).value.trim();return v===''?null:Number(v)};await bapi('/api/branch-session/correct',{method:'POST',body:JSON.stringify({document_return:val('document_return'),inbound:val('inbound'),reason:reason.value,signer:signer.value,signature:getSig()})});await load()}catch(e){alert(e.message)}}
+async function correct(){try{if(!confirm('配送日期：'+data.service_date+'\\n確定送出更正並重新簽名？'))return;const val=id=>{const v=document.getElementById(id).value.trim();return v===''?null:Number(v)};await bapi('/api/branch-session/correct',{method:'POST',body:JSON.stringify({document_return:val('document_return'),inbound:val('inbound'),reason:reason.value,signer:signer.value,signature:getSig()})});await load()}catch(e){alert(e.message)}}
 </script></body></html>
