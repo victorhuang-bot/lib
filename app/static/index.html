@@ -500,7 +500,7 @@ async function openOfficeRouteSign(id){
 async function submitOfficeRouteSign(id){
   const c=document.getElementById('officeRouteSig');if(!c)return;
   if(!confirm('確認本路線資料已核對無誤並完成總館路線簽核？'))return;
-  try{await api('/api/secretary/routes/'+id+'/sign',{method:'POST',body:JSON.stringify({signature:c.toDataURL('image/png')})});routeOfficeSignatureHost.innerHTML='';await loadSignStatus();alert('本路線總館簽核完成')}catch(e){alert(e.message)}
+  try{await api('/api/routes/'+id+'/secretary-sign',{method:'POST',body:JSON.stringify({signature:c.toDataURL('image/png')})});routeOfficeSignatureHost.innerHTML='';await loadSignStatus();alert('本路線總館簽核完成')}catch(e){alert(e.message)}
 }
 async function viewRouteSummary(id,readonly=true){
   try{
