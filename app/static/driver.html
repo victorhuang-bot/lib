@@ -1,4 +1,16 @@
-<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" type="image/png" href="/static/moving-match-favicon.png"><title>司機工作頁</title><link rel="stylesheet" href="/static/style.css"></head><body><main class="mobile"><div class="card"><h1>今日配送</h1><div id="unlock"><p>請輸入司機 4 位 PIN</p><input id="pin" maxlength="4" inputmode="numeric" style="width:100%;font-size:28px;text-align:center"><button class="btn big" style="margin-top:10px" onclick="unlockDriver()">進入今日路線</button></div>
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" type="image/png" href="/static/moving-match-favicon.png"><title>司機工作頁</title><link rel="stylesheet" href="/static/style.css"><style>
+.driver-mobile-summary{display:none}
+@media(max-width:700px){
+.driver-desktop-summary{display:none}
+.driver-mobile-summary{display:block}
+.driver-stop-summary{padding:12px;margin:12px 0;border:1px solid #dce3eb;border-radius:12px;background:#f7f9fc}
+.driver-stop-summary h3{margin:0 0 10px;font-size:18px;overflow-wrap:anywhere}
+.driver-quantity-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.driver-quantity-cell{background:white;border:1px solid #dce3eb;border-radius:9px;padding:10px;min-width:0}
+.driver-quantity-cell span{display:block;color:#59677a;font-size:13px}
+.driver-quantity-cell strong{display:block;font-size:21px;overflow-wrap:anywhere}
+}
+</style></head><body><main class="mobile"><div class="card"><h1>今日配送</h1><div id="unlock"><p>請輸入司機 4 位 PIN</p><input id="pin" maxlength="4" inputmode="numeric" style="width:100%;font-size:28px;text-align:center"><button class="btn big" style="margin-top:10px" onclick="unlockDriver()">進入今日路線</button></div>
 <div id="routeSwitcher" class="hidden" style="margin:12px 0"></div>
 <div id="list" class="hidden"></div><div id="routeSigns" class="hidden"></div><div id="msg"></div></div></main><script src="/static/common.js"></script><script>
 function fmtDateTime(v){
@@ -150,6 +162,10 @@ async function loadRouteSigns(){
   rs.filter(r=>r.completed===r.total&&r.total>0&&r.status!=='DRIVER_SIGNED').forEach(r=>setupRouteCanvas(r.id));
 }
 function driverQuantity(v,pending='待補'){return v===null||v===undefined?pending:String(v)}
+function driverQuantityCards(values,label){
+  const fields=[['公文送出',values.document],['公文收回',values.document_return],['圖書送出（箱）',values.outbound],['圖書收回（箱）',values.inbound]];
+  return `<section class="driver-stop-summary"><h3>${label}</h3><div class="driver-quantity-grid">${fields.map(([name,value])=>`<div class="driver-quantity-cell"><span>${name}</span><strong>${driverQuantity(value)}</strong></div>`).join('')}</div></section>`;
+}
 function driverTotalsRow(t,label){
   return `<tr><th>${label}</th><th>${t.document}</th><th>${t.document_return}</th><th>${t.outbound}</th><th>${t.inbound}</th></tr>`;
 }
@@ -161,7 +177,7 @@ function driverGrandSummaryCard(summaries){
     total+=sm.stops.length;
     completed+=sm.stops.filter(x=>['STOP_COMPLETED','LATE_BRANCH_PENDING','ADMIN_CLOSED'].includes(x.status)).length;
   }
-  return `<div class="card"><h2>今日負責路線合計</h2><p class="muted">已完成運送 ${completed}/${total} 站；四項數量分別加總。未填欄位不視為零，補簽及更正後重新整理即可取得最新合計。</p><div style="overflow:auto"><table><thead><tr><th>範圍</th><th>公文送出</th><th>公文收回</th><th>圖書送出（箱）</th><th>圖書收回（箱）</th></tr></thead><tbody>${driverTotalsRow(t,'目前已填合計')}</tbody></table></div></div>`;
+  return `<div class="card"><h2>今日負責路線合計</h2><p class="muted">已完成運送 ${completed}/${total} 站；四項數量分別加總。未填欄位不視為零，補簽及更正後重新整理即可取得最新合計。</p><div class="driver-desktop-summary" style="overflow:auto"><table><thead><tr><th>範圍</th><th>公文送出</th><th>公文收回</th><th>圖書送出（箱）</th><th>圖書收回（箱）</th></tr></thead><tbody>${driverTotalsRow(t,'目前已填合計')}</tbody></table></div><div class="driver-mobile-summary">${driverQuantityCards(t,'目前已填合計')}</div></div>`;
 }
 function routeSummaryCard(sm,signed,canSign,progress){
   const r=sm.route,t=sm.totals;
@@ -179,7 +195,7 @@ function routeSummaryCard(sm,signed,canSign,progress){
     canSign?
     `<p class="notice">請核對目前已填資料；待補簽分館不影響今日路線簽名。</p><canvas id="rs${r.id}" width="650" height="190" style="width:100%;border:2px dashed #b8c0cc;border-radius:12px;touch-action:none"></canvas><button class="btn alt big" onclick="clearRouteSig(${r.id})">清除簽名</button><button class="btn big" style="margin-top:8px" onclick="signRoute(${r.id})">確認今日運送並簽署 ${r.code} 線總表</button>`:
     '<div class="notice">本路線尚有站點未完成運送，全部完成後才可簽名。</div>';
-  return `<div class="card"><h2>${r.code}線｜今日路線總表</h2>${status}${warning}<div style="overflow:auto"><table><thead><tr><th>分館</th><th>公文送出</th><th>公文收回</th><th>圖書送出（箱）</th><th>圖書收回（箱）</th></tr></thead><tbody>${rows}${driverTotalsRow(t,'本線已填合計')}</tbody></table></div>${sign}</div>`;
+  return `<div class="card"><h2>${r.code}線｜今日路線總表</h2>${status}${warning}<div class="driver-desktop-summary" style="overflow:auto"><table><thead><tr><th>分館</th><th>公文送出</th><th>公文收回</th><th>圖書送出（箱）</th><th>圖書收回（箱）</th></tr></thead><tbody>${rows}${driverTotalsRow(t,'本線已填合計')}</tbody></table></div><div class="driver-mobile-summary">${sm.stops.map(x=>driverQuantityCards({document:x.document_final,document_return:x.document_return_final,outbound:x.outbound_final,inbound:x.inbound_final},x.branch_name)).join('')}${driverQuantityCards(t,'本線已填合計')}</div>${sign}</div>`;
 }
 function setupRouteCanvas(id){const c=document.getElementById('rs'+id);if(!c||c.dataset.ready)return;c.dataset.ready='1';const ctx=c.getContext('2d');ctx.lineWidth=3;ctx.lineCap='round';let on=false;const pos=e=>{const r=c.getBoundingClientRect(),t=e.touches?e.touches[0]:e;return [(t.clientX-r.left)*c.width/r.width,(t.clientY-r.top)*c.height/r.height]};const st=e=>{on=true;c.dataset.dirty='1';let [x,y]=pos(e);ctx.beginPath();ctx.moveTo(x,y);e.preventDefault()};const mv=e=>{if(!on)return;let [x,y]=pos(e);ctx.lineTo(x,y);ctx.stroke();e.preventDefault()};const en=e=>{on=false};c.addEventListener('mousedown',st);c.addEventListener('mousemove',mv);window.addEventListener('mouseup',en);c.addEventListener('touchstart',st,{passive:false});c.addEventListener('touchmove',mv,{passive:false});c.addEventListener('touchend',en,{passive:false})}
 function clearRouteSig(id){const c=document.getElementById('rs'+id);c.getContext('2d').clearRect(0,0,c.width,c.height);c.dataset.dirty=''}
