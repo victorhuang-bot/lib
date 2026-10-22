@@ -2503,6 +2503,7 @@ async def segment_sign(rid:int,req:Request):
     if not sig: raise HTTPException(400,'請先簽名')
     c=db(); assigned=c.execute("SELECT COUNT(*) n,SUM(CASE WHEN x.status IN ('STOP_COMPLETED','LATE_BRANCH_PENDING','ADMIN_CLOSED') THEN 1 ELSE 0 END) done FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id LEFT JOIN delivery_driver_assignments a ON a.delivery_id=x.id WHERE dr.id=? AND COALESCE(a.driver_id,dr.driver_id)=?",(rid,s['driver_id'])).fetchone()
     if not assigned or not assigned['n'] or assigned['done']<assigned['n']: c.close(); raise HTTPException(409,'您的配送區段尚未全部完成')
+    if is_report_locked(c): c.close(); raise HTTPException(409,'日報已鎖定')
     if c.execute('SELECT 1 FROM route_segment_signatures WHERE service_date=? AND daily_route_id=? AND driver_id=?',(today(),rid,s['driver_id'])).fetchone(): c.close();raise HTTPException(409,'本區段已簽名，不可覆蓋')
     c.execute('INSERT INTO route_segment_signatures(service_date,daily_route_id,driver_id,signature,signed_at) VALUES(?,?,?,?,?) ON CONFLICT(service_date,daily_route_id,driver_id) DO UPDATE SET signature=excluded.signature,signed_at=excluded.signed_at',(today(),rid,s['driver_id'],sig,now()));audit(c,'DRIVER',s['driver_id'],'DRIVER','DRIVER_SEGMENT_SIGN','DAILY_ROUTE',rid);c.commit();c.close();return {'ok':True}
 
