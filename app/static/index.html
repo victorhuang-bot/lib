@@ -47,6 +47,18 @@
 #monthlyRouteMobile .mobile-month-head{background:#eef2f7;font-weight:700}
 #monthlyRouteMobile .mobile-month-row .mobile-month-cell:first-child{font-weight:700}
 #monthlyRouteMobile .mobile-month-total{background:#edf4fa;font-weight:700}
+
+/* Monthly route totals: mobile five-column grid, independent of global table minimum widths. */
+#monthlyRouteCumMobile{display:none}
+@media(max-width:700px){
+ #monthlyRouteCumDesktop{display:none!important}
+ #monthlyRouteCumMobile{display:block;width:100%;min-width:0;max-width:100%;overflow:hidden}
+ #monthlyRouteCumMobile .cum-mobile-row{display:grid;grid-template-columns:23% repeat(4,minmax(0,1fr));width:100%;min-width:0;border-bottom:1px solid #e1e6ee;box-sizing:border-box}
+ #monthlyRouteCumMobile .cum-mobile-cell{min-width:0;box-sizing:border-box;padding:12px 2px;text-align:center;font-size:clamp(11px,2.7vw,15px);line-height:1.35;overflow-wrap:anywhere;word-break:break-word}
+ #monthlyRouteCumMobile .cum-mobile-row .cum-mobile-cell:first-child{font-weight:700}
+ #monthlyRouteCumMobile .cum-mobile-head{background:#eef2f7;font-weight:700}
+ #monthlyRouteCumMobile .cum-mobile-total{background:#edf4fa;font-weight:700}
+}
 /* Mobile month report: single route at a time, desktop retains full matrix. */
 #monthlyRouteMobileControls,#monthlyRouteMobile{display:none}
 @media(max-width:700px){
@@ -210,13 +222,21 @@ async function loadMonthlyRouteCumulative(){
     const r=await api('/api/reports/monthly-route-summary?month='+encodeURIComponent(m.value));
     const routes=r.routes||[1,2,3,4,5,6];
     const totals=r.totals||{};
-    let x='<div style="overflow:auto"><table><thead><tr><th>路線</th><th>公文送出</th><th>公文收回</th><th>圖書送出</th><th>圖書收回</th></tr></thead><tbody>';
+    let x='<div id="monthlyRouteCumDesktop" style="overflow:auto"><table><thead><tr><th>路線</th><th>公文送出</th><th>公文收回</th><th>圖書送出</th><th>圖書收回</th></tr></thead><tbody>';
+    const fields=['document','document_return','outbound','inbound'];
+    const headings=['路線','公文送出','公文收回','圖書送出','圖書收回'];
+    const mobileCell=(value,role)=>'<div class="cum-mobile-cell" role="'+role+'">'+value+'</div>';
+    const mobileRow=(label,q,extra='')=>'<div class="cum-mobile-row '+extra+'" role="row">'+mobileCell(label,'rowheader')+fields.map(k=>mobileCell(Number(q[k]||0),'cell')).join('')+'</div>';
+    let mobile='<div id="monthlyRouteCumMobile" role="table" aria-label="月份各路線總計"><div class="cum-mobile-row cum-mobile-head" role="row">'+headings.map(h=>mobileCell(h,'columnheader')).join('')+'</div>';
     for(const route of routes){
       const q=totals[route]||totals[String(route)]||{document:0,document_return:0,outbound:0,inbound:0};
       x+=`<tr><td><b>${route}線</b></td><td>${q.document||0}</td><td>${q.document_return||0}</td><td>${q.outbound||0}</td><td>${q.inbound||0}</td></tr>`;
+      mobile+=mobileRow(route+'線',q);
     }
     const g=r.grand_total||{document:0,document_return:0,outbound:0,inbound:0};
     x+=`</tbody><tfoot><tr><th>全路線合計</th><th>${g.document||0}</th><th>${g.document_return||0}</th><th>${g.outbound||0}</th><th>${g.inbound||0}</th></tr></tfoot></table></div>`;
+    mobile+=mobileRow('全路線合計',g,'cum-mobile-total')+'</div>';
+    x+=mobile;
     if(r.late_pending){x+=`<div class="notice" style="margin-top:10px">所選月份尚有 ${r.late_pending} 筆待分館補簽；補簽後總計會自動更新。</div>`;}
     box.innerHTML=x;
   }catch(e){
