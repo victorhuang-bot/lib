@@ -1100,9 +1100,9 @@ async def driver_save_inbound(did:int,req:Request):
         c.close();raise HTTPException(409,'僅可在分館尚未補簽時儲存圖書收回數量')
     if is_report_locked(c,x['service_date']):
         c.close();raise HTTPException(409,'該日日報已鎖定')
-    c.execute('UPDATE deliveries SET inbound_final=?,row_version=row_version+1 WHERE id=? AND status=? AND branch_signed_at IS NULL AND branch_signature IS NULL',
+    cur=c.execute('UPDATE deliveries SET inbound_final=?,row_version=row_version+1 WHERE id=? AND status=? AND branch_signed_at IS NULL AND branch_signature IS NULL',
               (qty,did,'LATE_BRANCH_PENDING'))
-    if c.total_changes==0:
+    if cur.rowcount==0:
         c.close();raise HTTPException(409,'此站已完成簽收，請重新整理')
     audit(c,'DRIVER',s['driver_id'],'DRIVER','DRIVER_SET_LATE_INBOUND','DELIVERY',did,
           before={'inbound':x['inbound_final']},after={'inbound':qty,'service_date':x['service_date']})
