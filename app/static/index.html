@@ -41,6 +41,12 @@
 #monthlyRouteCumBody th,#monthlyRouteCumBody td{white-space:nowrap}
 @media(max-width:700px){#reports .card{min-width:0;max-width:100%}#reports .sectiontitle{flex-wrap:wrap;align-items:flex-start}#reports .sectiontitle input[type=month]{max-width:100%;width:auto}#monthlyRouteSummaryTable th,#monthlyRouteSummaryTable td{padding:10px 12px;min-width:84px}}
 
+#monthlyRouteMobile .mobile-month-grid{display:block;width:100%;max-width:100%;min-width:0;box-sizing:border-box}
+#monthlyRouteMobile .mobile-month-row{display:grid;grid-template-columns:20% repeat(4,minmax(0,1fr));width:100%;min-width:0;box-sizing:border-box;border-bottom:1px solid #e1e6ee}
+#monthlyRouteMobile .mobile-month-cell{min-width:0;box-sizing:border-box;padding:12px 2px;text-align:center;font-size:clamp(11px,2.6vw,15px);line-height:1.35;overflow-wrap:anywhere;word-break:break-word}
+#monthlyRouteMobile .mobile-month-head{background:#eef2f7;font-weight:700}
+#monthlyRouteMobile .mobile-month-row .mobile-month-cell:first-child{font-weight:700}
+#monthlyRouteMobile .mobile-month-total{background:#edf4fa;font-weight:700}
 /* Mobile month report: single route at a time, desktop retains full matrix. */
 #monthlyRouteMobileControls,#monthlyRouteMobile{display:none}
 @media(max-width:700px){
@@ -586,7 +592,9 @@ function renderMonthlyRouteMobile(){
   const rows=(x.days||[]).map(day=>{const v=getValues(day);return '<tr><th scope="row">'+day.date.slice(5).replace('-','/')+'</th>'+fields.map(k=>'<td>'+Number(v[k]||0)+'</td>').join('')+'</tr>'}).join('');
   const totals=route==='all'?(x.grand_total||zero):(x.totals[route]||zero);
   const foot='<tr><th scope="row">本月累積</th>'+fields.map(k=>'<td>'+Number(totals[k]||0)+'</td>').join('')+'</tr>';
-  host.innerHTML='<table id="monthlyRouteMobileTable"><thead><tr><th scope="col">日期</th>'+labels.map(label=>'<th scope="col">'+label+'</th>').join('')+'</tr></thead><tbody>'+rows+foot+'</tbody></table>'+(x.late_pending?'<p class="muted">本月待分館補簽：'+Number(x.late_pending)+' 筆</p>':'');
+  const mobileRow=(label,values,extra='')=>'<div class="mobile-month-row '+extra+'" role="row"><div class="mobile-month-cell" role="rowheader">'+label+'</div>'+fields.map(k=>'<div class="mobile-month-cell" role="cell">'+Number(values[k]||0)+'</div>').join('')+'</div>';
+  const gridRows=(x.days||[]).map(day=>mobileRow(day.date.slice(5).replace('-','/'),getValues(day))).join('');
+  host.innerHTML='<div class="mobile-month-grid" role="table" aria-label="每月路線四項數量"><div class="mobile-month-row mobile-month-head" role="row"><div class="mobile-month-cell" role="columnheader">日期</div>'+labels.map(label=>'<div class="mobile-month-cell" role="columnheader">'+label+'</div>').join('')+'</div>'+gridRows+mobileRow('本月累積',totals,'mobile-month-total')+'</div>'+(x.late_pending?'<p class="muted">本月待分館補簽：'+Number(x.late_pending)+' 筆</p>':'');
 }
 function updateMonthlyRouteMobile(x){
   monthlyRouteMobileData=x;
