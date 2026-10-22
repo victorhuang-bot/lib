@@ -1423,6 +1423,46 @@ def branch_session_tasks(req:Request):
     return {'today':dict(current) if current else None,'historical':[dict(x) for x in historical],
             'selected':dict(selected) if selected else None}
 
+@app.get('/api/branch-session/history')
+def branch_session_history(req:Request, month:str|None=None, pending_only:bool=False):
+    """V19.3: authenticated branch's own current/previous month delivery history."""
+    sess=branch_auth(req)
+    current=today()[:7]
+    year,mon=map(int,current.split('-'))
+    previous=f'{year-1 if mon==1 else year:04d}-{12 if mon==1 else mon-1:02d}'
+    selected=(month or current).strip()
+    if selected not in (current,previous):
+        raise HTTPException(400,'目前僅支援本月及上個月')
+    # Compare YYYY-MM lexical ranges; keep all rows for the branch, excluding void records.
+    end=f'{int(selected[:4])+1:04d}-01' if selected.endswith('-12') else f'{selected[:4]}-{int(selected[5:])+1:02d}'
+    c=db()
+    try:
+        rows=c.execute("""SELECT x.id,x.service_date,x.status,
+            x.document_final,x.document_return_final,x.outbound_final,x.inbound_final,
+            x.signer_name,x.correction_signer_name,x.branch_signed_at,x.receipt_at,x.corrected_at,
+            x.driver_confirmed_at,x.note_final,r.code route_code,
+            COALESCE(owner.name,driver.name) driver_name
+            FROM deliveries x
+            JOIN daily_routes dr ON dr.id=x.daily_route_id
+            JOIN routes r ON r.id=dr.route_id
+            LEFT JOIN drivers driver ON driver.id=dr.driver_id
+            LEFT JOIN delivery_driver_assignments da ON da.delivery_id=x.id
+            LEFT JOIN drivers owner ON owner.id=da.driver_id
+            WHERE x.branch_id=? AND x.service_date>=? AND x.service_date<? AND x.status<>'VOID'
+            ORDER BY x.service_date DESC,x.id DESC""",
+            (sess['branch_id'],selected+'-01',end)).fetchall()
+        data=[]
+        for row in rows:
+            item=dict(row)
+            item['late_pending']=(item['status']=='LATE_BRANCH_PENDING'
+                                  and not item['branch_signed_at'])
+            if not pending_only or item['late_pending']:
+                data.append(item)
+        return {'month':selected,'current_month':current,'previous_month':previous,
+                'pending_only':pending_only,'total':len(data),'records':data}
+    finally:
+        c.close()
+
 @app.post('/api/branch-session/select-task')
 async def branch_session_select_task(req:Request):
     sess=branch_auth(req)
