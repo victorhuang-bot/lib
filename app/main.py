@@ -2414,15 +2414,80 @@ def route_handoffs(req:Request, service_date:str|None=None):
 
 @app.post('/api/daily-routes/{rid}/handoff')
 async def route_handoff(rid:int,req:Request):
-    u=require_user(req,['ADMIN']); p=await req.json(); to_driver=int(p.get('to_driver_id')); start_id=int(p.get('start_delivery_id')); reason=(p.get('reason') or '').strip(); note=(p.get('note') or '').strip()
+    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); to_driver=int(p.get('to_driver_id')); start_id=int(p.get('start_delivery_id')); reason=(p.get('reason') or '').strip(); note=(p.get('note') or '').strip()
     if not reason: raise HTTPException(400,'交接原因必填')
     c=db(); dr=c.execute('SELECT * FROM daily_routes WHERE id=?',(rid,)).fetchone(); start=c.execute('SELECT x.*,b.stop_order FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.id=? AND x.daily_route_id=?',(start_id,rid)).fetchone()
     if not dr or not start: c.close(); raise HTTPException(404,'找不到路線或起始分館')
-    if start['status']=='STOP_COMPLETED': c.close(); raise HTTPException(409,'只能從尚未完成的分館開始交接')
+    if dr['service_date']!=today() or dr['secretary_signed_at']: c.close(); raise HTTPException(409,'只能調整今日未簽核路線')
+    if start['status'] not in ('WAITING_SECRETARY','WAITING_DRIVER'): c.close(); raise HTTPException(409,'只能從尚未開始的分館交接')
+    target_driver=c.execute('SELECT id FROM drivers WHERE id=? AND active=1',(to_driver,)).fetchone()
+    if not target_driver: c.close(); raise HTTPException(400,'接手司機不存在或已停用')
     htime=now(); cur=c.execute('INSERT INTO route_handoffs(service_date,daily_route_id,from_driver_id,to_driver_id,start_delivery_id,reason,note,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)',(dr['service_date'],rid,dr['driver_id'],to_driver,start_id,reason,note,u['id'],htime)); hid=cur.lastrowid
     targets=c.execute("SELECT x.id FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.daily_route_id=? AND b.stop_order>=? AND x.status!='STOP_COMPLETED' ORDER BY b.stop_order",(rid,start['stop_order'])).fetchall()
-    for x in targets: c.execute('INSERT INTO delivery_driver_assignments(delivery_id,driver_id,assigned_at,handoff_id) VALUES(?,?,?,?) ON CONFLICT(delivery_id) DO UPDATE SET driver_id=excluded.driver_id,assigned_at=excluded.assigned_at,handoff_id=excluded.handoff_id',(x['id'],to_driver,htime,hid))
+    for x in targets:
+        existing=c.execute('SELECT * FROM deliveries WHERE id=?',(x['id'],)).fetchone()
+        if existing['status'] not in ('WAITING_SECRETARY','WAITING_DRIVER') or existing['outbound_original'] is not None or existing['branch_signed_at'] or existing['driver_confirmed_at']: continue
+        c.execute('INSERT INTO delivery_driver_assignments(delivery_id,driver_id,assigned_at,handoff_id) VALUES(?,?,?,?) ON CONFLICT(delivery_id) DO UPDATE SET driver_id=excluded.driver_id,assigned_at=excluded.assigned_at,handoff_id=excluded.handoff_id',(x['id'],to_driver,htime,hid))
     audit(c,'USER',u['id'],u['role'],'DRIVER_HANDOFF','DAILY_ROUTE',rid,after={'from_driver_id':dr['driver_id'],'to_driver_id':to_driver,'start_delivery_id':start_id,'count':len(targets),'reason':reason,'note':note});c.commit();c.close();await publish({'type':'route.handoff','id':rid});return {'ok':True,'reassigned':len(targets)}
+
+# Unified station ownership: driver self-claim and secretary reassignment share
+# delivery_driver_assignments and route_handoffs, never rewrite signed stops.
+@app.get('/api/driver/claim-options')
+def driver_claim_options(req:Request):
+    s=driver_auth(req); c=db()
+    rows=[dict(x) for x in c.execute("""SELECT x.id delivery_id,dr.id daily_route_id,r.code route_code,b.name branch_name,b.stop_order,
+           x.status,COALESCE(a.driver_id,dr.driver_id) current_driver_id,d.name current_driver_name
+           FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id
+           JOIN routes r ON r.id=dr.route_id JOIN branches b ON b.id=x.branch_id
+           LEFT JOIN delivery_driver_assignments a ON a.delivery_id=x.id
+           LEFT JOIN drivers d ON d.id=COALESCE(a.driver_id,dr.driver_id)
+           WHERE x.service_date=? AND x.status IN ('WAITING_SECRETARY','WAITING_DRIVER')
+             AND x.document_original IS NULL AND x.outbound_original IS NULL
+             AND x.branch_signed_at IS NULL AND x.driver_confirmed_at IS NULL
+           ORDER BY CAST(r.code AS INTEGER),r.code,b.stop_order""",(today(),)).fetchall()]
+    c.close();return rows
+
+@app.post('/api/driver/claim-stations')
+async def driver_claim_stations(req:Request):
+    s=driver_auth(req);p=await req.json()
+    try: rid=int(p['daily_route_id']);start_id=int(p['start_delivery_id'])
+    except (KeyError,ValueError,TypeError): raise HTTPException(400,'請選擇路線與起始分館')
+    c=db()
+    try:
+        c.execute('BEGIN IMMEDIATE')
+        dr=c.execute('SELECT * FROM daily_routes WHERE id=? AND service_date=?',(rid,today())).fetchone()
+        start=c.execute('SELECT x.id,b.stop_order FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.id=? AND x.daily_route_id=?',(start_id,rid)).fetchone()
+        if not dr or not start: raise HTTPException(404,'找不到今日路線或分館')
+        if dr['secretary_signed_at']: raise HTTPException(409,'路線已完成總館簽核')
+        targets=c.execute("""SELECT x.*,COALESCE(a.driver_id,dr.driver_id) owner_id
+          FROM deliveries x JOIN branches b ON b.id=x.branch_id
+          JOIN daily_routes dr ON dr.id=x.daily_route_id
+          LEFT JOIN delivery_driver_assignments a ON a.delivery_id=x.id
+          WHERE x.daily_route_id=? AND b.stop_order>=? AND x.status<>'VOID'
+          ORDER BY b.stop_order""",(rid,start['stop_order'])).fetchall()
+        if not targets: raise HTTPException(409,'沒有可接手站點')
+        for x in targets:
+            if x['owner_id']==s['driver_id']: continue
+            if x['status'] not in ('WAITING_SECRETARY','WAITING_DRIVER') or x['document_original'] is not None or x['outbound_original'] is not None or x['branch_signed_at'] or x['driver_confirmed_at']:
+                raise HTTPException(409,'接手範圍包含已開始或已完成站點，請由總館處理交接')
+            existing=c.execute('SELECT 1 FROM delivery_driver_assignments WHERE delivery_id=?',(x['id'],)).fetchone()
+            if existing: raise HTTPException(409,'站點已由其他司機接手，請由總館重新指派')
+        changed=[x for x in targets if x['owner_id']!=s['driver_id']]
+        if not changed: raise HTTPException(409,'此範圍已由您負責')
+        stamp=now()
+        # Every reassignment uses the existing ownership and audit tables.
+        for x in changed:
+            cur=c.execute('INSERT INTO route_handoffs(service_date,daily_route_id,from_driver_id,to_driver_id,start_delivery_id,reason,note,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)',
+              (today(),rid,x['owner_id'],s['driver_id'],x['id'],'DRIVER_SELF_CLAIM','司機自主接手',None,stamp))
+            c.execute('INSERT INTO delivery_driver_assignments(delivery_id,driver_id,assigned_at,handoff_id) VALUES(?,?,?,?,?)',
+              (x['id'],s['driver_id'],stamp,cur.lastrowid))
+            audit(c,'DRIVER',s['driver_id'],'DRIVER','SELF_CLAIM_STATION','DELIVERY',x['id'],
+              before={'driver_id':x['owner_id']},after={'driver_id':s['driver_id'],'route_id':rid})
+        c.commit()
+    except Exception:
+        c.rollback();c.close();raise
+    c.close();await publish({'type':'route.handoff','id':rid})
+    return {'ok':True,'reassigned':len(changed)}
 
 @app.get('/api/driver/handoff-notices')
 def driver_handoff_notices(req:Request):
@@ -2430,13 +2495,15 @@ def driver_handoff_notices(req:Request):
 
 @app.get('/api/daily-routes/{rid}/handoff-options')
 def handoff_options(rid:int,req:Request):
-    require_user(req,['ADMIN']);c=db();stops=[dict(x) for x in c.execute("SELECT x.id,b.code,b.name,b.stop_order,x.status FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.daily_route_id=? AND x.status!='STOP_COMPLETED' ORDER BY b.stop_order",(rid,)).fetchall()];drivers=[dict(x) for x in c.execute('SELECT id,name FROM drivers WHERE active=1 ORDER BY name').fetchall()];c.close();return {'stops':stops,'drivers':drivers}
+    require_user(req,['ADMIN','SECRETARY']);c=db();stops=[dict(x) for x in c.execute("SELECT x.id,b.code,b.name,b.stop_order,x.status FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.daily_route_id=? AND x.status IN ('WAITING_SECRETARY','WAITING_DRIVER') ORDER BY b.stop_order",(rid,)).fetchall()];drivers=[dict(x) for x in c.execute('SELECT id,name FROM drivers WHERE active=1 ORDER BY name').fetchall()];c.close();return {'stops':stops,'drivers':drivers}
 
 @app.post('/api/driver/routes/{rid}/segment-sign')
 async def segment_sign(rid:int,req:Request):
     s=driver_auth(req);p=await req.json();sig=p.get('signature') or ''
     if not sig: raise HTTPException(400,'請先簽名')
-    c=db(); assigned=c.execute("SELECT COUNT(*) n,SUM(CASE WHEN x.status='STOP_COMPLETED' THEN 1 ELSE 0 END) done FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id LEFT JOIN delivery_driver_assignments a ON a.delivery_id=x.id WHERE dr.id=? AND COALESCE(a.driver_id,dr.driver_id)=?",(rid,s['driver_id'])).fetchone()
+    c=db(); assigned=c.execute("SELECT COUNT(*) n,SUM(CASE WHEN x.status IN ('STOP_COMPLETED','LATE_BRANCH_PENDING','ADMIN_CLOSED') THEN 1 ELSE 0 END) done FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id LEFT JOIN delivery_driver_assignments a ON a.delivery_id=x.id WHERE dr.id=? AND COALESCE(a.driver_id,dr.driver_id)=?",(rid,s['driver_id'])).fetchone()
     if not assigned or not assigned['n'] or assigned['done']<assigned['n']: c.close(); raise HTTPException(409,'您的配送區段尚未全部完成')
+    if is_report_locked(c): c.close(); raise HTTPException(409,'日報已鎖定')
+    if c.execute('SELECT 1 FROM route_segment_signatures WHERE service_date=? AND daily_route_id=? AND driver_id=?',(today(),rid,s['driver_id'])).fetchone(): c.close();raise HTTPException(409,'本區段已簽名，不可覆蓋')
     c.execute('INSERT INTO route_segment_signatures(service_date,daily_route_id,driver_id,signature,signed_at) VALUES(?,?,?,?,?) ON CONFLICT(service_date,daily_route_id,driver_id) DO UPDATE SET signature=excluded.signature,signed_at=excluded.signed_at',(today(),rid,s['driver_id'],sig,now()));audit(c,'DRIVER',s['driver_id'],'DRIVER','DRIVER_SEGMENT_SIGN','DAILY_ROUTE',rid);c.commit();c.close();return {'ok':True}
 
