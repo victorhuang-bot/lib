@@ -1077,6 +1077,39 @@ async def outbound(did:int,req:Request):
     if not x or x['driver_id']!=s['driver_id']:c.close();raise HTTPException(403)
     if x['status'] not in ('WAITING_DRIVER','WAITING_SECRETARY','WAITING_BRANCH'):c.close();raise HTTPException(409,'分館簽收後不可再修改送出數量')
     status='WAITING_BRANCH'; c.execute('UPDATE deliveries SET outbound_original=?,outbound_final=?,status=?,row_version=row_version+1 WHERE id=?',(qty,qty,status,did));audit(c,'DRIVER',s['driver_id'],'DRIVER','SET_OR_EDIT_OUTBOUND','DELIVERY',did,before={'qty':x['outbound_final']},after={'qty':qty});c.commit();c.close();await publish({'type':'delivery.updated','id':did});return {'ok':True}
+@app.patch('/api/driver/deliveries/{did}/inbound')
+async def driver_save_inbound(did:int,req:Request):
+    s=driver_auth(req)
+    p=await req.json()
+    raw=p.get('qty')
+    if isinstance(raw,bool) or raw is None or not str(raw).isdigit():
+        raise HTTPException(400,'請輸入非負整數箱數')
+    qty=int(raw)
+    if qty>1000000:
+        raise HTTPException(400,'箱數超出合理範圍')
+    c=db()
+    x=c.execute('''SELECT x.*,COALESCE(dda.driver_id,dr.driver_id) driver_id
+                   FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id
+                   LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id
+                   WHERE x.id=?''',(did,)).fetchone()
+    if not x or x['driver_id']!=s['driver_id']:
+        c.close();raise HTTPException(403,'沒有此站操作權限')
+    if x['service_date']!=today():
+        c.close();raise HTTPException(409,'僅可修改今日配送站點')
+    if x['status']!='LATE_BRANCH_PENDING' or x['branch_signed_at'] or x['branch_signature']:
+        c.close();raise HTTPException(409,'僅可在分館尚未補簽時儲存圖書收回數量')
+    if is_report_locked(c,x['service_date']):
+        c.close();raise HTTPException(409,'該日日報已鎖定')
+    c.execute('UPDATE deliveries SET inbound_final=?,row_version=row_version+1 WHERE id=? AND status=? AND branch_signed_at IS NULL AND branch_signature IS NULL',
+              (qty,did,'LATE_BRANCH_PENDING'))
+    if c.total_changes==0:
+        c.close();raise HTTPException(409,'此站已完成簽收，請重新整理')
+    audit(c,'DRIVER',s['driver_id'],'DRIVER','DRIVER_SET_LATE_INBOUND','DELIVERY',did,
+          before={'inbound':x['inbound_final']},after={'inbound':qty,'service_date':x['service_date']})
+    c.commit();c.close()
+    await publish({'type':'delivery.updated','id':did})
+    return {'ok':True,'qty':qty,'status':'LATE_BRANCH_PENDING'}
+
 @app.post('/api/driver/deliveries/{did}/confirm')
 async def confirm(did:int,req:Request):
     s=driver_auth(req);c=db();
@@ -1477,6 +1510,7 @@ async def branch_sign(req:Request):
 
     audit(
         c,'BRANCH',sess['branch_id'],'BRANCH',action,'DELIVERY',x['id'],
+        before={'document':x['document_final'],'document_return':x['document_return_final'],'outbound':x['outbound_final'],'inbound':x['inbound_final']},
         after={
             'service_date':x['service_date'],
             'document':document,
