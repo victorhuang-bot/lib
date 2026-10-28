@@ -2491,10 +2491,12 @@ def driver_claim_options(req:Request):
            JOIN routes r ON r.id=dr.route_id JOIN branches b ON b.id=x.branch_id
            LEFT JOIN delivery_driver_assignments a ON a.delivery_id=x.id
            LEFT JOIN drivers d ON d.id=COALESCE(a.driver_id,dr.driver_id)
-           WHERE x.service_date=? AND x.status IN ('WAITING_SECRETARY','WAITING_DRIVER')
-             AND x.document_original IS NULL AND x.outbound_original IS NULL
-             AND x.branch_signed_at IS NULL AND x.driver_confirmed_at IS NULL
-           ORDER BY CAST(r.code AS INTEGER),r.code,b.stop_order""",(today(),)).fetchall()]
+           WHERE x.service_date=? AND dr.secretary_signed_at IS NULL
+             AND x.status IN ('WAITING_SECRETARY','WAITING_DRIVER')
+             AND x.outbound_original IS NULL AND x.branch_signed_at IS NULL
+             AND x.driver_confirmed_at IS NULL AND a.delivery_id IS NULL
+             AND COALESCE(a.driver_id,dr.driver_id)<>?
+           ORDER BY CAST(r.code AS INTEGER),r.code,b.stop_order""",(today(),s['driver_id'])).fetchall()]
     c.close();return rows
 
 @app.post('/api/driver/claim-stations')
@@ -2516,14 +2518,17 @@ async def driver_claim_stations(req:Request):
           WHERE x.daily_route_id=? AND b.stop_order>=? AND x.status<>'VOID'
           ORDER BY b.stop_order""",(rid,start['stop_order'])).fetchall()
         if not targets: raise HTTPException(409,'沒有可接手站點')
+        # Skip completed/in-progress/already-claimed stops rather than rejecting
+        # an otherwise valid takeover of later, untouched stops.
+        changed=[]
         for x in targets:
             if x['owner_id']==s['driver_id']: continue
-            if x['status'] not in ('WAITING_SECRETARY','WAITING_DRIVER') or x['document_original'] is not None or x['outbound_original'] is not None or x['branch_signed_at'] or x['driver_confirmed_at']:
-                raise HTTPException(409,'接手範圍包含已開始或已完成站點，請由總館處理交接')
-            existing=c.execute('SELECT 1 FROM delivery_driver_assignments WHERE delivery_id=?',(x['id'],)).fetchone()
-            if existing: raise HTTPException(409,'站點已由其他司機接手，請由總館重新指派')
-        changed=[x for x in targets if x['owner_id']!=s['driver_id']]
-        if not changed: raise HTTPException(409,'此範圍已由您負責')
+            if x['status'] not in ('WAITING_SECRETARY','WAITING_DRIVER') or x['outbound_original'] is not None or x['branch_signed_at'] or x['driver_confirmed_at']:
+                continue
+            if c.execute('SELECT 1 FROM delivery_driver_assignments WHERE delivery_id=?',(x['id'],)).fetchone():
+                continue
+            changed.append(x)
+        if not changed: raise HTTPException(409,'所選起點之後沒有可接手的未開始站點；已完成、配送中或已指派支援司機的站點不可搶接')
         stamp=now()
         # Every reassignment uses the existing ownership and audit tables.
         for x in changed:
