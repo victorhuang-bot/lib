@@ -53,14 +53,14 @@ async function unlockDriver(){
 async function showClaimPicker(){
   try{
     const rows=await dapi('/api/driver/claim-options');
-    if(!rows.length){alert('目前沒有可自主接手的未開始站點');return}
+    if(!rows.length){alert('今日沒有符合自主接手條件的站點。已完成、配送中、總館已簽核或已由其他支援司機接手的站點不會列出。若仍需交接，請總館秘書指派。');return}
     const routes=[...new Set(rows.map(x=>x.route_code))];
     const rc=prompt('請輸入要接手的路線：\\n'+routes.map(x=>x+' 線').join('、'),routes[0]);if(rc===null)return;
     const stops=rows.filter(x=>String(x.route_code)===rc.trim());
     if(!stops.length)throw new Error('沒有此路線或可接手站點');
     const choice=prompt('從哪個分館開始接手？輸入編號：\\n'+stops.map((x,i)=>(i+1)+'. '+x.branch_name+'（目前：'+(x.current_driver_name||'未指派')+'）').join('\\n'),'1');
     if(choice===null)return;const stop=stops[Number(choice)-1];if(!stop)throw new Error('分館編號錯誤');
-    if(!confirm('確認從 '+stop.branch_name+' 開始接手 '+rc+' 線後續未開始站點？\\n已開始、已完成或其他司機接手的站點不會被搶接。'))return;
+    if(!confirm('確認從 '+stop.branch_name+' 開始接手 '+rc+' 線後續可接手站點？\\n已開始、已完成或其他支援司機已接手的站點會自動略過。'))return;
     const r=await dapi('/api/driver/claim-stations',{method:'POST',body:JSON.stringify({daily_route_id:stop.daily_route_id,start_delivery_id:stop.delivery_id})});
     alert('成功接手 '+r.reassigned+' 站');selectedRoute=rc.trim();await load()
   }catch(e){alert(e.message)}
