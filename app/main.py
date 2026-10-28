@@ -2534,7 +2534,7 @@ async def driver_claim_stations(req:Request):
         for x in changed:
             cur=c.execute('INSERT INTO route_handoffs(service_date,daily_route_id,from_driver_id,to_driver_id,start_delivery_id,reason,note,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)',
               (today(),rid,x['owner_id'],s['driver_id'],x['id'],'DRIVER_SELF_CLAIM','司機自主接手',None,stamp))
-            c.execute('INSERT INTO delivery_driver_assignments(delivery_id,driver_id,assigned_at,handoff_id) VALUES(?,?,?,?,?)',
+            c.execute('INSERT INTO delivery_driver_assignments(delivery_id,driver_id,assigned_at,handoff_id) VALUES(?,?,?,?)',
               (x['id'],s['driver_id'],stamp,cur.lastrowid))
             audit(c,'DRIVER',s['driver_id'],'DRIVER','SELF_CLAIM_STATION','DELIVERY',x['id'],
               before={'driver_id':x['owner_id']},after={'driver_id':s['driver_id'],'route_id':rid})
