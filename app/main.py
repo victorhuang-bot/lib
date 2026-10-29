@@ -1621,7 +1621,7 @@ def ensure_prefill_delivery(c, service_date, branch_id):
 
 @app.get('/api/secretary/documents/prefill-v4')
 def document_prefill_v4(req:Request, service_date:str|None=None):
-    require_user(req,['SECRETARY'])
+    require_user(req,['ADMIN','SECRETARY'])
     d=service_date or next_service_date()
     try:
         selected=date.fromisoformat(d)
@@ -1736,7 +1736,7 @@ def _prefill_save_db(user_id,user_role,d,bid,qty):
 
 @app.post('/api/secretary/documents/prefill-save')
 async def document_prefill_save(req:Request):
-    u=require_user(req,['SECRETARY']); p=await req.json(); d=str(p.get('service_date') or '')
+    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); d=str(p.get('service_date') or '')
     try: date.fromisoformat(d); bid=int(p.get('branch_id')); qty=int(p.get('qty'))
     except: raise HTTPException(400,'日期、分館或公文數量格式錯誤')
     if qty<0: raise HTTPException(400,'公文數量不可小於 0')
@@ -1769,14 +1769,14 @@ def _prefill_batch_db(user_id,user_role,d,items):
 
 @app.post('/api/secretary/documents/prefill-batch')
 async def document_prefill_batch(req:Request):
-    u=require_user(req,['SECRETARY']); p=await req.json(); d=str(p.get('service_date') or ''); items=p.get('items') or []
+    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); d=str(p.get('service_date') or ''); items=p.get('items') or []
     try: date.fromisoformat(d)
     except: raise HTTPException(400,'日期格式錯誤')
     return await asyncio.to_thread(_prefill_batch_db,u['id'],u['role'],d,items)
 
 @app.patch('/api/secretary/deliveries/{did}/document')
 async def set_doc(did:int,req:Request):
-    u=require_user(req,['SECRETARY']); p=await req.json()
+    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json()
     try: qty=int(p.get('qty'))
     except: raise HTTPException(400,'公文數量必須是整數')
     if qty < 0: raise HTTPException(400,'公文數量不可小於 0')
@@ -1794,7 +1794,7 @@ async def set_doc(did:int,req:Request):
 
 @app.post('/api/secretary/documents/zero-all')
 async def zero_all(req:Request, service_date:str|None=None):
-    u=require_user(req,['SECRETARY'])
+    u=require_user(req,['ADMIN','SECRETARY'])
     d=service_date or today()
     try: date.fromisoformat(d)
     except: raise HTTPException(400,'日期格式錯誤')
@@ -1813,7 +1813,7 @@ async def zero_all(req:Request, service_date:str|None=None):
 
 @app.post('/api/secretary/documents/batch')
 async def batch_documents(req:Request):
-    u=require_user(req,['SECRETARY']); p=await req.json(); items=p.get('items') or []
+    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); items=p.get('items') or []
     if not isinstance(items,list) or not items: raise HTTPException(400,'沒有可存檔的公文數量')
     d=p.get('service_date') or today()
     try: date.fromisoformat(d)
