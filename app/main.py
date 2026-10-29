@@ -1431,7 +1431,7 @@ def branch_session_history(req:Request, month:str|None=None, pending_only:bool=F
     year,mon=map(int,current.split('-'))
     previous=f'{year-1 if mon==1 else year:04d}-{12 if mon==1 else mon-1:02d}'
     selected=(month or current).strip()
-    allowed_months={(date(year-(mon-1-i)//12, (mon-1-i)%12+1, 1)).strftime('%Y-%m') for i in range(12)}
+    allowed_months={(date((year*12+mon-1-i)//12, (year*12+mon-1-i)%12+1, 1)).strftime('%Y-%m') for i in range(12)}
     if selected not in allowed_months:
         raise HTTPException(400,'僅支援最近 12 個月')
     # Compare YYYY-MM lexical ranges; keep all rows for the branch, excluding void records.
