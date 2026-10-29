@@ -125,7 +125,7 @@
     </div>
     <button class="btn alt" onclick="loadNextDayDocs()">重新整理所選日期清單</button>
   </div>
-  <div class="notice" style="margin:12px 0">管理者與總館秘書共用公文數量；今日「分館即時狀態」會持續顯示，不會因為預填其他日期公文而切換日期。</div>
+  <div class="notice" style="margin:12px 0">管理者與總館秘書共用公文－總館送出數量；今日「分館即時狀態」會持續顯示，不會因為預填其他日期公文而切換日期。</div>
   <div id="nextDayClosure" class="warn hidden"></div>
   <div id="nextDayDocTools" class="toolbar">
     <button class="btn" onclick="saveAllNextDocs()">所選日期公文全部確認存檔</button>
@@ -134,7 +134,7 @@
   </div>
   <div style="overflow:auto">
     <table>
-      <thead><tr><th>路線</th><th>預設/已指派司機</th><th>分館代碼</th><th>分館</th><th>公文數量</th></tr></thead>
+      <thead><tr><th>路線</th><th>預設/已指派司機</th><th>分館代碼</th><th>分館</th><th>公文－總館送出數量</th></tr></thead>
       <tbody id="nextDayDocsBody"></tbody>
     </table>
   </div>
@@ -268,7 +268,7 @@ async function loadDash(){
   }
 }
 function selectRoute(code){selectedRoute=selectedRoute===code?'':code;const label=document.querySelector('#routeFilterLabel');if(label)label.textContent=selectedRoute?`目前：路線${selectedRoute}（再點一次取消）`:'目前：全部路線';loadDash();loadDeliveries()}
-async function loadDeliveries(){let q='?';const f=document.querySelector('#filter'),se=document.querySelector('#search');if(f?.value)q+='status='+f.value+'&';if(selectedRoute)q+='route='+encodeURIComponent(selectedRoute)+'&';if(se?.value)q+='search='+encodeURIComponent(se.value);let x=await api('/api/dashboard/deliveries'+q),body=document.querySelector('#delivs');body.innerHTML=x.map((d,i)=>{const routeNo=Number(d.route_code)||0;const routeStart=i===0||String(x[i-1].route_code)!==String(d.route_code);const routeClass=`${routeNo%2?'route-odd':'route-even'} ${routeStart?'route-start':''}`;const routeCell=`<span class="route-badge-v19212">${d.route_code}線</span>${routeStart?'<span class="route-section-note">路線分隔</span>':''}`;const value=d.document_final??'';let doc;if(['ADMIN','SECRETARY'].includes(me.role)){doc=`<div class="row"><input type="number" min="0" value="${value}" style="width:88px" id="doc${d.id}"><button class="btn alt small" onclick="setDoc(${d.id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">存檔</button></div><span class="muted">總館路線簽核前皆可修改</span>`}else{doc=`<b>${value===''?'—':value}</b><br><span class="muted">公文數量</span>`}const itemBtn=me.role==='SECRETARY'?`<button class="btn alt small" onclick="editItems(${d.id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">隨車物品</button>`:'';const itemSummary=me.role==='SECRETARY'?`<div id="itemSummary${d.id}" class="muted" style="margin-top:6px;font-size:.9em">隨車物品：未填</div>`:'';const voidBtn=me.role==='ADMIN'&& !d.branch_signed_at && !d.driver_confirmed_at && d.status!=='VOID'?`<button class="btn danger small" onclick="voidDelivery(${d.id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">作廢</button>`:'';return `<tr class="${routeClass}"><td>${routeCell}</td><td>${d.branch_name}</td><td class="status">${statusText(d.status)}</td><td>${d.driver_name}</td><td>${fmtDateTime(d.driver_confirmed_at||d.branch_signed_at)}</td><td>${doc}<div style="margin-top:6px">${itemBtn}</div>${itemSummary}</td><td>${voidBtn||'—'}</td></tr>`}).join('');if(me.role==='SECRETARY')loadVisibleItemSummaries(ds)}
+async function loadDeliveries(){let q='?';const f=document.querySelector('#filter'),se=document.querySelector('#search');if(f?.value)q+='status='+f.value+'&';if(selectedRoute)q+='route='+encodeURIComponent(selectedRoute)+'&';if(se?.value)q+='search='+encodeURIComponent(se.value);let x=await api('/api/dashboard/deliveries'+q),body=document.querySelector('#delivs');body.innerHTML=x.map((d,i)=>{const routeNo=Number(d.route_code)||0;const routeStart=i===0||String(x[i-1].route_code)!==String(d.route_code);const routeClass=`${routeNo%2?'route-odd':'route-even'} ${routeStart?'route-start':''}`;const routeCell=`<span class="route-badge-v19212">${d.route_code}線</span>${routeStart?'<span class="route-section-note">路線分隔</span>':''}`;const value=d.document_final??'';let doc;if(['ADMIN','SECRETARY'].includes(me.role)){doc=`<div class="row"><input type="number" min="0" value="${value}" style="width:88px" id="doc${d.id}"><button class="btn alt small" onclick="setDoc(${d.id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">存檔</button></div><span class="muted">總館路線簽核前皆可修改</span>`}else{doc=`<b>${value===''?'—':value}</b><br><span class="muted">公文－總館送出數量</span>`}const itemBtn=me.role==='SECRETARY'?`<button class="btn alt small" onclick="editItems(${d.id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">隨車物品</button>`:'';const itemSummary=me.role==='SECRETARY'?`<div id="itemSummary${d.id}" class="muted" style="margin-top:6px;font-size:.9em">隨車物品：未填</div>`:'';const voidBtn=me.role==='ADMIN'&& !d.branch_signed_at && !d.driver_confirmed_at && d.status!=='VOID'?`<button class="btn danger small" onclick="voidDelivery(${d.id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">作廢</button>`:'';return `<tr class="${routeClass}"><td>${routeCell}</td><td>${d.branch_name}</td><td class="status">${statusText(d.status)}</td><td>${d.driver_name}</td><td>${fmtDateTime(d.driver_confirmed_at||d.branch_signed_at)}</td><td>${doc}<div style="margin-top:6px">${itemBtn}</div>${itemSummary}</td><td>${voidBtn||'—'}</td></tr>`}).join('');if(me.role==='SECRETARY')loadVisibleItemSummaries(ds)}
 async function loadVisibleItemSummaries(ds){
   await Promise.all((ds||[]).map(async d=>{
     const el=document.querySelector('#itemSummary'+d.id);if(!el)return;
@@ -286,8 +286,8 @@ function formatCarriedItemSummary(rows){
     return `${name} × ${x.quantity}`;
   }).join('　');
 }
-async function setDoc(id,branchName){try{const el=document.querySelector('#doc'+id);if(!el||el.value==='')throw new Error('請輸入公文數量');const qty=Number(el.value);if(qty<0||!Number.isInteger(qty))throw new Error('公文數量請輸入 0 以上整數');if(!confirm(`${branchName}\n確認公文數量為 ${qty}？`))return;let r=await api('/api/secretary/deliveries/'+id+'/document',{method:'PATCH',body:JSON.stringify({qty})});alert(`${branchName}\n公文－總館送出數量 ${r.qty} 已儲存。\n該路線完成總館簽核前仍可修改。`);await loadAll()}catch(e){alert(e.message);await loadAll()}}
-async function saveAllDocs(){try{let items=[];document.querySelectorAll('#delivs input[id^="doc"]').forEach(el=>{if(el.value!==''){const qty=Number(el.value);if(!Number.isInteger(qty)||qty<0)throw new Error('公文數量請輸入 0 以上整數');items.push({id:Number(el.id.slice(3)),qty})}});if(!items.length)throw new Error('目前沒有可存檔的公文數量');const total=items.reduce((a,b)=>a+b.qty,0);if(!confirm(`確認一次存檔 ${items.length} 個分館？\n公文總數：${total}`))return;let r=await api('/api/secretary/documents/batch',{method:'POST',body:JSON.stringify({items})});alert(`已一次存檔 ${r.changed} 個分館。\n公文總數：${r.total}`);await loadAll()}catch(e){alert(e.message);await loadAll()}}
+async function setDoc(id,branchName){try{const el=document.querySelector('#doc'+id);if(!el||el.value==='')throw new Error('請輸入公文－總館送出數量');const qty=Number(el.value);if(qty<0||!Number.isInteger(qty))throw new Error('公文－總館送出數量請輸入 0 以上整數');if(!confirm(`${branchName}\n確認公文－總館送出數量為 ${qty}？`))return;let r=await api('/api/secretary/deliveries/'+id+'/document',{method:'PATCH',body:JSON.stringify({qty})});alert(`${branchName}\n公文－總館送出數量 ${r.qty} 已儲存。\n該路線完成總館簽核前仍可修改。`);await loadAll()}catch(e){alert(e.message);await loadAll()}}
+async function saveAllDocs(){try{let items=[];document.querySelectorAll('#delivs input[id^="doc"]').forEach(el=>{if(el.value!==''){const qty=Number(el.value);if(!Number.isInteger(qty)||qty<0)throw new Error('公文－總館送出數量請輸入 0 以上整數');items.push({id:Number(el.id.slice(3)),qty})}});if(!items.length)throw new Error('目前沒有可存檔的公文－總館送出數量');const total=items.reduce((a,b)=>a+b.qty,0);if(!confirm(`確認一次存檔 ${items.length} 個分館？\n公文總數：${total}`))return;let r=await api('/api/secretary/documents/batch',{method:'POST',body:JSON.stringify({items})});alert(`已一次存檔 ${r.changed} 個分館。\n公文總數：${r.total}`);await loadAll()}catch(e){alert(e.message);await loadAll()}}
 async function zeroAll(){if(confirm('將今日尚未完成總館路線簽核的公文－總館送出全部設為 0？')){try{let r=await api('/api/secretary/documents/zero-all',{method:'POST'});alert(`已將 ${r.changed} 個可編輯分館的公文－總館送出設為 0。`);await loadAll()}catch(e){alert(e.message)}}}
 let nextDocDate='';
 function localDateISO(offsetDays=0){
@@ -351,10 +351,10 @@ async function loadPrefillDocs(serviceDate){
 async function setNextDoc(branchId,branchName){
   try{
     const el=document.querySelector('#nextdocb'+branchId);
-    if(!el||el.value==='')throw new Error('請輸入公文數量');
+    if(!el||el.value==='')throw new Error('請輸入公文－總館送出數量');
     const qty=Number(el.value);
-    if(!Number.isInteger(qty)||qty<0)throw new Error('公文數量請輸入 0 以上整數');
-    if(!confirm(`${nextDocDate}\n${branchName}\n確認公文數量為 ${qty}？`))return;
+    if(!Number.isInteger(qty)||qty<0)throw new Error('公文－總館送出數量請輸入 0 以上整數');
+    if(!confirm(`${nextDocDate}\n${branchName}\n確認公文－總館送出數量為 ${qty}？`))return;
     await api('/api/secretary/documents/prefill-save',{method:'POST',body:JSON.stringify({service_date:nextDocDate,branch_id:branchId,qty})});
     alert(`${branchName}\n${nextDocDate} 公文 ${qty} 已儲存。`);
     await loadNextDayDocs();
@@ -366,11 +366,11 @@ async function saveAllNextDocs(){
     document.querySelectorAll('#nextDayDocsBody input[id^="nextdocb"]').forEach(el=>{
       if(el.value!==''){
         const qty=Number(el.value);
-        if(!Number.isInteger(qty)||qty<0)throw new Error('公文數量請輸入 0 以上整數');
+        if(!Number.isInteger(qty)||qty<0)throw new Error('公文－總館送出數量請輸入 0 以上整數');
         items.push({branch_id:Number(el.id.slice(8)),qty});
       }
     });
-    if(!items.length)throw new Error('目前沒有可存檔的明日公文數量');
+    if(!items.length)throw new Error('目前沒有可存檔的明日公文－總館送出數量');
     const total=items.reduce((a,b)=>a+b.qty,0);
     if(!confirm(`${nextDocDate}\n確認一次存檔 ${items.length} 個分館？\n公文總數：${total}`))return;
     const r=await api('/api/secretary/documents/prefill-batch',{method:'POST',body:JSON.stringify({service_date:nextDocDate,items})});

@@ -29,7 +29,12 @@ DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
 DB = DATA_DIR / 'app.db'
 DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
 USE_POSTGRES = bool(DATABASE_URL)
-APP_VERSION='V19.2.27'
+APP_VERSION='V19.4-dev'
+
+QUANTITY_LABELS = {
+    '公文送出':'公文－總館送出', '公文收回':'公文－分館送出',
+    '圖書送出':'圖書－倉庫送出', '圖書收回':'圖書－分館送出',
+}
 
 _PREFILL_CACHE = {}
 _PREFILL_CACHE_TTL_SECONDS = 45
@@ -198,7 +203,7 @@ class _PgCompat:
         identity_tables={'users','password_resets','drivers','driver_devices','driver_activation_tokens',
           'branches','daily_routes','deliveries','corrections','audit_logs','daily_reports',
           'email_recipients','email_logs','delivery_exceptions','global_closures','route_handoffs',
-          'delivery_driver_assignments','route_segment_signatures','routes'}
+          'delivery_driver_assignments','route_segment_signatures','routes','branch_signers'}
         if m and m.group(1).lower() in identity_tables and ' RETURNING ' not in st.upper():
             st=st.rstrip().rstrip(';')+' RETURNING id'
         cur.execute(self._q(st), params)
@@ -356,6 +361,7 @@ def init_db():
             # raw bootstrap token only for demo retrieval is derived by rotation endpoint; initial QR regenerated below through helper table impossible, so store demo token in audit
             c.execute('INSERT INTO audit_logs(actor_type,role,action,entity_type,entity_id,after_json,created_at) VALUES(?,?,?,?,?,?,?)',('SYSTEM','SYSTEM','SEED_BRANCH_TOKEN','BRANCH',str(i),json.dumps({'token':tok}),now()))
         c.commit()
+    migrate_branch_signers(c)
     migrate_corrections_for_repeat_requests(c)
     migrate_email_logs_gmail_api(c)
     migrate_route_secretary_signatures(c)
@@ -373,6 +379,13 @@ def init_db():
     ensure_today(c)
     reset_test_day_once(c)
     c.close()
+
+def migrate_branch_signers(c):
+    # Serialize this additive startup migration across PostgreSQL web instances.
+    if USE_POSTGRES: c.execute('SELECT pg_advisory_xact_lock(194001)')
+    c.executescript("""CREATE TABLE IF NOT EXISTS branch_signers(id INTEGER PRIMARY KEY, branch_id BIGINT NOT NULL REFERENCES branches(id), name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(branch_id,name));""")
+    c.commit()
+
 
 def migrate_email_logs_gmail_api(c):
     cols=[
@@ -398,6 +411,12 @@ def migrate_route_secretary_signatures(c):
     If a schema change is genuinely needed, allow DDL more time than the normal
     10s query timeout while keeping lock acquisition bounded.
     """
+    if not USE_POSTGRES:
+        columns={r['name'] for r in c.execute('PRAGMA table_info(daily_routes)').fetchall()}
+        for name in ('secretary_signature','secretary_signed_at'):
+            if name not in columns: c.execute('ALTER TABLE daily_routes ADD COLUMN '+name+' TEXT')
+        c.commit()
+        return
     try:
         rows=c.execute(
             """SELECT column_name
@@ -1097,7 +1116,7 @@ async def driver_save_inbound(did:int,req:Request):
     if x['service_date']!=today():
         c.close();raise HTTPException(409,'僅可修改今日配送站點')
     if x['status']!='LATE_BRANCH_PENDING' or x['branch_signed_at'] or x['branch_signature']:
-        c.close();raise HTTPException(409,'僅可在分館尚未補簽時儲存圖書收回數量')
+        c.close();raise HTTPException(409,'僅可在分館尚未補簽時儲存圖書－分館送出數量')
     if is_report_locked(c,x['service_date']):
         c.close();raise HTTPException(409,'該日日報已鎖定')
     cur=c.execute('UPDATE deliveries SET inbound_final=?,row_version=row_version+1 WHERE id=? AND status=? AND branch_signed_at IS NULL AND branch_signature IS NULL',
@@ -1374,15 +1393,13 @@ async def branch_desktop_login(req:Request):
         x=c.execute("""SELECT * FROM deliveries WHERE branch_id=? AND status='LATE_BRANCH_PENDING'
                          AND branch_signed_at IS NULL AND branch_signature IS NULL
                          ORDER BY service_date DESC,id DESC LIMIT 1""",(b['id'],)).fetchone()
-    if not x:
-        c.close(); raise HTTPException(404,'目前沒有待簽收配送')
 
     raw=secrets.token_urlsafe(32)
     c.execute('DELETE FROM branch_sessions WHERE branch_id=?',(b['id'],))
     c.execute('INSERT INTO branch_sessions(token_hash,branch_id,delivery_id,expires_at) VALUES(?,?,?,?)',
-              (thash(raw),b['id'],x['id'],future_iso(hours=12)))
+              (thash(raw),b['id'],x['id'] if x else None,future_iso(hours=12)))
     c.commit(); c.close()
-    return {'session':raw,'branch':b['name'],'branch_code':b['code'],'delivery_id':x['id'],'service_date':x['service_date']}
+    return {'session':raw,'branch':b['name'],'branch_code':b['code'],'delivery_id':x['id'] if x else None,'service_date':x['service_date'] if x else None}
 
 @app.post('/api/branch-session/verify')
 async def branch_verify(req:Request):
@@ -1393,11 +1410,10 @@ async def branch_verify(req:Request):
         x=c.execute("""SELECT * FROM deliveries WHERE branch_id=? AND status='LATE_BRANCH_PENDING'
                          AND branch_signed_at IS NULL AND branch_signature IS NULL
                          ORDER BY service_date DESC,id DESC LIMIT 1""",(b['id'],)).fetchone()
-    if not x:c.close();raise HTTPException(404,'目前沒有待簽收或待補簽的配送任務')
-    raw=secrets.token_urlsafe(32);c.execute('INSERT INTO branch_sessions(token_hash,branch_id,delivery_id,expires_at) VALUES(?,?,?,?)',(thash(raw),b['id'],x['id'],future_iso(minutes=30)));c.commit()
-    is_historical_late=(x['status']=='LATE_BRANCH_PENDING' and x['service_date']<today())
-    result={'session':raw,'branch':b['name'],'service_date':x['service_date'],
-            'late_pending':x['status']=='LATE_BRANCH_PENDING',
+    raw=secrets.token_urlsafe(32);c.execute('INSERT INTO branch_sessions(token_hash,branch_id,delivery_id,expires_at) VALUES(?,?,?,?)',(thash(raw),b['id'],x['id'] if x else None,future_iso(minutes=30)));c.commit()
+    is_historical_late=bool(x and x['status']=='LATE_BRANCH_PENDING' and x['service_date']<today())
+    result={'session':raw,'branch':b['name'],'service_date':x['service_date'] if x else None,
+            'late_pending':bool(x and x['status']=='LATE_BRANCH_PENDING'),
             'historical_late_pending':is_historical_late}
     c.close()
     return result
@@ -1406,9 +1422,97 @@ def branch_auth(req):
     c=db();r=c.execute('SELECT * FROM branch_sessions WHERE token_hash=? AND expires_at>?',(thash(raw),now())).fetchone();c.close();
     if not r:raise HTTPException(401,'BRANCH_SESSION_EXPIRED')
     return dict(r)
+
+def _signer_name(value):
+    if not isinstance(value,str):
+        raise HTTPException(400,'簽收人姓名必須是文字')
+    name=' '.join(value.split())
+    if not name or len(name)>80 or any(ord(ch)<32 for ch in name):
+        raise HTTPException(400,'請輸入 1～80 字的簽收人姓名')
+    return name
+
+
+def _signer_branch(c,session):
+    if not c.execute('SELECT id FROM branches WHERE id=? AND active=1',(session['branch_id'],)).fetchone():
+        raise HTTPException(403,'分館已停用')
+
+
+@app.get('/api/branch-session/signers')
+def branch_signers(req:Request, include_inactive:bool=False):
+    session=branch_auth(req); c=db()
+    try:
+        _signer_branch(c,session)
+        sql='SELECT id,name,active,created_at,updated_at FROM branch_signers WHERE branch_id=?'
+        if not include_inactive: sql+=' AND active=1'
+        return [dict(row) for row in c.execute(sql+' ORDER BY active DESC,name,id',(session['branch_id'],)).fetchall()]
+    finally: c.close()
+
+
+@app.post('/api/branch-session/signers')
+async def add_branch_signer(req:Request):
+    session=branch_auth(req); payload=await req.json()
+    if not isinstance(payload,dict) or set(payload)!={'name'}:
+        raise HTTPException(400,'僅可提供簽收人姓名')
+    name=_signer_name(payload['name']); c=db()
+    try:
+        _signer_branch(c,session)
+        timestamp=now()
+        cur=c.execute('INSERT INTO branch_signers(branch_id,name,active,created_at,updated_at) VALUES(?,?,1,?,?) ON CONFLICT(branch_id,name) DO NOTHING',(session['branch_id'],name,timestamp,timestamp))
+        if cur.rowcount==0: raise HTTPException(409,'此分館已有同名簽收人，請查看有效或已停用名單')
+        signer_id=cur.lastrowid
+        audit(c,'BRANCH',session['branch_id'],'BRANCH','ADD_BRANCH_SIGNER','BRANCH_SIGNER',signer_id,after={'name':name,'active':1})
+        c.commit()
+        return {'id':signer_id,'name':name,'active':1}
+    except Exception:
+        c.rollback(); raise
+    finally: c.close()
+
+
+@app.patch('/api/branch-session/signers/{signer_id}')
+async def update_branch_signer(req:Request,signer_id:int):
+    session=branch_auth(req); payload=await req.json()
+    if not isinstance(payload,dict) or not payload or set(payload)-{'name','active'}:
+        raise HTTPException(400,'僅可修改姓名及啟用狀態')
+    name=_signer_name(payload['name']) if 'name' in payload else None
+    if 'active' in payload and not isinstance(payload['active'],bool):
+        raise HTTPException(400,'啟用狀態必須是布林值')
+    c=db()
+    try:
+        _signer_branch(c,session)
+        row=c.execute('SELECT * FROM branch_signers WHERE id=? AND branch_id=?',(signer_id,session['branch_id'])).fetchone()
+        if not row: raise HTTPException(404,'找不到本站簽收人')
+        # Update only requested columns; concurrent renames cannot undo a deactivation.
+        columns=[]; values=[]
+        if name is not None: columns.append('name=?'); values.append(name)
+        if 'active' in payload: columns.append('active=?'); values.append(int(payload['active']))
+        columns.append('updated_at=?'); values.append(now())
+        values.extend([signer_id,session['branch_id']])
+        try:
+            c.execute('UPDATE branch_signers SET '+','.join(columns)+' WHERE id=? AND branch_id=?',values)
+        except Exception as error:
+            if isinstance(error,sqlite3.IntegrityError) or (psycopg and isinstance(error,psycopg.errors.UniqueViolation)):
+                raise HTTPException(409,'此分館已有同名簽收人') from error
+            raise
+        after=c.execute('SELECT id,name,active,created_at,updated_at FROM branch_signers WHERE id=? AND branch_id=?',(signer_id,session['branch_id'])).fetchone()
+        audit(c,'BRANCH',session['branch_id'],'BRANCH','UPDATE_BRANCH_SIGNER','BRANCH_SIGNER',signer_id,before={'name':row['name'],'active':row['active']},after={'name':after['name'],'active':after['active']})
+        c.commit(); return dict(after)
+    except Exception:
+        c.rollback(); raise
+    finally: c.close()
+
 @app.get('/api/branch-session/today')
 def branch_today(req:Request):
-    s=branch_auth(req);c=db();x=c.execute('''SELECT x.*,b.name branch_name FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.id=? AND x.branch_id=?''',(s['delivery_id'],s['branch_id'])).fetchone();corr=c.execute("SELECT * FROM corrections WHERE delivery_id=? ORDER BY CASE WHEN status='PENDING' THEN 0 ELSE 1 END,id DESC LIMIT 1",(x['id'],)).fetchone();items=[dict(r) for r in c.execute("SELECT item_type,item_name,quantity FROM delivery_items WHERE delivery_id=? ORDER BY id",(x['id'],)).fetchall()];c.close();out=dict(x);out['correction']=dict(corr) if corr else None;out['items']=items;return out
+    s=branch_auth(req); c=db()
+    try:
+        x=c.execute('SELECT x.*,b.name branch_name FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.id=? AND x.branch_id=?',(s['delivery_id'],s['branch_id'])).fetchone()
+        if not x:
+            branch=c.execute('SELECT name FROM branches WHERE id=? AND active=1',(s['branch_id'],)).fetchone()
+            if not branch: raise HTTPException(403,'分館已停用')
+            return {'id':None,'branch_name':branch['name'],'status':'NO_DELIVERY','service_date':None}
+        corr=c.execute("SELECT * FROM corrections WHERE delivery_id=? ORDER BY CASE WHEN status='PENDING' THEN 0 ELSE 1 END,id DESC LIMIT 1",(x['id'],)).fetchone()
+        items=[dict(r) for r in c.execute('SELECT item_type,item_name,quantity FROM delivery_items WHERE delivery_id=? ORDER BY id',(x['id'],)).fetchall()]
+        out=dict(x); out['correction']=dict(corr) if corr else None; out['items']=items; return out
+    finally: c.close()
 @app.get('/api/branch-session/tasks')
 def branch_session_tasks(req:Request):
     sess=branch_auth(req)
@@ -1582,8 +1686,8 @@ async def branch_sign(req:Request):
 async def branch_correct(req:Request):
     s=branch_auth(req);p=await req.json();c=db();
     if is_report_locked(c): c.close(); raise HTTPException(409,'今日日報已鎖定')
-    x=c.execute('SELECT * FROM deliveries WHERE id=?',(s['delivery_id'],)).fetchone();corr=c.execute("SELECT * FROM corrections WHERE delivery_id=? AND status='PENDING' ORDER BY id DESC LIMIT 1",(x['id'],)).fetchone()
-    if x['status']!='WAITING_BRANCH_CORRECTION' or not corr or corr['status']!='PENDING':c.close();raise HTTPException(409,'目前沒有可更正資料')
+    x=c.execute('SELECT * FROM deliveries WHERE id=?',(s['delivery_id'],)).fetchone();corr=c.execute("SELECT * FROM corrections WHERE delivery_id=? AND status='PENDING' ORDER BY id DESC LIMIT 1",(s['delivery_id'],)).fetchone()
+    if not x or x['status']!='WAITING_BRANCH_CORRECTION' or not corr or corr['status']!='PENDING':c.close();raise HTTPException(409,'目前沒有可更正資料')
     if not p.get('reason','').strip() or not p.get('signer','').strip() or not p.get('signature',''):c.close();raise HTTPException(400,'更正原因、姓名與新簽名必填')
     def optional_qty(key,current):
         value=p.get(key,None)
@@ -1706,7 +1810,7 @@ def _prefill_save_db(user_id,user_role,d,bid,qty):
             raise HTTPException(500,'無法建立所選日期配送資料')
         dr=c.execute('SELECT secretary_signature FROM daily_routes WHERE id=?',(x['daily_route_id'],)).fetchone()
         if dr and dr['secretary_signature']:
-            raise HTTPException(409,'本路線總館已完成簽核，公文送出數量已鎖定')
+            raise HTTPException(409,'本路線總館已完成簽核，公文－總館送出數量已鎖定')
         if is_report_locked(c,d):
             raise HTTPException(409,f'{d} 日報已鎖定')
         c.execute(
@@ -1787,7 +1891,7 @@ async def set_doc(did:int,req:Request):
         c.close(); raise HTTPException(409,f"{x['service_date']} 日報已鎖定")
     dr=c.execute('SELECT secretary_signature FROM daily_routes WHERE id=?',(x['daily_route_id'],)).fetchone()
     if dr and dr['secretary_signature']:
-        c.close(); raise HTTPException(409,'本路線總館已完成簽核，公文送出數量已鎖定')
+        c.close(); raise HTTPException(409,'本路線總館已完成簽核，公文－總館送出數量已鎖定')
     before={'qty':x['document_final']}
     c.execute("UPDATE deliveries SET document_original=?,document_final=?,status=CASE WHEN status='WAITING_SECRETARY' THEN 'WAITING_DRIVER' ELSE status END,row_version=row_version+1 WHERE id=?",(qty,qty,did))
     audit(c,'USER',u['id'],u['role'],'SET_DOCUMENT','DELIVERY',did,before=before,after={'qty':qty})
@@ -1831,7 +1935,7 @@ async def batch_documents(req:Request):
         x=c.execute('SELECT * FROM deliveries WHERE id=? AND service_date=?',(did,d)).fetchone()
         if not x: c.close(); raise HTTPException(404,f'找不到 {d} 配送資料')
         dr=c.execute('SELECT secretary_signature FROM daily_routes WHERE id=?',(x['daily_route_id'],)).fetchone()
-        if dr and dr['secretary_signature']: c.close(); raise HTTPException(409,f"配送 #{did} 所屬路線已完成總館簽核，公文送出數量已鎖定")
+        if dr and dr['secretary_signature']: c.close(); raise HTTPException(409,f"配送 #{did} 所屬路線已完成總館簽核，公文－總館送出數量已鎖定")
         prepared.append((x,qty))
     for x,qty in prepared:
         before={'qty':x['document_final']}
@@ -1949,7 +2053,7 @@ async def secretary_route_sign(rid:int,req:Request):
     if not dr: c.close(); raise HTTPException(404)
     if dr['status']!='DRIVER_SIGNED': c.close(); raise HTTPException(409,'需先完成司機路線簽名')
     missing=c.execute("SELECT COUNT(*) n FROM deliveries WHERE daily_route_id=? AND status<>'VOID' AND document_final IS NULL",(rid,)).fetchone()['n']
-    if missing: c.close(); raise HTTPException(409,f'尚有 {missing} 站公文送出數量未填，請由總館完成後再簽核')
+    if missing: c.close(); raise HTTPException(409,f'尚有 {missing} 站公文－總館送出數量未填，請由總館完成後再簽核')
     c.execute('UPDATE daily_routes SET secretary_signature=?,secretary_signed_at=? WHERE id=?',(sig,now(),rid))
     audit(c,'USER',u['id'],u['role'],'SECRETARY_ROUTE_SIGN','DAILY_ROUTE',rid,after={'signed_at':now()})
     c.commit(); c.close(); await publish({'type':'route.secretary_signed','id':rid}); return {'ok':True}
@@ -2007,7 +2111,7 @@ def monthly_route_summary(req:Request, month:str|None=None):
 
 @app.get('/api/reports/today.csv')
 def report_csv(req:Request):
-    require_user(req,['ADMIN','SECRETARY']);c=db();rows=c.execute('''SELECT r.code 路線,d.name 司機,b.name 分館,x.document_final 公文送出,x.document_return_final 公文收回,x.outbound_final 圖書送出,x.inbound_final 圖書收回,x.note_final 備註,x.signer_name 簽收人,x.branch_signed_at 簽收時間,x.status 狀態 FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id JOIN drivers d ON d.id=dr.driver_id WHERE x.service_date=? ORDER BY r.code,b.stop_order''',(today(),)).fetchall();c.close();bio=io.StringIO();w=csv.writer(bio);headers=rows[0].keys() if rows else [];w.writerow(headers);[w.writerow(list(r)) for r in rows];data='\ufeff'+bio.getvalue();return Response(data,media_type='text/csv',headers={'Content-Disposition':f'attachment; filename="{today()}_library_logistics.csv"'})
+    require_user(req,['ADMIN','SECRETARY']);c=db();rows=c.execute('''SELECT r.code 路線,d.name 司機,b.name 分館,x.document_final 公文送出,x.document_return_final 公文收回,x.outbound_final 圖書送出,x.inbound_final 圖書收回,x.note_final 備註,x.signer_name 簽收人,x.branch_signed_at 簽收時間,x.status 狀態 FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id JOIN drivers d ON d.id=dr.driver_id WHERE x.service_date=? ORDER BY r.code,b.stop_order''',(today(),)).fetchall();c.close();bio=io.StringIO();w=csv.writer(bio);headers=rows[0].keys() if rows else [];w.writerow([QUANTITY_LABELS.get(h,h) for h in headers]);[w.writerow(list(r)) for r in rows];data='\ufeff'+bio.getvalue();return Response(data,media_type='text/csv',headers={'Content-Disposition':f'attachment; filename="{today()}_library_logistics.csv"'})
 @app.get('/api/audit')
 def audits(req:Request,limit:int=100):
     require_user(req,['ADMIN','SECRETARY']);c=db();rows=[dict(x) for x in c.execute('SELECT * FROM audit_logs ORDER BY id DESC LIMIT ?',(min(limit,500),)).fetchall()];c.close();return rows
@@ -2246,7 +2350,7 @@ def assert_official_locked(c,d):
 def xlsx_bytes(rows,title):
     wb=Workbook(); ws=wb.active; ws.title='配送報表'; ws.append([title])
     if rows:
-        headers=list(rows[0].keys()); ws.append(headers)
+        headers=list(rows[0].keys()); ws.append([QUANTITY_LABELS.get(h,h) for h in headers])
         for r in rows: ws.append([r[h] for h in headers])
         ws.freeze_panes='A3'
         for col in ws.columns:
@@ -2255,7 +2359,7 @@ def xlsx_bytes(rows,title):
 
 def official_xlsx(payload,d):
     wb=Workbook(); ws=wb.active; ws.title='今日路線總表'
-    ws.append([f'{d} 圖書物流配送暨電子簽收日報']); ws.append(['路線','司機','分館','公文送出','公文收回','圖書送出','圖書收回','簽收人','簽收時間','備註'])
+    ws.append([f'{d} 圖書物流配送暨電子簽收日報']); ws.append(['路線','司機','分館','公文－總館送出','公文－分館送出','圖書－倉庫送出','圖書－分館送出','簽收人','簽收時間','備註'])
     row=3
     for r in payload['routes']:
         for x in r['stops']:
@@ -2277,7 +2381,7 @@ def official_xlsx(payload,d):
         try:
             img=XLImage(io.BytesIO(data)); img.width=200; img.height=65; ws.add_image(img,f'C{row}')
         except: pass
-    for col,w in {'A':16,'B':16,'C':22,'D':12,'E':12,'F':14,'G':14,'H':16,'I':22,'J':24}.items(): ws.column_dimensions[col].width=w
+    for col,w in {'A':16,'B':16,'C':22,'D':22,'E':22,'F':22,'G':22,'H':16,'I':22,'J':24}.items(): ws.column_dimensions[col].width=w
     bio=io.BytesIO(); wb.save(bio); return bio.getvalue()
 
 
@@ -2301,7 +2405,7 @@ def register_pdf_zh_font():
 def pdf_bytes(rows,title):
     bio=io.BytesIO(); zh=register_pdf_zh_font(); cv=canvas.Canvas(bio,pagesize=(842,595)); cv.setFont(zh,16); cv.drawString(30,565,title); y=540; cv.setFont(zh,7.3)
     for r in rows:
-        line=f"{r['日期']}  {r['路線']}線  {r['分館代碼']} {r['分館']}  公文送出:{r['公文送出'] or 0}  公文收回:{r['公文收回'] or 0}  圖書送出:{r['圖書送出'] or 0}  圖書收回:{r['圖書收回'] or 0}  簽收:{r['簽收人'] or '—'}  更正:{r['是否更正']}"; cv.drawString(25,y,line[:150]); y-=12
+        line=f"{r['日期']}  {r['路線']}線  {r['分館代碼']} {r['分館']}  公文－總館送出:{r['公文送出'] or 0}  公文－分館送出:{r['公文收回'] or 0}  圖書－倉庫送出:{r['圖書送出'] or 0}  圖書－分館送出:{r['圖書收回'] or 0}  簽收:{r['簽收人'] or '—'}  更正:{r['是否更正']}"; cv.drawString(25,y,line[:150]); y-=12
         extra=f"備註:{r['備註'] or '—'}  簽收時間:{r['簽收時間'] or '—'}  更正原因:{r['更正原因'] or '—'}"; cv.drawString(40,y,extra[:160]); y-=14
         if y<30: cv.showPage(); cv.setFont(zh,7.3); y=565
     cv.save(); return bio.getvalue()
@@ -2313,16 +2417,16 @@ def official_pdf(payload,d):
         if y<110: cv.showPage(); y=565
         cv.setFont(zh,12); cv.drawString(30,y,f"{r['code']}線｜司機 {r['driver_name'] or '—'}"); y-=18; cv.setFont(zh,8)
         for x in r['stops']:
-            cv.drawString(42,y,f"{x['branch_name']}  公文送出 {x['document_final'] or 0}｜公文收回 {x['document_return_final'] or 0}｜圖書送出 {x['outbound_final'] or 0}｜圖書收回 {x['inbound_final'] or 0}｜簽收 {x['correction_signer_name'] or x['signer_name'] or '—'}"); y-=13
+            cv.drawString(42,y,f"{x['branch_name']}  公文－總館送出 {x['document_final'] or 0}｜公文－分館送出 {x['document_return_final'] or 0}｜圖書－倉庫送出 {x['outbound_final'] or 0}｜圖書－分館送出 {x['inbound_final'] or 0}｜簽收 {x['correction_signer_name'] or x['signer_name'] or '—'}"); y-=13
             if y<90: cv.showPage(); cv.setFont(zh,8); y=565
-        cv.setFont(zh,9); cv.drawString(42,y,f"路線合計：公文送出 {r['totals']['document']}｜公文收回 {r['totals']['document_return']}｜圖書送出 {r['totals']['outbound']}｜圖書收回 {r['totals']['inbound']}"); y-=16
+        cv.setFont(zh,9); cv.drawString(42,y,f"路線合計：公文－總館送出 {r['totals']['document']}｜公文－分館送出 {r['totals']['document_return']}｜圖書－倉庫送出 {r['totals']['outbound']}｜圖書－分館送出 {r['totals']['inbound']}"); y-=16
         data=decode_data_url(r.get('driver_signature'))
         if data:
             try:
                 cv.drawImage(ImageReader(io.BytesIO(data)),42,y-45,width=150,height=42,mask='auto'); cv.drawString(200,y-22,f"司機簽名 {r['driver_signed_at'] or ''}"); y-=55
             except: pass
     if y<110: cv.showPage(); y=565
-    cv.setFont(zh,11); cv.drawString(30,y,f"全部總計：公文送出 {payload['grand']['document']}｜公文收回 {payload['grand']['document_return']}｜圖書送出 {payload['grand']['outbound']}｜圖書收回 {payload['grand']['inbound']}"); y-=22
+    cv.setFont(zh,11); cv.drawString(30,y,f"全部總計：公文－總館送出 {payload['grand']['document']}｜公文－分館送出 {payload['grand']['document_return']}｜圖書－倉庫送出 {payload['grand']['outbound']}｜圖書－分館送出 {payload['grand']['inbound']}"); y-=22
     rep=payload['report'] or {}; data=decode_data_url(rep.get('secretary_signature'))
     if data:
         try: cv.drawImage(ImageReader(io.BytesIO(data)),30,y-55,width=180,height=50,mask='auto')
