@@ -1431,8 +1431,9 @@ def branch_session_history(req:Request, month:str|None=None, pending_only:bool=F
     year,mon=map(int,current.split('-'))
     previous=f'{year-1 if mon==1 else year:04d}-{12 if mon==1 else mon-1:02d}'
     selected=(month or current).strip()
-    if selected not in (current,previous):
-        raise HTTPException(400,'目前僅支援本月及上個月')
+    allowed_months={(date(year-(mon-1-i)//12, (mon-1-i)%12+1, 1)).strftime('%Y-%m') for i in range(12)}
+    if selected not in allowed_months:
+        raise HTTPException(400,'僅支援最近 12 個月')
     # Compare YYYY-MM lexical ranges; keep all rows for the branch, excluding void records.
     end=f'{int(selected[:4])+1:04d}-01' if selected.endswith('-12') else f'{selected[:4]}-{int(selected[5:])+1:02d}'
     c=db()
@@ -1857,7 +1858,7 @@ def date_span(start_date,end_date):
 
 @app.post('/api/schedule-exceptions/range')
 async def save_schedule_range(req:Request):
-    u=require_user(req,['SECRETARY']); p=await req.json(); et=(p.get('exception_type') or '').upper(); reason=(p.get('reason') or '').strip(); dates=date_span((p.get('start_date') or '').strip(),(p.get('end_date') or '').strip())
+    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); et=(p.get('exception_type') or '').upper(); reason=(p.get('reason') or '').strip(); dates=date_span((p.get('start_date') or '').strip(),(p.get('end_date') or '').strip())
     if et not in ('CLOSED_ALL','STOP','ADD'): raise HTTPException(400,'類型錯誤')
     c=db()
     if et=='CLOSED_ALL':
@@ -1883,7 +1884,7 @@ async def save_schedule_range(req:Request):
 
 @app.delete('/api/schedule-exceptions/{eid}')
 async def delete_schedule_exception(eid:str,req:Request):
-    u=require_user(req,['SECRETARY']); c=db()
+    u=require_user(req,['ADMIN','SECRETARY']); c=db()
     if eid.startswith('G'):
         try: gid=int(eid[1:])
         except: c.close(); raise HTTPException(400)
