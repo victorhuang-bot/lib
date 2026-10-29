@@ -1465,6 +1465,36 @@ def _signer_branch(c,session):
         raise HTTPException(403,'分館已停用')
 
 
+def _selected_signing_identity(c,session,payload):
+    """Snapshot an active, branch-scoped name and require a nonblank raster signature."""
+    _signer_branch(c,session)
+    ident=payload.get('signer_id')
+    if isinstance(ident,bool) or not isinstance(ident,int) or ident<=0:
+        raise HTTPException(400,'請從本站名單選擇簽收人員')
+    person=c.execute('SELECT id,name FROM branch_signers WHERE id=? AND branch_id=? AND active=1',
+                     (ident,session['branch_id'])).fetchone()
+    if not person: raise HTTPException(409,'所選人員已停用或不屬於本站，請重新選擇')
+    if 'signer' in payload and payload['signer']!=person['name']:
+        raise HTTPException(409,'所選人員姓名已變更，請重新載入並選擇')
+    signature=payload.get('signature')
+    if not isinstance(signature,str) or len(signature)>4000000 or not re.fullmatch(r'data:image/(?:png|jpeg);base64,[A-Za-z0-9+/=]+',signature):
+        raise HTTPException(400,'請完成手寫簽名')
+    try:
+        from PIL import Image, ImageChops
+        raw=base64.b64decode(signature.split(',',1)[1],validate=True)
+        with Image.open(io.BytesIO(raw)) as image:
+            if image.format not in ('PNG','JPEG') or image.width*image.height>2000000:
+                raise ValueError('Invalid image')
+            rgba=image.convert('RGBA')
+            white=Image.new('RGBA',rgba.size,'white')
+            rendered=Image.alpha_composite(white,rgba).convert('RGB')
+            if ImageChops.difference(rendered,white.convert('RGB')).getbbox() is None:
+                raise ValueError('Blank signature')
+    except Exception:
+        raise HTTPException(400,'請完成有效的手寫簽名')
+    return person['name'],signature
+
+
 @app.get('/api/branch-session/signers')
 def branch_signers(req:Request, include_inactive:bool=False):
     session=branch_auth(req); c=db()
@@ -1483,6 +1513,7 @@ async def add_branch_signer(req:Request):
         raise HTTPException(400,'僅可提供簽收人姓名')
     name=_signer_name(payload['name']); c=db()
     try:
+        lock_schedule_writes(c)
         _signer_branch(c,session)
         timestamp=now()
         cur=c.execute('INSERT INTO branch_signers(branch_id,name,active,created_at,updated_at) VALUES(?,?,1,?,?) ON CONFLICT(branch_id,name) DO NOTHING',(session['branch_id'],name,timestamp,timestamp))
@@ -1506,6 +1537,7 @@ async def update_branch_signer(req:Request,signer_id:int):
         raise HTTPException(400,'啟用狀態必須是布林值')
     c=db()
     try:
+        lock_schedule_writes(c)
         _signer_branch(c,session)
         row=c.execute('SELECT * FROM branch_signers WHERE id=? AND branch_id=?',(signer_id,session['branch_id'])).fetchone()
         if not row: raise HTTPException(404,'找不到本站簽收人')
@@ -1639,123 +1671,127 @@ async def branch_sign(req:Request):
     p=await req.json()
     c=db()
 
-    receipt_at=(p.get('receipt_at') or now()).strip()
     try:
-        datetime.fromisoformat(receipt_at.replace('Z','+00:00'))
+        lock_schedule_writes(c)
+        _signer_branch(c,sess)
+        receipt_at=(p.get('receipt_at') or now()).strip()
+        try:
+            datetime.fromisoformat(receipt_at.replace('Z','+00:00'))
+        except Exception:
+            raise HTTPException(400,'實際簽收時間格式錯誤')
+
+        x=c.execute('SELECT * FROM deliveries WHERE id=? AND branch_id=?',(sess['delivery_id'],sess['branch_id'])).fetchone()
+        if not x:
+            raise HTTPException(404,'找不到配送資料')
+
+        late=(x['status']=='LATE_BRANCH_PENDING' and not x['branch_signed_at'] and not x['branch_signature'])
+        if not late and is_report_locked(c,x['service_date']):
+            raise HTTPException(409,'該日日報已鎖定')
+
+        # 同一分館 session 若因行動網路重送 / 使用者重複點擊，在第一筆已成功簽名後再次送達，
+        # 視為 idempotent success；不重新寫入、不修改既有已簽資料。
+        if x['branch_signed_at'] or x['branch_signature']:
+            signed_at=x['branch_signed_at']
+            return {'ok':True,'already_signed':True,'signed_at':signed_at,'status':x['status']}
+        if x['status'] not in ('WAITING_BRANCH','LATE_BRANCH_PENDING'):
+            raise HTTPException(409,'此筆目前不是可簽收狀態')
+
+        try:
+            document=int(p.get('document',x['document_final'] if x['document_final'] is not None else 0) or 0)
+            document_return=int(p.get('document_return',x['document_return_final'] if x['document_return_final'] is not None else 0) or 0)
+            outbound=int(p.get('outbound',x['outbound_final'] if x['outbound_final'] is not None else 0) or 0)
+            inbound=int(p.get('inbound',x['inbound_final'] if x['inbound_final'] is not None else 0) or 0)
+        except (TypeError,ValueError):
+            raise HTTPException(400,'四個數量欄位格式錯誤')
+
+        if min(document,document_return,outbound,inbound) < 0:
+            raise HTTPException(400,'數量不可小於 0')
+
+        note=p.get('note','')
+        signer,signature=_selected_signing_identity(c,sess,p)
+
+        signed_at=now()
+        next_status='STOP_COMPLETED' if late else 'WAITING_DRIVER_CONFIRM'
+        action='BRANCH_LATE_SIGN' if late else 'BRANCH_SIGN'
+
+        if late:
+            c.execute(
+                """UPDATE deliveries
+                   SET document_final=?,document_return_final=?,outbound_final=?,inbound_final=?,
+                       note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,receipt_at=?,
+                       status=?,driver_confirmed_at=COALESCE(driver_confirmed_at,?),row_version=row_version+1
+                   WHERE id=?""",
+                (document,document_return,outbound,inbound,note,signer,signature,signed_at,receipt_at,
+                 next_status,signed_at,x['id'])
+            )
+        else:
+            c.execute(
+                """UPDATE deliveries
+                   SET document_final=?,document_return_final=?,outbound_final=?,inbound_final=?,
+                       note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,receipt_at=?,
+                       status=?,row_version=row_version+1
+                   WHERE id=?""",
+                (document,document_return,outbound,inbound,note,signer,signature,signed_at,receipt_at,
+                 next_status,x['id'])
+            )
+
+        audit(
+            c,'BRANCH',sess['branch_id'],'BRANCH',action,'DELIVERY',x['id'],
+            before={'document':x['document_final'],'document_return':x['document_return_final'],'outbound':x['outbound_final'],'inbound':x['inbound_final']},
+            after={
+                'service_date':x['service_date'],
+                'document':document,
+                'document_return':document_return,
+                'outbound':outbound,
+                'inbound':inbound,
+                'note':note,
+                'signer':signer,
+                'signer_id':p['signer_id'],
+                'late':late,
+                'receipt_at':receipt_at
+            }
+        )
+        c.commit()
+        await publish({'type':'delivery.updated','id':x['id']})
+        return {'ok':True,'late':late,'driver_reconfirm_required':not late}
     except Exception:
-        c.close()
-        raise HTTPException(400,'實際簽收時間格式錯誤')
-
-    x=c.execute('SELECT * FROM deliveries WHERE id=?',(sess['delivery_id'],)).fetchone()
-    if not x:
-        c.close()
-        raise HTTPException(404,'找不到配送資料')
-
-    late=(x['status']=='LATE_BRANCH_PENDING' and not x['branch_signed_at'] and not x['branch_signature'])
-    if not late and is_report_locked(c,x['service_date']):
-        c.close()
-        raise HTTPException(409,'該日日報已鎖定')
-
-    # 同一分館 session 若因行動網路重送 / 使用者重複點擊，在第一筆已成功簽名後再次送達，
-    # 視為 idempotent success；不重新寫入、不修改既有已簽資料。
-    if x['branch_signed_at'] or x['branch_signature']:
-        signed_at=x['branch_signed_at']
-        c.close()
-        return {'ok':True,'already_signed':True,'signed_at':signed_at,'status':x['status']}
-    if x['status'] not in ('WAITING_BRANCH','LATE_BRANCH_PENDING'):
-        c.close()
-        raise HTTPException(409,'此筆目前不是可簽收狀態')
-
-    try:
-        document=int(p.get('document',x['document_final'] if x['document_final'] is not None else 0) or 0)
-        document_return=int(p.get('document_return',x['document_return_final'] if x['document_return_final'] is not None else 0) or 0)
-        outbound=int(p.get('outbound',x['outbound_final'] if x['outbound_final'] is not None else 0) or 0)
-        inbound=int(p.get('inbound',x['inbound_final'] if x['inbound_final'] is not None else 0) or 0)
-    except (TypeError,ValueError):
-        c.close()
-        raise HTTPException(400,'四個數量欄位格式錯誤')
-
-    if min(document,document_return,outbound,inbound) < 0:
-        c.close()
-        raise HTTPException(400,'數量不可小於 0')
-
-    note=p.get('note','')
-    signer=(p.get('signer') or '').strip()
-    signature=p.get('signature') or ''
-    if not signer or not signature:
-        c.close()
-        raise HTTPException(400,'姓名與簽名必填')
-
-    signed_at=now()
-    next_status='STOP_COMPLETED' if late else 'WAITING_DRIVER_CONFIRM'
-    action='BRANCH_LATE_SIGN' if late else 'BRANCH_SIGN'
-
-    if late:
-        c.execute(
-            """UPDATE deliveries
-               SET document_final=?,document_return_final=?,outbound_final=?,inbound_final=?,
-                   note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,receipt_at=?,
-                   status=?,driver_confirmed_at=COALESCE(driver_confirmed_at,?),row_version=row_version+1
-               WHERE id=?""",
-            (document,document_return,outbound,inbound,note,signer,signature,signed_at,receipt_at,
-             next_status,signed_at,x['id'])
-        )
-    else:
-        c.execute(
-            """UPDATE deliveries
-               SET document_final=?,document_return_final=?,outbound_final=?,inbound_final=?,
-                   note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,receipt_at=?,
-                   status=?,row_version=row_version+1
-               WHERE id=?""",
-            (document,document_return,outbound,inbound,note,signer,signature,signed_at,receipt_at,
-             next_status,x['id'])
-        )
-
-    audit(
-        c,'BRANCH',sess['branch_id'],'BRANCH',action,'DELIVERY',x['id'],
-        before={'document':x['document_final'],'document_return':x['document_return_final'],'outbound':x['outbound_final'],'inbound':x['inbound_final']},
-        after={
-            'service_date':x['service_date'],
-            'document':document,
-            'document_return':document_return,
-            'outbound':outbound,
-            'inbound':inbound,
-            'note':note,
-            'signer':signer,
-            'late':late,
-            'receipt_at':receipt_at
-        }
-    )
-    c.commit()
-    c.close()
-    await publish({'type':'delivery.updated','id':x['id']})
-    return {'ok':True,'late':late,'driver_reconfirm_required':not late}
+        c.rollback()
+        raise
+    finally: c.close()
 
 @app.post('/api/branch-session/correct')
 async def branch_correct(req:Request):
-    s=branch_auth(req);p=await req.json();c=db();
-    if is_report_locked(c): c.close(); raise HTTPException(409,'今日日報已鎖定')
-    x=c.execute('SELECT * FROM deliveries WHERE id=?',(s['delivery_id'],)).fetchone();corr=c.execute("SELECT * FROM corrections WHERE delivery_id=? AND status='PENDING' ORDER BY id DESC LIMIT 1",(s['delivery_id'],)).fetchone()
-    if not x or x['status']!='WAITING_BRANCH_CORRECTION' or not corr or corr['status']!='PENDING':c.close();raise HTTPException(409,'目前沒有可更正資料')
-    if not p.get('reason','').strip() or not p.get('signer','').strip() or not p.get('signature',''):c.close();raise HTTPException(400,'更正原因、姓名與新簽名必填')
-    def optional_qty(key,current):
-        value=p.get(key,None)
-        if value is None or str(value).strip()=='':
-            return current
-        try:
-            value=int(value)
-        except (TypeError,ValueError):
-            c.close(); raise HTTPException(400,f'{key} 數量格式錯誤')
-        if value < 0:
-            c.close(); raise HTTPException(400,'數量不可小於 0')
-        return value
-    document_return=optional_qty('document_return',x['document_return_final'])
-    inbound=optional_qty('inbound',x['inbound_final'])
-    before={'document_return':x['document_return_final'],'inbound':x['inbound_final']}
-    c.execute("UPDATE deliveries SET document_return_final=?,inbound_final=?,correction_reason=?,correction_signer_name=?,correction_signature=?,corrected_at=?,status='WAITING_DRIVER_RECONFIRM',row_version=row_version+1 WHERE id=?",(document_return,inbound,p['reason'],p['signer'],p['signature'],now(),x['id']))
-    c.execute("UPDATE corrections SET status='RESOLVED',resolved_at=? WHERE id=?",(now(),corr['id']))
-    audit(c,'BRANCH',s['branch_id'],'BRANCH','BRANCH_CORRECT','DELIVERY',x['id'],before=before,after={'document_return':document_return,'inbound':inbound,'reason':p['reason'],'signer':p['signer']})
-    c.commit();c.close();await publish({'type':'delivery.updated','id':x['id']});return {'ok':True}
+    s=branch_auth(req);p=await req.json();c=db()
+    try:
+        lock_schedule_writes(c)
+        _signer_branch(c,s)
+        if is_report_locked(c): raise HTTPException(409,'今日日報已鎖定')
+        x=c.execute('SELECT * FROM deliveries WHERE id=? AND branch_id=?',(s['delivery_id'],s['branch_id'])).fetchone();corr=c.execute("SELECT * FROM corrections WHERE delivery_id=? AND status='PENDING' ORDER BY id DESC LIMIT 1",(s['delivery_id'],)).fetchone()
+        if not x or x['status']!='WAITING_BRANCH_CORRECTION' or not corr or corr['status']!='PENDING':raise HTTPException(409,'目前沒有可更正資料')
+        if not isinstance(p.get('reason'),str) or not p['reason'].strip():raise HTTPException(400,'更正原因、姓名與新簽名必填')
+        signer,signature=_selected_signing_identity(c,s,p)
+        def optional_qty(key,current):
+            value=p.get(key,None)
+            if value is None or str(value).strip()=='':
+                return current
+            try:
+                value=int(value)
+            except (TypeError,ValueError):
+                raise HTTPException(400,f'{key} 數量格式錯誤')
+            if value < 0:
+                raise HTTPException(400,'數量不可小於 0')
+            return value
+        document_return=optional_qty('document_return',x['document_return_final'])
+        inbound=optional_qty('inbound',x['inbound_final'])
+        before={'document_return':x['document_return_final'],'inbound':x['inbound_final']}
+        c.execute("UPDATE deliveries SET document_return_final=?,inbound_final=?,correction_reason=?,correction_signer_name=?,correction_signature=?,corrected_at=?,status='WAITING_DRIVER_RECONFIRM',row_version=row_version+1 WHERE id=?",(document_return,inbound,p['reason'],signer,signature,now(),x['id']))
+        c.execute("UPDATE corrections SET status='RESOLVED',resolved_at=? WHERE id=?",(now(),corr['id']))
+        audit(c,'BRANCH',s['branch_id'],'BRANCH','BRANCH_CORRECT','DELIVERY',x['id'],before=before,after={'document_return':document_return,'inbound':inbound,'reason':p['reason'],'signer':signer,'signer_id':p['signer_id']})
+        c.commit();await publish({'type':'delivery.updated','id':x['id']});return {'ok':True}
+    except Exception:
+        c.rollback()
+        raise
+    finally: c.close()
 
 
 def ensure_prefill_delivery(c, service_date, branch_id):

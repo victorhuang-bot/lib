@@ -40,6 +40,7 @@ async function loadBranchSigners() {
       list.append(item);
     }
     status.textContent = rows.length ? '' : '目前沒有' + (include ? '' : '有效的') + '常用簽收人員。';
+    await refreshBranchSigningChoices();
     return true;
   } catch (error) { status.textContent = '名單載入失敗：' + error.message; return false; }
 }
