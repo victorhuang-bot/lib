@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, Fil
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import base64
-import sqlite3, os, secrets, hashlib, hmac, base64, io, json, asyncio, csv, re
+import sqlite3, os, sys, secrets, hashlib, hmac, base64, io, json, asyncio, csv, re
 try:
     import psycopg
     from psycopg.rows import dict_row
@@ -532,7 +532,24 @@ def migrate_v1929(c):
     c.execute('CREATE INDEX IF NOT EXISTS idx_delivery_items_delivery_id ON delivery_items(delivery_id)')
     c.commit()
 
+def repair_shilin_identity(c):
+    """Preserve the original branch identity; never merge historical records."""
+    old=c.execute("SELECT * FROM branches WHERE code='K13S'").fetchone()
+    current=c.execute("SELECT * FROM branches WHERE code='K13'").fetchone()
+    if old and not current:
+        c.execute("UPDATE branches SET code='K13',name='士林' WHERE id=?",(old['id'],))
+        audit(c,'SYSTEM',None,'SYSTEM','REPAIR_SHILIN_CODE','BRANCH',old['id'],
+              before={'code':'K13S','name':old['name']},after={'code':'K13','name':'士林'})
+    elif old and current and old['active']:
+        c.execute('UPDATE branches SET active=0 WHERE id=?',(old['id'],))
+        audit(c,'SYSTEM',None,'SYSTEM','SHILIN_IDENTITY_CONFLICT','BRANCH',old['id'],
+              before={'active':old['active']},after={'active':0,'canonical_branch_id':current['id']},
+              reason='K13 與 K13S 同時存在；保留兩者歷史，不自動合併，須人工檢查舊站待配送資料')
+
+
 def migrate_official_routes_and_branches(c):
+    lock_schedule_writes(c)
+    repair_shilin_identity(c)
     branch_pin=os.getenv('DEMO_BRANCH_PIN') or ('1234' if APP_ENV!='production' else None)
     for rid in range(1,7):
         row=c.execute('SELECT id FROM routes WHERE id=?',(rid,)).fetchone()
@@ -725,7 +742,16 @@ def branch_expected_on(c,b,service_date):
     days=[x.strip() for x in (b['delivery_weekdays'] or '').split(',') if x.strip()]
     return bool(b['active']) and weekday in days
 
-def rebuild_service_date(c, service_date):
+def lock_schedule_writes(c):
+    # All schedule/prefill/dispatch writers share this transaction lock.
+    if USE_POSTGRES:
+        c.execute('SELECT pg_advisory_xact_lock(194020)')
+    elif not c.in_transaction:
+        c.execute('BEGIN IMMEDIATE')
+
+
+def rebuild_service_date(c, service_date, commit=True):
+    lock_schedule_writes(c)
     # Idempotent / concurrency-safe day builder for PostgreSQL.
     # It is safe for dashboard, prefill and schedule refresh to call this repeatedly.
     try:
@@ -789,7 +815,7 @@ def rebuild_service_date(c, service_date):
                 except Exception:
                     pass
 
-        elif not expected and existing:
+        elif not expected and existing and existing['status']!='VOID':
             untouched=(
                 existing['document_original'] is None and
                 existing['outbound_original'] is None and
@@ -800,7 +826,7 @@ def rebuild_service_date(c, service_date):
                 c.execute('DELETE FROM branch_sessions WHERE delivery_id=?',(existing['id'],))
                 c.execute('DELETE FROM corrections WHERE delivery_id=?',(existing['id'],))
                 c.execute('DELETE FROM deliveries WHERE id=?',(existing['id'],))
-    c.commit()
+    if commit: c.commit()
 
 def next_service_date():
     return (date.fromisoformat(today()) + timedelta(days=1)).isoformat()
@@ -808,11 +834,12 @@ def next_service_date():
 def ensure_today(c):
     rebuild_service_date(c,today())
 
-print(f'APP_VERSION={APP_VERSION}',flush=True)
-init_db()
 
 def audit(c, actor_type, actor_id, role, action, etype, eid, before=None, after=None, reason=None):
     c.execute('INSERT INTO audit_logs(actor_type,actor_id,role,action,entity_type,entity_id,before_json,after_json,reason,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)',(actor_type,str(actor_id or ''),role,action,etype,str(eid),json.dumps(before,ensure_ascii=False) if before is not None else None,json.dumps(after,ensure_ascii=False) if after is not None else None,reason,now()))
+
+print(f'APP_VERSION={APP_VERSION}',flush=True)
+init_db()
 
 def current_user(req):
     auth=req.headers.get('Authorization','')
@@ -849,10 +876,10 @@ def dashboard_monthly_route_cumulative(req:Request, month:str=''):
                       COALESCE(SUM(COALESCE(d.document_final,d.document_original,0)),0) document_qty,
                       COALESCE(SUM(COALESCE(d.document_return_final,0)),0) document_return_qty,
                       COALESCE(SUM(COALESCE(d.outbound_final,d.outbound_original,0)),0) outbound_qty,
-                      COALESCE(SUM(COALESCE(d.inbound_final,d.inbound_original,0)),0) inbound_qty
+                      COALESCE(SUM(COALESCE(d.inbound_final,0)),0) inbound_qty
                FROM daily_routes dr
                JOIN deliveries d ON d.daily_route_id=dr.id
-               WHERE dr.service_date>=? AND dr.service_date<?
+               WHERE dr.service_date>=? AND dr.service_date<? AND d.status<>'VOID'
                GROUP BY dr.service_date,dr.route_id
                ORDER BY dr.service_date,dr.route_id""",
             (first.isoformat(),nxt.isoformat())
@@ -1090,7 +1117,7 @@ def driver_today(req:Request):
     s=driver_auth(req); c=db(); rows=[dict(x) for x in c.execute('''SELECT x.*,b.name branch_name,b.code branch_code,r.code route_code FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id WHERE x.service_date=? AND COALESCE(dda.driver_id,dr.driver_id)=? AND b.active=1 AND x.status<>'VOID' ORDER BY r.code,b.stop_order''',(today(),s['driver_id'])).fetchall()];c.close();return rows
 @app.patch('/api/driver/deliveries/{did}/outbound')
 async def outbound(did:int,req:Request):
-    s=driver_auth(req);p=await req.json();qty=int(p.get('qty',0));c=db();
+    s=driver_auth(req);p=await req.json();qty=int(p.get('qty',0));c=db(); lock_schedule_writes(c);
     if is_report_locked(c): c.close(); raise HTTPException(409,'今日日報已鎖定')
     x=c.execute('''SELECT x.*,COALESCE(dda.driver_id,dr.driver_id) driver_id FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id WHERE x.id=?''',(did,)).fetchone()
     if not x or x['driver_id']!=s['driver_id']:c.close();raise HTTPException(403)
@@ -1329,7 +1356,7 @@ async def admin_close_delivery(did:int, req:Request):
 async def void_delivery(did:int,req:Request):
     u=require_user(req,['ADMIN']); p=await req.json(); reason=(p.get('reason') or '').strip()
     if not reason: raise HTTPException(400,'作廢原因必填')
-    c=db(); x=c.execute('SELECT * FROM deliveries WHERE id=?',(did,)).fetchone()
+    c=db(); lock_schedule_writes(c); x=c.execute('SELECT * FROM deliveries WHERE id=?',(did,)).fetchone()
     if not x: c.close(); raise HTTPException(404,'找不到配送資料')
     if x['status']=='VOID': c.close(); return {'ok':True,'already_void':True}
     dr=c.execute('SELECT driver_signature FROM daily_routes WHERE id=?',(x['daily_route_id'],)).fetchone()
@@ -1352,8 +1379,9 @@ def get_delivery_items(did:int,req:Request):
 async def put_delivery_items(did:int,req:Request):
     u=require_user(req,['SECRETARY']); p=await req.json(); items=p.get('items') or []
     if not isinstance(items,list): raise HTTPException(400,'隨車物品格式錯誤')
-    c=db(); x=c.execute('SELECT * FROM deliveries WHERE id=?',(did,)).fetchone()
+    c=db(); lock_schedule_writes(c); x=c.execute('SELECT * FROM deliveries WHERE id=?',(did,)).fetchone()
     if not x: c.close(); raise HTTPException(404,'找不到配送資料')
+    if x['status']=='VOID': c.close(); raise HTTPException(409,'已取消的配送不可修改品項')
     dr=c.execute('SELECT secretary_signature FROM daily_routes WHERE id=?',(x['daily_route_id'],)).fetchone()
     if dr and dr['secretary_signature']: c.close(); raise HTTPException(409,'本路線總館已完成簽核，隨車物品已鎖定')
     allowed={'DOCUMENT_BAG','ATTACHMENT_BAG','PRIZE','CONSUMABLE','POSTER','NEWBORN_GIFT','BOOKCLUB_RESOURCE','PROMOTION','STATIONERY','OTHER'}; clean=[]
@@ -1542,10 +1570,12 @@ def branch_session_history(req:Request, month:str|None=None, pending_only:bool=F
     end=f'{int(selected[:4])+1:04d}-01' if selected.endswith('-12') else f'{selected[:4]}-{int(selected[5:])+1:02d}'
     c=db()
     try:
+        _signer_branch(c,sess)
         rows=c.execute("""SELECT x.id,x.service_date,x.status,
             x.document_final,x.document_return_final,x.outbound_final,x.inbound_final,
             x.signer_name,x.correction_signer_name,x.branch_signed_at,x.receipt_at,x.corrected_at,
             x.driver_confirmed_at,x.note_final,r.code route_code,
+            CASE WHEN x.branch_signature IS NOT NULL OR x.correction_signature IS NOT NULL THEN 1 ELSE 0 END has_signatures,
             COALESCE(owner.name,driver.name) driver_name
             FROM deliveries x
             JOIN daily_routes dr ON dr.id=x.daily_route_id
@@ -1567,6 +1597,25 @@ def branch_session_history(req:Request, month:str|None=None, pending_only:bool=F
                 'pending_only':pending_only,'total':len(data),'records':data}
     finally:
         c.close()
+
+@app.get('/api/branch-session/history/{delivery_id}/signatures')
+def branch_history_signatures(delivery_id:int,req:Request):
+    sess=branch_auth(req)
+    c=db()
+    try:
+        _signer_branch(c,sess)
+        current=date.fromisoformat(today())
+        serial=current.year*12+current.month-1-11
+        earliest=date(serial//12,serial%12+1,1).isoformat()
+        next_month=(current.replace(day=28)+timedelta(days=4)).replace(day=1).isoformat()
+        row=c.execute("""SELECT id,service_date,signer_name,branch_signed_at,branch_signature,
+            correction_signer_name,corrected_at,correction_signature
+            FROM deliveries WHERE id=? AND branch_id=? AND status<>'VOID'
+            AND service_date>=? AND service_date<?""",
+            (delivery_id,sess['branch_id'],earliest,next_month)).fetchone()
+        if not row: raise HTTPException(404,'找不到本站最近 12 個月的配送紀錄')
+        return dict(row)
+    finally: c.close()
 
 @app.post('/api/branch-session/select-task')
 async def branch_session_select_task(req:Request):
@@ -1710,6 +1759,7 @@ async def branch_correct(req:Request):
 
 
 def ensure_prefill_delivery(c, service_date, branch_id):
+    lock_schedule_writes(c)
     b=c.execute('SELECT * FROM branches WHERE id=?',(branch_id,)).fetchone()
     if not b or not branch_expected_on(c,b,service_date):
         raise HTTPException(409,'此分館不是所選日期的配送站點')
@@ -1722,6 +1772,7 @@ def ensure_prefill_delivery(c, service_date, branch_id):
     if not x:
         c.execute("INSERT INTO deliveries(service_date,daily_route_id,branch_id,status) VALUES(?,?,?,'WAITING_SECRETARY') ON CONFLICT(service_date,branch_id) DO NOTHING",(service_date,dr['id'],branch_id))
         x=c.execute('SELECT * FROM deliveries WHERE service_date=? AND branch_id=?',(service_date,branch_id)).fetchone()
+    if x['status']=='VOID': raise HTTPException(409,'已取消的配送不可預填，請重新整理排程')
     return x
 
 @app.get('/api/secretary/documents/prefill-v4')
@@ -1885,8 +1936,9 @@ async def set_doc(did:int,req:Request):
     try: qty=int(p.get('qty'))
     except: raise HTTPException(400,'公文數量必須是整數')
     if qty < 0: raise HTTPException(400,'公文數量不可小於 0')
-    c=db(); x=c.execute('SELECT * FROM deliveries WHERE id=?',(did,)).fetchone()
+    c=db(); lock_schedule_writes(c); x=c.execute('SELECT * FROM deliveries WHERE id=?',(did,)).fetchone()
     if not x: c.close(); raise HTTPException(404,'找不到配送資料')
+    if x['status']=='VOID': c.close(); raise HTTPException(409,'已取消的配送不可修改')
     if is_report_locked(c,x['service_date']):
         c.close(); raise HTTPException(409,f"{x['service_date']} 日報已鎖定")
     dr=c.execute('SELECT secretary_signature FROM daily_routes WHERE id=?',(x['daily_route_id'],)).fetchone()
@@ -1903,13 +1955,13 @@ async def zero_all(req:Request, service_date:str|None=None):
     d=service_date or today()
     try: date.fromisoformat(d)
     except: raise HTTPException(400,'日期格式錯誤')
-    c=db()
+    c=db(); lock_schedule_writes(c)
     if d>today():
-        rebuild_service_date(c,d)
+        rebuild_service_date(c,d,commit=False)
     if is_report_locked(c,d): c.close(); raise HTTPException(409,f'{d} 日報已鎖定')
     cur=c.execute("""UPDATE deliveries SET document_original=COALESCE(document_original,0),document_final=0,
                     status=CASE WHEN status='WAITING_SECRETARY' THEN 'WAITING_DRIVER' ELSE status END,row_version=row_version+1
-                    WHERE service_date=? AND daily_route_id IN (SELECT id FROM daily_routes WHERE service_date=? AND secretary_signature IS NULL)""",(d,d))
+                    WHERE service_date=? AND status<>'VOID' AND daily_route_id IN (SELECT id FROM daily_routes WHERE service_date=? AND secretary_signature IS NULL)""",(d,d))
     changed=cur.rowcount
     audit(c,'USER',u['id'],u['role'],'ZERO_ALL_DOCUMENTS','DAY',d,after={'changed':changed,'service_date':d})
     c.commit(); c.close()
@@ -1923,9 +1975,9 @@ async def batch_documents(req:Request):
     d=p.get('service_date') or today()
     try: date.fromisoformat(d)
     except: raise HTTPException(400,'日期格式錯誤')
-    c=db()
+    c=db(); lock_schedule_writes(c)
     if d>today():
-        rebuild_service_date(c,d)
+        rebuild_service_date(c,d,commit=False)
     if is_report_locked(c,d): c.close(); raise HTTPException(409,f'{d} 日報已鎖定')
     prepared=[]
     for item in items:
@@ -1934,6 +1986,7 @@ async def batch_documents(req:Request):
         if qty<0: c.close(); raise HTTPException(400,'公文數量需為0以上整數')
         x=c.execute('SELECT * FROM deliveries WHERE id=? AND service_date=?',(did,d)).fetchone()
         if not x: c.close(); raise HTTPException(404,f'找不到 {d} 配送資料')
+        if x['status']=='VOID': c.close(); raise HTTPException(409,'已取消的配送不可修改')
         dr=c.execute('SELECT secretary_signature FROM daily_routes WHERE id=?',(x['daily_route_id'],)).fetchone()
         if dr and dr['secretary_signature']: c.close(); raise HTTPException(409,f"配送 #{did} 所屬路線已完成總館簽核，公文－總館送出數量已鎖定")
         prepared.append((x,qty))
@@ -1962,46 +2015,22 @@ def date_span(start_date,end_date):
 
 @app.post('/api/schedule-exceptions/range')
 async def save_schedule_range(req:Request):
-    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); et=(p.get('exception_type') or '').upper(); reason=(p.get('reason') or '').strip(); dates=date_span((p.get('start_date') or '').strip(),(p.get('end_date') or '').strip())
-    if et not in ('CLOSED_ALL','STOP','ADD'): raise HTTPException(400,'類型錯誤')
-    c=db()
-    if et=='CLOSED_ALL':
-        for d in dates:
-            started=c.execute("SELECT 1 FROM deliveries WHERE service_date=? AND (document_original IS NOT NULL OR outbound_original IS NOT NULL OR branch_signed_at IS NOT NULL) LIMIT 1",(d,)).fetchone()
-            if started: c.close(); raise HTTPException(409,f'{d} 已有配送開始，不能設定全館休館')
-        for d in dates:
-            c.execute("INSERT INTO global_closures(service_date,reason,created_by,created_at) VALUES(?,?,?,?) ON CONFLICT(service_date) DO UPDATE SET reason=excluded.reason,created_by=excluded.created_by,created_at=excluded.created_at",(d,reason,u['id'],now()))
-            audit(c,'USER',u['id'],u['role'],'SET_GLOBAL_CLOSURE','GLOBAL_CLOSURE',d,after={'reason':reason})
-            rebuild_service_date(c,d)
-    else:
-        bid=int(p.get('branch_id') or 0); b=c.execute('SELECT * FROM branches WHERE id=?',(bid,)).fetchone()
-        if not b: c.close(); raise HTTPException(404,'找不到分館')
-        if et=='STOP':
-            for d in dates:
-                x=c.execute('SELECT * FROM deliveries WHERE service_date=? AND branch_id=?',(d,bid)).fetchone()
-                if x and (x['document_original'] is not None or x['outbound_original'] is not None or x['branch_signed_at'] is not None): c.close(); raise HTTPException(409,f'{d} 配送已開始，不能設定停送')
-        for d in dates:
-            c.execute("""INSERT INTO delivery_exceptions(service_date,branch_id,exception_type,reason,created_by,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(service_date,branch_id) DO UPDATE SET exception_type=excluded.exception_type,reason=excluded.reason,created_by=excluded.created_by,created_at=excluded.created_at""",(d,bid,et,reason,u['id'],now()))
-            audit(c,'USER',u['id'],u['role'],'SET_DELIVERY_EXCEPTION','BRANCH',bid,after={'service_date':d,'exception_type':et,'reason':reason})
-            rebuild_service_date(c,d)
-    c.commit(); c.close(); _prefill_cache_clear(); await publish({'type':'schedule.updated','dates':dates}); return {'ok':True,'days':len(dates)}
+    from app.services.schedule_postponement import save_range
+    u=require_user(req,['ADMIN','SECRETARY'])
+    result=save_range(sys.modules[__name__],u,await req.json())
+    if not result.get('preview'):
+        _prefill_cache_clear()
+        await publish({'type':'schedule.updated','dates':result['dates']})
+    return result
 
 @app.delete('/api/schedule-exceptions/{eid}')
 async def delete_schedule_exception(eid:str,req:Request):
-    u=require_user(req,['ADMIN','SECRETARY']); c=db()
-    if eid.startswith('G'):
-        try: gid=int(eid[1:])
-        except: c.close(); raise HTTPException(400)
-        x=c.execute('SELECT * FROM global_closures WHERE id=?',(gid,)).fetchone()
-        if not x: c.close(); raise HTTPException(404)
-        c.execute('DELETE FROM global_closures WHERE id=?',(gid,)); audit(c,'USER',u['id'],u['role'],'DELETE_GLOBAL_CLOSURE','GLOBAL_CLOSURE',x['service_date'],before=dict(x)); rebuild_service_date(c,x['service_date'])
-    else:
-        try: iid=int(eid)
-        except: c.close(); raise HTTPException(400)
-        x=c.execute('SELECT * FROM delivery_exceptions WHERE id=?',(iid,)).fetchone()
-        if not x: c.close(); raise HTTPException(404)
-        c.execute('DELETE FROM delivery_exceptions WHERE id=?',(iid,)); audit(c,'USER',u['id'],u['role'],'DELETE_DELIVERY_EXCEPTION','BRANCH',x['branch_id'],before=dict(x)); rebuild_service_date(c,x['service_date'])
-    c.commit(); c.close(); _prefill_cache_clear(); await publish({'type':'schedule.updated'}); return {'ok':True}
+    from app.services.schedule_postponement import cancel_exception
+    u=require_user(req,['ADMIN','SECRETARY'])
+    result=cancel_exception(sys.modules[__name__],u,eid)
+    _prefill_cache_clear()
+    await publish({'type':'schedule.updated'})
+    return result
 
 @app.get('/api/secretary/sign-status')
 def secretary_sign_status(req:Request, service_date:str|None=None, route:str|None=None):
@@ -2049,7 +2078,7 @@ def route_signed_summary(rid:int,req:Request):
 async def secretary_route_sign(rid:int,req:Request):
     u=require_user(req,['SECRETARY']); p=await req.json(); sig=p.get('signature','')
     if not sig: raise HTTPException(400,'總館簽名必填')
-    c=db(); dr=c.execute("SELECT * FROM daily_routes WHERE id=?",(rid,)).fetchone()
+    c=db(); lock_schedule_writes(c); dr=c.execute("SELECT * FROM daily_routes WHERE id=?",(rid,)).fetchone()
     if not dr: c.close(); raise HTTPException(404)
     if dr['status']!='DRIVER_SIGNED': c.close(); raise HTTPException(409,'需先完成司機路線簽名')
     missing=c.execute("SELECT COUNT(*) n FROM deliveries WHERE daily_route_id=? AND status<>'VOID' AND document_final IS NULL",(rid,)).fetchone()['n']
@@ -2062,7 +2091,7 @@ async def secretary_route_sign(rid:int,req:Request):
 async def final_sign(req:Request):
     u=require_user(req,['SECRETARY']);p=await req.json(); sig=p.get('signature','')
     if not sig: raise HTTPException(400,'總館簽名必填')
-    c=db(); active=c.execute("""SELECT dr.id,dr.status FROM daily_routes dr WHERE dr.service_date=? AND EXISTS(SELECT 1 FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID')""",(today(),)).fetchall()
+    c=db(); lock_schedule_writes(c); active=c.execute("""SELECT dr.id,dr.status FROM daily_routes dr WHERE dr.service_date=? AND EXISTS(SELECT 1 FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID')""",(today(),)).fetchall()
     if not active: c.close(); raise HTTPException(409,'今日沒有配送路線')
     if any(x['status']!='DRIVER_SIGNED' for x in active): c.close(); raise HTTPException(409,'尚有配送路線未完成司機簽名')
     unsigned=c.execute("SELECT COUNT(*) n FROM daily_routes dr WHERE dr.service_date=? AND EXISTS(SELECT 1 FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID') AND dr.secretary_signature IS NULL",(today(),)).fetchone()['n']
@@ -2111,7 +2140,7 @@ def monthly_route_summary(req:Request, month:str|None=None):
 
 @app.get('/api/reports/today.csv')
 def report_csv(req:Request):
-    require_user(req,['ADMIN','SECRETARY']);c=db();rows=c.execute('''SELECT r.code 路線,d.name 司機,b.name 分館,x.document_final 公文送出,x.document_return_final 公文收回,x.outbound_final 圖書送出,x.inbound_final 圖書收回,x.note_final 備註,x.signer_name 簽收人,x.branch_signed_at 簽收時間,x.status 狀態 FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id JOIN drivers d ON d.id=dr.driver_id WHERE x.service_date=? ORDER BY r.code,b.stop_order''',(today(),)).fetchall();c.close();bio=io.StringIO();w=csv.writer(bio);headers=rows[0].keys() if rows else [];w.writerow([QUANTITY_LABELS.get(h,h) for h in headers]);[w.writerow(list(r)) for r in rows];data='\ufeff'+bio.getvalue();return Response(data,media_type='text/csv',headers={'Content-Disposition':f'attachment; filename="{today()}_library_logistics.csv"'})
+    require_user(req,['ADMIN','SECRETARY']);c=db();rows=c.execute('''SELECT r.code 路線,d.name 司機,b.name 分館,x.document_final 公文送出,x.document_return_final 公文收回,x.outbound_final 圖書送出,x.inbound_final 圖書收回,x.note_final 備註,x.signer_name 簽收人,x.branch_signed_at 簽收時間,x.status 狀態 FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id JOIN drivers d ON d.id=dr.driver_id WHERE x.service_date=? AND x.status<>'VOID' ORDER BY r.code,b.stop_order''',(today(),)).fetchall();c.close();bio=io.StringIO();w=csv.writer(bio);headers=rows[0].keys() if rows else [];w.writerow([QUANTITY_LABELS.get(h,h) for h in headers]);[w.writerow(list(r)) for r in rows];data='\ufeff'+bio.getvalue();return Response(data,media_type='text/csv',headers={'Content-Disposition':f'attachment; filename="{today()}_library_logistics.csv"'})
 @app.get('/api/audit')
 def audits(req:Request,limit:int=100):
     require_user(req,['ADMIN','SECRETARY']);c=db();rows=[dict(x) for x in c.execute('SELECT * FROM audit_logs ORDER BY id DESC LIMIT ?',(min(limit,500),)).fetchall()];c.close();return rows
@@ -2325,7 +2354,7 @@ def correction_list(req:Request):
     require_user(req,['ADMIN','SECRETARY']); c=db(); rows=[dict(x) for x in c.execute('''SELECT co.*,b.name branch_name,r.code route_code,d.name driver_name,x.document_final,x.document_return_final,x.outbound_final,x.inbound_final,x.note_final,x.correction_reason,x.correction_signer_name,x.corrected_at FROM corrections co JOIN deliveries x ON x.id=co.delivery_id JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id JOIN drivers d ON d.id=co.requested_by_driver_id ORDER BY co.id DESC''').fetchall()]; c.close(); return rows
 
 def report_rows(c,start_date,end_date):
-    rows=[dict(x) for x in c.execute("""SELECT x.service_date 日期,r.code 路線,COALESCE(ad.name,dv.name,'') 實際配送司機,b.code 分館代碼,b.name 分館,x.document_final 公文送出,x.document_return_final 公文收回,x.outbound_final 圖書送出,x.inbound_final 圖書收回,COALESCE(x.note_final,'') 備註,COALESCE(x.correction_signer_name,x.signer_name,'') 簽收人,COALESCE(x.corrected_at,x.branch_signed_at,'') 簽收時間,CASE WHEN EXISTS(SELECT 1 FROM corrections co2 WHERE co2.delivery_id=x.id) THEN '是' ELSE '否' END 是否更正,COALESCE(x.correction_reason,'') 更正原因,CASE WHEN x.branch_signed_at IS NOT NULL AND EXISTS(SELECT 1 FROM audit_logs al WHERE al.entity_type='DELIVERY' AND al.entity_id=CAST(x.id AS TEXT) AND al.action='BRANCH_LATE_SIGN') THEN '補簽完成' WHEN x.status='LATE_BRANCH_PENDING' THEN '待補簽' WHEN x.branch_signed_at IS NOT NULL THEN '已簽收' ELSE '未簽收' END 分館簽收狀態 FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id LEFT JOIN drivers ad ON ad.id=dda.driver_id LEFT JOIN drivers dv ON dv.id=dr.driver_id WHERE x.service_date BETWEEN ? AND ? ORDER BY x.service_date,r.code,b.stop_order""",(start_date,end_date)).fetchall()]
+    rows=[dict(x) for x in c.execute("""SELECT x.service_date 日期,r.code 路線,COALESCE(ad.name,dv.name,'') 實際配送司機,b.code 分館代碼,b.name 分館,x.document_final 公文送出,x.document_return_final 公文收回,x.outbound_final 圖書送出,x.inbound_final 圖書收回,COALESCE(x.note_final,'') 備註,COALESCE(x.correction_signer_name,x.signer_name,'') 簽收人,COALESCE(x.corrected_at,x.branch_signed_at,'') 簽收時間,CASE WHEN EXISTS(SELECT 1 FROM corrections co2 WHERE co2.delivery_id=x.id) THEN '是' ELSE '否' END 是否更正,COALESCE(x.correction_reason,'') 更正原因,CASE WHEN x.branch_signed_at IS NOT NULL AND EXISTS(SELECT 1 FROM audit_logs al WHERE al.entity_type='DELIVERY' AND al.entity_id=CAST(x.id AS TEXT) AND al.action='BRANCH_LATE_SIGN') THEN '補簽完成' WHEN x.status='LATE_BRANCH_PENDING' THEN '待補簽' WHEN x.branch_signed_at IS NOT NULL THEN '已簽收' ELSE '未簽收' END 分館簽收狀態 FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id LEFT JOIN drivers ad ON ad.id=dda.driver_id LEFT JOIN drivers dv ON dv.id=dr.driver_id WHERE x.service_date BETWEEN ? AND ? AND x.status<>'VOID' ORDER BY x.service_date,r.code,b.stop_order""",(start_date,end_date)).fetchall()]
     for r in rows: r['簽收時間']=report_time(r.get('簽收時間'))
     return rows
 
@@ -2571,7 +2600,7 @@ def route_handoffs(req:Request, service_date:str|None=None):
 async def route_handoff(rid:int,req:Request):
     u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); to_driver=int(p.get('to_driver_id')); start_id=int(p.get('start_delivery_id')); reason=(p.get('reason') or '').strip(); note=(p.get('note') or '').strip()
     if not reason: raise HTTPException(400,'交接原因必填')
-    c=db(); dr=c.execute('SELECT * FROM daily_routes WHERE id=?',(rid,)).fetchone(); start=c.execute('SELECT x.*,b.stop_order FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.id=? AND x.daily_route_id=?',(start_id,rid)).fetchone()
+    c=db(); lock_schedule_writes(c); dr=c.execute('SELECT * FROM daily_routes WHERE id=?',(rid,)).fetchone(); start=c.execute('SELECT x.*,b.stop_order FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.id=? AND x.daily_route_id=?',(start_id,rid)).fetchone()
     if not dr or not start: c.close(); raise HTTPException(404,'找不到路線或起始分館')
     if dr['service_date']!=today() or dr['secretary_signed_at']: c.close(); raise HTTPException(409,'只能調整今日未簽核路線')
     if start['status'] not in ('WAITING_SECRETARY','WAITING_DRIVER'): c.close(); raise HTTPException(409,'只能從尚未開始的分館交接')
@@ -2611,7 +2640,7 @@ async def driver_claim_stations(req:Request):
     except (KeyError,ValueError,TypeError): raise HTTPException(400,'請選擇路線與起始分館')
     c=db()
     try:
-        c.execute('BEGIN IMMEDIATE')
+        lock_schedule_writes(c)
         dr=c.execute('SELECT * FROM daily_routes WHERE id=? AND service_date=?',(rid,today())).fetchone()
         start=c.execute('SELECT x.id,b.stop_order FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.id=? AND x.daily_route_id=?',(start_id,rid)).fetchone()
         if not dr or not start: raise HTTPException(404,'找不到今日路線或分館')
@@ -2669,7 +2698,7 @@ async def segment_sign(rid:int,req:Request):
     if not isinstance(sig,str) or not sig.startswith('data:image/png;base64,'):raise HTTPException(400,'請先完成簽名')
     c=db()
     try:
-        c.execute('BEGIN IMMEDIATE')
+        lock_schedule_writes(c)
         dr=c.execute('SELECT * FROM daily_routes WHERE id=?',(rid,)).fetchone()
         if not dr or dr['service_date']!=today():raise HTTPException(404,'找不到今日路線')
         if dr['secretary_signed_at'] or is_report_locked(c,dr['service_date']):raise HTTPException(409,'路線已簽核或日報已鎖定')
