@@ -3,3 +3,19 @@ __pycache__/
 .venv/
 .env
 .env.*
+
+# Project-local UI review tools and runtime caches; versions are recorded in tools/.
+.agents/skills/impeccable/
+.impeccable/engine/
+.impeccable/config.local.json
+.impeccable/hook*.json
+.taste-skill/
+
+# UI screenshots are private local report artifacts; never stage them.
+docs/ui-audit/evidence/*.jpg
+docs/ui-audit/evidence/*.jpeg
+docs/ui-audit/evidence/*.png
+docs/ui-audit/evidence/*.webp
+
+# All raw UI audit outputs are local-only, including JSON, logs and screenshots.
+docs/ui-audit/evidence/

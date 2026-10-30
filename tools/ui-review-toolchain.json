@@ -1,0 +1,32 @@
+{
+  "scope": "project",
+  "mode": "read-only audit; no UI changes",
+  "impeccable": {
+    "packageVersion": "4.8.0",
+    "source": "https://github.com/pbakaus/impeccable",
+    "sourceCommit": "5e745ace7e151feb2a93d360d0281fe39448b857",
+    "engineVersion": "0.1.18",
+    "installPath": ".agents/skills/impeccable",
+    "engineCache": ".impeccable/engine",
+    "hooksInstalled": false,
+    "engineDarwinX64Sha256": "1f1eee78c142f7e40e16f481aeeeb1fad1d8515d8a1ef033d7c6d133e52232b3",
+    "reviewedFiles": {
+      "SKILL.md": "fab04b31f946573b00a8559db1fc070f8ea5825254d491c2b13156e5661a86d7",
+      "scripts/impeccable": "d9709ee88e790bda2d98f55c4d1abe42e28b91db849882a2998bac79b1e074cb",
+      "scripts/VERSION": "447836d46f39c5900faf74ad6a6554b8e1fafeca1f78de0416d5f05c6e09a080",
+      "scripts/engine-checksums.txt": "2f0235179cbc515d7c7ec71a9a08283d0cb88a5238d35ffa5a5f42122e78fe35",
+      "reference/critique.md": "c210c9506877c6c8d88880a337fddd95d4315daf70ed6bc631ee6520481f1a0c",
+      "reference/audit.md": "5ba9e3a090fc4c4d212c8cbfa5a48f7454ceb10fa81a284b4a7b4e8351ece2f1",
+      "reference/adapt.md": "9807cdc112b8bcbdeff9cd2516cda4d07129f1d47f29df4d57645344f34950c1",
+      "reference/harden.md": "4167eb7fc456cdfe09ff0ac2dbcb5e59cee57e590137aab6cc8ec08aafb6d775",
+      "reference/polish.md": "81666fc7f783b4e3514db6554e713dc0479bd9cdedb06e93d15f8b579aae869a"
+    }
+  },
+  "tasteSkill": {
+    "source": "https://github.com/Leonxlnx/taste-skill",
+    "version": "2.1.5",
+    "sourceCommit": "12af471f627f866411b4bd785b19646d3672784c",
+    "mode": "App Screen; keep incumbent palette/type; no redesign"
+  },
+  "applicationBase": "05d05cac574e14b015b286bd0f231160c891db82"
+}
