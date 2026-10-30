@@ -568,7 +568,7 @@ async function openOfficeRouteSign(id){
 async function submitOfficeRouteSign(id){
   const c=document.getElementById('officeRouteSig');if(!c)return;
   if(!confirm('確認本路線資料已核對無誤並完成總館路線簽核？'))return;
-  try{await api('/api/routes/'+id+'/secretary-sign',{method:'POST',body:JSON.stringify({signature:c.toDataURL('image/png')})});routeOfficeSignatureHost.innerHTML='';await loadSignStatus();alert('本路線總館簽核完成')}catch(e){alert(e.message)}
+  try{const result=await api('/api/routes/'+id+'/secretary-sign',{method:'POST',body:JSON.stringify({signature:c.toDataURL('image/png')})});routeOfficeSignatureHost.innerHTML='';await loadSignStatus();alert(result.already_signed===true?'此路線已完成簽核，原簽名及時間均已保留':'簽核完成')}catch(e){alert(e.message)}
 }
 function escapeDriverText(value){return String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));}
 function driverSignaturesHtml(x){

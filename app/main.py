@@ -248,7 +248,15 @@ def db():
     # Local development fallback only.
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     con=sqlite3.connect(DB, timeout=30); con.row_factory=sqlite3.Row
-    con.execute('PRAGMA foreign_keys=ON'); con.execute('PRAGMA journal_mode=WAL')
+    con.execute('PRAGMA foreign_keys=ON')
+    try:
+        con.execute('PRAGMA journal_mode=WAL')
+    except sqlite3.OperationalError as error:
+        # Two processes can race while enabling WAL on a brand-new database.
+        # WAL is an optimization; BEGIN IMMEDIATE still serializes bootstrap.
+        if error.sqlite_errorcode not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+            con.close()
+            raise
     return con
 
 def public_base_url(req: Request):
@@ -318,33 +326,44 @@ def email_log_finish(c, lid, result):
 
 
 def init_db():
-    DB.parent.mkdir(parents=True, exist_ok=True)
+    """Explicit, schema-only initialization. Never called during module import."""
+    from app.schema import initialize_schema
     c=db()
-    c.executescript('''
-    CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT UNIQUE, password_hash TEXT, role TEXT, email TEXT, is_active INTEGER DEFAULT 1, failed_count INTEGER DEFAULT 0, locked_until TEXT);
-    CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY, user_id INTEGER, expires_at TEXT);
-    CREATE TABLE IF NOT EXISTS password_resets(id INTEGER PRIMARY KEY, user_id INTEGER, token_hash TEXT UNIQUE, expires_at TEXT, used_at TEXT, created_at TEXT);
-    CREATE TABLE IF NOT EXISTS routes(id INTEGER PRIMARY KEY, code TEXT UNIQUE, name TEXT, active INTEGER DEFAULT 1);
-    CREATE TABLE IF NOT EXISTS drivers(id INTEGER PRIMARY KEY, name TEXT, active INTEGER DEFAULT 1, pin_hash TEXT);
-    CREATE TABLE IF NOT EXISTS driver_devices(id INTEGER PRIMARY KEY, driver_id INTEGER, device_key TEXT UNIQUE, activated_at TEXT, revoked_at TEXT, last_seen_at TEXT);
-    CREATE TABLE IF NOT EXISTS driver_activation_tokens(id INTEGER PRIMARY KEY, driver_id INTEGER, token_hash TEXT UNIQUE, created_at TEXT, expires_at TEXT, used_at TEXT, revoked_at TEXT, created_by INTEGER);
-    CREATE TABLE IF NOT EXISTS branches(id INTEGER PRIMARY KEY, code TEXT UNIQUE, name TEXT, route_id INTEGER, stop_order INTEGER, active INTEGER DEFAULT 1, pin_hash TEXT, access_token_hash TEXT UNIQUE, qr_created_at TEXT, address TEXT DEFAULT '', phone TEXT DEFAULT '', contact_name TEXT DEFAULT '', contact_info TEXT DEFAULT '', delivery_weekdays TEXT DEFAULT '1,2,3,4,5', delivery_frequency TEXT DEFAULT '每週固定');
-    CREATE TABLE IF NOT EXISTS daily_routes(id INTEGER PRIMARY KEY, service_date TEXT, route_id INTEGER, driver_id INTEGER, status TEXT DEFAULT 'ACTIVE', driver_signature TEXT, driver_signed_at TEXT, UNIQUE(service_date,route_id));
-    CREATE TABLE IF NOT EXISTS deliveries(id INTEGER PRIMARY KEY, service_date TEXT, daily_route_id INTEGER, branch_id INTEGER, status TEXT DEFAULT 'WAITING_SECRETARY', document_original INTEGER, document_final INTEGER, document_return_final INTEGER, outbound_original INTEGER, outbound_final INTEGER, inbound_final INTEGER, note_final TEXT, signer_name TEXT, branch_signed_at TEXT, branch_signature TEXT, receipt_at TEXT, voided_at TEXT, voided_by INTEGER, void_reason TEXT, admin_closed_at TEXT, admin_closed_by INTEGER, admin_close_reason TEXT, correction_signature TEXT, correction_signer_name TEXT, correction_reason TEXT, corrected_at TEXT, driver_confirmed_at TEXT, row_version INTEGER DEFAULT 1, UNIQUE(service_date,branch_id));
-    CREATE TABLE IF NOT EXISTS corrections(id INTEGER PRIMARY KEY, delivery_id INTEGER, requested_by_driver_id INTEGER, requested_at TEXT, fields_json TEXT, driver_note TEXT, status TEXT, resolved_at TEXT);
-    CREATE TABLE IF NOT EXISTS audit_logs(id INTEGER PRIMARY KEY, actor_type TEXT, actor_id TEXT, role TEXT, action TEXT, entity_type TEXT, entity_id TEXT, before_json TEXT, after_json TEXT, reason TEXT, created_at TEXT);
-    CREATE TABLE IF NOT EXISTS branch_sessions(token_hash TEXT PRIMARY KEY, branch_id INTEGER, delivery_id INTEGER, expires_at TEXT);
-    CREATE TABLE IF NOT EXISTS driver_sessions(token_hash TEXT PRIMARY KEY, driver_id INTEGER, device_id INTEGER, expires_at TEXT);
-    CREATE TABLE IF NOT EXISTS daily_reports(id INTEGER PRIMARY KEY, service_date TEXT UNIQUE, secretary_signature TEXT, secretary_signed_at TEXT, status TEXT DEFAULT 'OPEN', locked_at TEXT);
-    CREATE TABLE IF NOT EXISTS email_recipients(id INTEGER PRIMARY KEY, email TEXT, recipient_type TEXT DEFAULT 'TO', active INTEGER DEFAULT 1, created_at TEXT);
-    CREATE TABLE IF NOT EXISTS email_logs(id INTEGER PRIMARY KEY, report_type TEXT, period TEXT, recipients TEXT, status TEXT, error_message TEXT, sent_at TEXT, created_at TEXT, email_type TEXT, subject TEXT, to_addresses TEXT, cc_addresses TEXT, bcc_addresses TEXT, sender TEXT, provider TEXT, message_id TEXT, triggered_by TEXT, delivery_identifier TEXT);
-    CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, value TEXT);
-    CREATE TABLE IF NOT EXISTS delivery_exceptions(id INTEGER PRIMARY KEY, service_date TEXT, branch_id INTEGER, exception_type TEXT, reason TEXT, created_by INTEGER, created_at TEXT, UNIQUE(service_date,branch_id));
-    CREATE TABLE IF NOT EXISTS global_closures(id INTEGER PRIMARY KEY, service_date TEXT UNIQUE, reason TEXT, created_by INTEGER, created_at TEXT);
-    CREATE TABLE IF NOT EXISTS route_handoffs(id INTEGER PRIMARY KEY, service_date TEXT, daily_route_id INTEGER, from_driver_id INTEGER, to_driver_id INTEGER, start_delivery_id INTEGER, reason TEXT, note TEXT, created_by INTEGER, created_at TEXT);
-    CREATE TABLE IF NOT EXISTS delivery_driver_assignments(id INTEGER PRIMARY KEY, delivery_id INTEGER UNIQUE, driver_id INTEGER, assigned_at TEXT, handoff_id INTEGER);
-    CREATE TABLE IF NOT EXISTS route_segment_signatures(id INTEGER PRIMARY KEY, service_date TEXT, daily_route_id INTEGER, driver_id INTEGER, signature TEXT, signed_at TEXT, UNIQUE(service_date,daily_route_id,driver_id));
-    ''')
+    try:
+        initialize_schema(c, USE_POSTGRES, (
+            migrate_branch_signers, migrate_corrections_for_repeat_requests,
+            migrate_email_logs_gmail_api, migrate_route_secretary_signatures,
+            migrate_document_return_final, migrate_v1929,
+        ))
+    finally:
+        c.close()
+
+
+def seed_demo_data():
+    """Explicit local fixture bootstrap; never available for PostgreSQL/production."""
+    if APP_ENV not in ('development', 'test') or USE_POSTGRES:
+        raise RuntimeError('Demo bootstrap requires local SQLite development/test mode')
+    # Require an explicit dedicated target; never use the tracked data/app.db.
+    if not os.getenv('DATA_DIR') or DB.resolve() == (BASE / 'data' / 'app.db').resolve():
+        raise RuntimeError('Demo bootstrap requires a dedicated DATA_DIR')
+    c=db()
+    try:
+        from app.schema import BASE_SCHEMA, SchemaTransaction
+        c.execute('BEGIN IMMEDIATE')
+        tables = re.findall(r'CREATE TABLE IF NOT EXISTS (\w+)\(', BASE_SCHEMA)
+        for table in tables + ['branch_signers', 'delivery_items']:
+            if c.execute('SELECT 1 FROM '+table+' LIMIT 1').fetchone():
+                raise RuntimeError('Demo bootstrap refuses existing data')
+        _seed_demo_data(SchemaTransaction(c, False))
+        c.commit()
+    except BaseException:
+        c.rollback()
+        raise
+    finally:
+        c.close()
+
+
+def _seed_demo_data(c):
     if not c.execute('SELECT 1 FROM users').fetchone():
         admin_password=initial_secret('ADMIN_INITIAL_PASSWORD','85017306')
         secretary_password=initial_secret('SECRETARY_INITIAL_PASSWORD','03751080')
@@ -361,29 +380,17 @@ def init_db():
             # raw bootstrap token only for demo retrieval is derived by rotation endpoint; initial QR regenerated below through helper table impossible, so store demo token in audit
             c.execute('INSERT INTO audit_logs(actor_type,role,action,entity_type,entity_id,after_json,created_at) VALUES(?,?,?,?,?,?,?)',('SYSTEM','SYSTEM','SEED_BRANCH_TOKEN','BRANCH',str(i),json.dumps({'token':tok}),now()))
         c.commit()
-    migrate_branch_signers(c)
-    migrate_corrections_for_repeat_requests(c)
-    migrate_email_logs_gmail_api(c)
-    migrate_route_secretary_signatures(c)
-    migrate_document_return_final(c)
-    migrate_v1929(c)
     migrate_official_routes_and_branches(c)
     migrate_default_route_drivers(c)
     stabilize_accounts_and_today_drivers(c)
-    if USE_POSTGRES:
-        # Explicit seed IDs 1..6 must advance identity sequences before later inserts.
-        for tbl in ('routes','users','drivers','branches'):
-            c.execute("SELECT setval(pg_get_serial_sequence(?, 'id'), COALESCE((SELECT MAX(id) FROM "+tbl+"),1), true)",(tbl,))
-        c.commit()
-    apply_demo_branch_limit(c)
     ensure_today(c)
-    reset_test_day_once(c)
-    c.close()
+
 
 def migrate_branch_signers(c):
-    # Serialize this additive startup migration across PostgreSQL web instances.
+    # Serialize this explicit additive migration across PostgreSQL instances.
     if USE_POSTGRES: c.execute('SELECT pg_advisory_xact_lock(194001)')
-    c.executescript("""CREATE TABLE IF NOT EXISTS branch_signers(id INTEGER PRIMARY KEY, branch_id BIGINT NOT NULL REFERENCES branches(id), name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(branch_id,name));""")
+    from app.schema import SchemaTransaction
+    SchemaTransaction(c, USE_POSTGRES).executescript("""CREATE TABLE IF NOT EXISTS branch_signers(id INTEGER PRIMARY KEY, branch_id BIGINT NOT NULL REFERENCES branches(id), name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(branch_id,name));""")
     c.commit()
 
 
@@ -499,22 +506,19 @@ def migrate_v1929(c):
         # V19.2.27: Oregon/Singapore may auto-deploy the same commit concurrently
         # while sharing one Neon database. PostgreSQL's CREATE TABLE IF NOT EXISTS
         # can still race at pg_type creation, so serialize this schema creation.
-        c.execute("SET statement_timeout TO '60s'")
-        c.execute("SELECT pg_advisory_lock(19290)")
-        try:
-            exists=c.execute("SELECT to_regclass('public.delivery_items') AS rel").fetchone()
-            if not exists or not exists.get('rel'):
-                c.execute("""CREATE TABLE delivery_items(
-                    id BIGSERIAL PRIMARY KEY,
-                    delivery_id INTEGER NOT NULL,
-                    item_type TEXT NOT NULL,
-                    item_name TEXT DEFAULT '',
-                    quantity INTEGER NOT NULL DEFAULT 0,
-                    created_by INTEGER,
-                    updated_at TEXT
-                )""")
-        finally:
-            c.execute("SELECT pg_advisory_unlock(19290)")
+        c.execute("SET LOCAL statement_timeout TO '60s'")
+        c.execute("SELECT pg_advisory_xact_lock(19290)")
+        exists=c.execute("SELECT to_regclass('public.delivery_items') AS rel").fetchone()
+        if not exists or not exists.get('rel'):
+            c.execute("""CREATE TABLE delivery_items(
+                id BIGSERIAL PRIMARY KEY,
+                delivery_id INTEGER NOT NULL,
+                item_type TEXT NOT NULL,
+                item_name TEXT DEFAULT '',
+                quantity INTEGER NOT NULL DEFAULT 0,
+                created_by INTEGER,
+                updated_at TEXT
+            )""")
     else:
         existing={r['name'] for r in c.execute('PRAGMA table_info(deliveries)').fetchall()}
         for name,typ in cols:
@@ -697,35 +701,12 @@ def default_driver_id(c, route_id):
     return row['id']
 
 def apply_demo_branch_limit(c):
-    if c.execute("SELECT 1 FROM app_settings WHERE key='OFFICIAL_ROSTER_V183_PG'").fetchone(): return
-    # Apply the 3-branch demo preset once only. After that, admin enable/disable choices are respected.
-    key='DEMO_BRANCH_LIMIT_INITIALIZED_V5'
-    if c.execute('SELECT 1 FROM app_settings WHERE key=?',(key,)).fetchone():
-        return
-    n=max(1, DEMO_ACTIVE_BRANCHES)
-    c.execute('UPDATE branches SET active=CASE WHEN id<=? THEN 1 ELSE 0 END',(n,))
-    c.execute("DELETE FROM branch_sessions WHERE delivery_id IN (SELECT d.id FROM deliveries d JOIN branches b ON b.id=d.branch_id WHERE d.service_date=? AND b.active=0)",(today(),))
-    c.execute("DELETE FROM corrections WHERE delivery_id IN (SELECT d.id FROM deliveries d JOIN branches b ON b.id=d.branch_id WHERE d.service_date=? AND b.active=0)",(today(),))
-    c.execute("DELETE FROM deliveries WHERE service_date=? AND branch_id IN (SELECT id FROM branches WHERE active=0)",(today(),))
-    c.execute('INSERT INTO app_settings(key,value) VALUES(?,?)',(key,now()))
-    c.commit()
+    raise RuntimeError('Destructive demo cleanup is disabled; no reset interface is provided')
+
 
 def reset_test_day_once(c):
-    key='V4_THREE_BRANCH_TEST_RESET'
-    if c.execute('SELECT 1 FROM app_settings WHERE key=?',(key,)).fetchone():
-        return
-    # One-time clean restart for the hosted test: reset only today's three active test branches.
-    active_ids=[r['id'] for r in c.execute('SELECT id FROM branches WHERE active=1 ORDER BY id LIMIT ?',(max(1,DEMO_ACTIVE_BRANCHES),)).fetchall()]
-    if active_ids:
-        q=','.join('?' for _ in active_ids)
-        dids=[r['id'] for r in c.execute(f'SELECT id FROM deliveries WHERE service_date=? AND branch_id IN ({q})',(today(),*active_ids)).fetchall()]
-        if dids:
-            qd=','.join('?' for _ in dids)
-            c.execute(f'DELETE FROM branch_sessions WHERE delivery_id IN ({qd})',dids)
-            c.execute(f'DELETE FROM corrections WHERE delivery_id IN ({qd})',dids)
-            c.execute(f"UPDATE deliveries SET status='WAITING_SECRETARY',document_original=NULL,document_final=NULL,document_return_final=NULL,outbound_original=NULL,outbound_final=NULL,inbound_final=NULL,note_final=NULL,signer_name=NULL,branch_signed_at=NULL,branch_signature=NULL,correction_signature=NULL,correction_signer_name=NULL,correction_reason=NULL,corrected_at=NULL,driver_confirmed_at=NULL,row_version=row_version+1 WHERE id IN ({qd})",dids)
-    c.execute('INSERT INTO app_settings(key,value) VALUES(?,?)',(key,now()))
-    c.commit()
+    raise RuntimeError('Destructive test reset is disabled; no reset interface is provided')
+
 
 def is_report_locked(c, service_date=None):
     d=service_date or today()
@@ -759,6 +740,10 @@ def rebuild_service_date(c, service_date, commit=True):
     except:
         raise ValueError('service_date must be YYYY-MM-DD')
 
+    if is_report_locked(c, service_date):
+        if commit: c.commit()
+        return
+
     route_map={}
     routes=c.execute('SELECT * FROM routes WHERE active=1 ORDER BY id').fetchall()
     for r in routes:
@@ -787,7 +772,7 @@ def rebuild_service_date(c, service_date, commit=True):
                 'SELECT * FROM daily_routes WHERE service_date=? AND route_id=?',
                 (service_date,r['id'])
             ).fetchone()
-        if dr:
+        if dr and dr['status']=='ACTIVE' and not dr['driver_signed_at'] and not dr['driver_signature'] and not dr['secretary_signed_at'] and not dr['secretary_signature']:
             route_map[r['id']]=dr['id']
 
     branches=c.execute('SELECT * FROM branches ORDER BY id').fetchall()
@@ -815,17 +800,8 @@ def rebuild_service_date(c, service_date, commit=True):
                 except Exception:
                     pass
 
-        elif not expected and existing and existing['status']!='VOID':
-            untouched=(
-                existing['document_original'] is None and
-                existing['outbound_original'] is None and
-                existing['branch_signed_at'] is None and
-                existing['driver_confirmed_at'] is None
-            )
-            if untouched:
-                c.execute('DELETE FROM branch_sessions WHERE delivery_id=?',(existing['id'],))
-                c.execute('DELETE FROM corrections WHERE delivery_id=?',(existing['id'],))
-                c.execute('DELETE FROM deliveries WHERE id=?',(existing['id'],))
+        # Existing deliveries are immutable to the day builder, including days
+        # whose schedule changed. Explicit schedule operations own cancellation.
     if commit: c.commit()
 
 def next_service_date():
@@ -838,8 +814,15 @@ def ensure_today(c):
 def audit(c, actor_type, actor_id, role, action, etype, eid, before=None, after=None, reason=None):
     c.execute('INSERT INTO audit_logs(actor_type,actor_id,role,action,entity_type,entity_id,before_json,after_json,reason,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)',(actor_type,str(actor_id or ''),role,action,etype,str(eid),json.dumps(before,ensure_ascii=False) if before is not None else None,json.dumps(after,ensure_ascii=False) if after is not None else None,reason,now()))
 
-print(f'APP_VERSION={APP_VERSION}',flush=True)
-init_db()
+@app.on_event('startup')
+def validate_startup_schema():
+    # Startup is read-only: explicit init/migrate must precede serving requests.
+    from app.schema import validate_schema
+    c=db()
+    try:
+        validate_schema(c)
+    finally:
+        c.close()
 
 def current_user(req):
     auth=req.headers.get('Authorization','')
@@ -2113,28 +2096,69 @@ def route_signed_summary(rid:int,req:Request):
 @app.post('/api/routes/{rid}/secretary-sign')
 async def secretary_route_sign(rid:int,req:Request):
     u=require_user(req,['SECRETARY']); p=await req.json(); sig=p.get('signature','')
-    if not sig: raise HTTPException(400,'總館簽名必填')
-    c=db(); lock_schedule_writes(c); dr=c.execute("SELECT * FROM daily_routes WHERE id=?",(rid,)).fetchone()
-    if not dr: c.close(); raise HTTPException(404)
-    if dr['status']!='DRIVER_SIGNED': c.close(); raise HTTPException(409,'需先完成司機路線簽名')
-    missing=c.execute("SELECT COUNT(*) n FROM deliveries WHERE daily_route_id=? AND status<>'VOID' AND document_final IS NULL",(rid,)).fetchone()['n']
-    if missing: c.close(); raise HTTPException(409,f'尚有 {missing} 站公文－總館送出數量未填，請由總館完成後再簽核')
-    c.execute('UPDATE daily_routes SET secretary_signature=?,secretary_signed_at=? WHERE id=?',(sig,now(),rid))
-    audit(c,'USER',u['id'],u['role'],'SECRETARY_ROUTE_SIGN','DAILY_ROUTE',rid,after={'signed_at':now()})
-    c.commit(); c.close(); await publish({'type':'route.secretary_signed','id':rid}); return {'ok':True}
+    if not isinstance(sig,str) or not sig.strip(): raise HTTPException(400,'總館簽名必填')
+    c=db()
+    try:
+        lock_schedule_writes(c)
+        dr=c.execute("SELECT * FROM daily_routes WHERE id=?",(rid,)).fetchone()
+        if not dr: raise HTTPException(404)
+        if is_report_locked(c,dr['service_date']):
+            raise HTTPException(409,'該日日報已鎖定，不可重新簽核')
+        if dr['secretary_signature'] is not None or dr['secretary_signed_at'] is not None:
+            if dr['secretary_signature']==sig and dr['secretary_signed_at']:
+                c.rollback()
+                return {'ok':True,'already_signed':True,'signed_at':dr['secretary_signed_at']}
+            raise HTTPException(409,'路線已有簽核紀錄，不可覆寫；更正須另行授權')
+        if dr['status']!='DRIVER_SIGNED': raise HTTPException(409,'需先完成司機路線簽名')
+        missing=c.execute("SELECT COUNT(*) n FROM deliveries WHERE daily_route_id=? AND status<>'VOID' AND document_final IS NULL",(rid,)).fetchone()['n']
+        if missing: raise HTTPException(409,f'尚有 {missing} 站公文－總館送出數量未填，請由總館完成後再簽核')
+        stamp=now()
+        changed=c.execute("""UPDATE daily_routes SET secretary_signature=?,secretary_signed_at=?
+            WHERE id=? AND status='DRIVER_SIGNED'
+              AND secretary_signature IS NULL AND secretary_signed_at IS NULL
+              AND NOT EXISTS(SELECT 1 FROM daily_reports WHERE service_date=? AND status='LOCKED')""",
+            (sig,stamp,rid,dr['service_date']))
+        if changed.rowcount!=1: raise HTTPException(409,'路線或日報狀態已變更，請重新整理')
+        audit(c,'USER',u['id'],u['role'],'SECRETARY_ROUTE_SIGN','DAILY_ROUTE',rid,after={'signed_at':stamp})
+        c.commit()
+    except Exception:
+        c.rollback(); raise
+    finally: c.close()
+    await publish({'type':'route.secretary_signed','id':rid})
+    return {'ok':True,'signed_at':stamp}
+
 
 @app.post('/api/secretary/final-sign')
 async def final_sign(req:Request):
     u=require_user(req,['SECRETARY']);p=await req.json(); sig=p.get('signature','')
-    if not sig: raise HTTPException(400,'總館簽名必填')
-    c=db(); lock_schedule_writes(c); active=c.execute("""SELECT dr.id,dr.status FROM daily_routes dr WHERE dr.service_date=? AND EXISTS(SELECT 1 FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID')""",(today(),)).fetchall()
-    if not active: c.close(); raise HTTPException(409,'今日沒有配送路線')
-    if any(x['status']!='DRIVER_SIGNED' for x in active): c.close(); raise HTTPException(409,'尚有配送路線未完成司機簽名')
-    unsigned=c.execute("SELECT COUNT(*) n FROM daily_routes dr WHERE dr.service_date=? AND EXISTS(SELECT 1 FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID') AND dr.secretary_signature IS NULL",(today(),)).fetchone()['n']
-    if unsigned: c.close(); raise HTTPException(409,f'尚有 {unsigned} 條路線未完成總館簽核')
-    if is_report_locked(c): c.close(); raise HTTPException(409,'今日日報已完成簽名並鎖定')
-    c.execute("INSERT INTO daily_reports(service_date,secretary_signature,secretary_signed_at,status,locked_at) VALUES(?,?,?,?,?) ON CONFLICT(service_date) DO UPDATE SET secretary_signature=excluded.secretary_signature,secretary_signed_at=excluded.secretary_signed_at,status='LOCKED',locked_at=excluded.locked_at",(today(),sig,now(),'LOCKED',now()))
-    audit(c,'USER',u['id'],u['role'],'SECRETARY_FINAL_SIGN','DAY',today(),after={'locked_at':now()}); c.commit();c.close();await publish({'type':'report.locked'});return {'ok':True}
+    if not isinstance(sig,str) or not sig.strip(): raise HTTPException(400,'總館簽名必填')
+    c=db()
+    try:
+        lock_schedule_writes(c)
+        day=today()
+        report=c.execute('SELECT * FROM daily_reports WHERE service_date=?',(day,)).fetchone()
+        if report and (report['status']=='LOCKED' or any(report[k] is not None for k in ('secretary_signature','secretary_signed_at','locked_at'))):
+            raise HTTPException(409,'日報已有簽核或鎖定紀錄，不可覆寫')
+        active=c.execute("""SELECT dr.id,dr.status FROM daily_routes dr WHERE dr.service_date=? AND EXISTS(SELECT 1 FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID')""",(day,)).fetchall()
+        if not active: raise HTTPException(409,'今日沒有配送路線')
+        if any(x['status']!='DRIVER_SIGNED' for x in active): raise HTTPException(409,'尚有配送路線未完成司機簽名')
+        unsigned=c.execute("SELECT COUNT(*) n FROM daily_routes dr WHERE dr.service_date=? AND EXISTS(SELECT 1 FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID') AND dr.secretary_signature IS NULL",(day,)).fetchone()['n']
+        if unsigned: raise HTTPException(409,f'尚有 {unsigned} 條路線未完成總館簽核')
+        stamp=now()
+        changed=c.execute("""INSERT INTO daily_reports(service_date,secretary_signature,secretary_signed_at,status,locked_at)
+            VALUES(?,?,?,'LOCKED',?) ON CONFLICT(service_date) DO UPDATE SET
+            secretary_signature=excluded.secretary_signature,secretary_signed_at=excluded.secretary_signed_at,
+            status='LOCKED',locked_at=excluded.locked_at
+            WHERE daily_reports.status<>'LOCKED' AND daily_reports.secretary_signature IS NULL
+              AND daily_reports.secretary_signed_at IS NULL AND daily_reports.locked_at IS NULL""",(day,sig,stamp,stamp))
+        if changed.rowcount!=1: raise HTTPException(409,'日報狀態已變更，不可覆寫')
+        audit(c,'USER',u['id'],u['role'],'SECRETARY_FINAL_SIGN','DAY',day,after={'locked_at':stamp})
+        c.commit()
+    except Exception:
+        c.rollback(); raise
+    finally: c.close()
+    await publish({'type':'report.locked'})
+    return {'ok':True}
 
 @app.get('/api/reports/monthly-route-summary')
 def monthly_route_summary(req:Request, month:str|None=None):

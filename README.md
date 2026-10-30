@@ -2,6 +2,8 @@
 
 Email 寄送已改為 Google Gmail API + OAuth 2.0 + HTTPS 443；配送與簽收功能沿用 V18.3.16 PostgreSQL。
 
+V19.4 安全修復後，啟動只檢查 Schema，不再自動建表、同步名冊或重設資料。空庫須先明確初始化；正式庫升級須先審閱 Migration。操作及相容性限制見 [初始化安全修復](docs/V19.4-initialization-safety.md)。
+
 # 圖書物流配送暨電子簽收管理系統 — GitHub Deploy Edition
 
 這是可直接放入 GitHub Repository，並透過 Docker 部署到公開 HTTPS 網站的 MVP / UAT 版本。
@@ -36,7 +38,7 @@ chmod +x start.sh
 
 `http://127.0.0.1:8000`
 
-Development 模式在沒有設定 `.env` 時仍保留專案原先的本機測試初始值。
+Development 模式的示範種子須另外明確建立，只允許獨立且空白的 SQLite 資料庫；不會在啟動時自動建立帳號或資料。
 
 ## GitHub / 公開部署
 

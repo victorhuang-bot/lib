@@ -22,6 +22,8 @@ _bootstrap = tempfile.TemporaryDirectory(prefix='movingmatch-v194-bootstrap-')
 with patch.dict(os.environ, {'DATABASE_URL': '', 'DATA_DIR': _bootstrap.name, 'APP_ENV': 'development'}, clear=True):
     with patch.object(socket.socket, 'connect', side_effect=AssertionError('Tests prohibit outbound network')):
         from app import main
+        main.init_db()
+        main.seed_demo_data()
 
 LABELS = ['公文－總館送出', '公文－分館送出', '圖書－倉庫送出', '圖書－分館送出']
 PNG = 'data:image/png;base64,' + base64.b64encode(b'not-used-by-report').decode()
