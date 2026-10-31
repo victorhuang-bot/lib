@@ -219,8 +219,9 @@ class SchemaProcessAndDialectTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='movingmatch-schema-process-') as temp:
             path=Path(temp)/'app.db'
             command=[sys.executable,'-m','app.schema_init','--sqlite',str(path)]
+            # Local SQLite fixtures use test mode; production must require PG.
             # Never forward credentials to test subprocesses.
-            env={'PATH':os.environ.get('PATH',''),'APP_ENV':'production','PYTHONDONTWRITEBYTECODE':'1'}
+            env={'PATH':os.environ.get('PATH',''),'APP_ENV':'test','PYTHONDONTWRITEBYTECODE':'1'}
             processes=[subprocess.Popen(command,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True) for _ in range(2)]
             try:
                 for process in processes:

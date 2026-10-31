@@ -3,6 +3,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, Fil
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import base64
+import logging
 import sqlite3, os, sys, secrets, hashlib, hmac, base64, io, json, asyncio, csv, re
 try:
     import psycopg
@@ -75,6 +76,24 @@ def _prefill_cache_clear(service_date=None):
 
 # V18.3.9: Neon connection pool.
 # min_size=0 lets Neon scale to zero when truly idle; max_size limits free-tier pressure.
+class _PostgresPoolLogFilter(logging.Filter):
+    _movingmatch_pool_redaction = True
+
+    def filter(self, record):
+        # Pool workers log driver exceptions independently of db(). Preserve
+        # severity, but never emit connection arguments or exception traces.
+        record.msg = 'POSTGRES_POOL_DIAGNOSTIC'
+        record.args = ()
+        record.exc_info = None
+        record.exc_text = None
+        record.stack_info = None
+        return True
+
+
+_pool_logger = logging.getLogger('psycopg.pool')
+if not any(getattr(item, '_movingmatch_pool_redaction', False) for item in _pool_logger.filters):
+    _pool_logger.addFilter(_PostgresPoolLogFilter())
+
 _PG_POOL = None
 def pg_pool():
     global _PG_POOL
@@ -246,16 +265,16 @@ def db():
     if USE_POSTGRES:
         if psycopg is None or ConnectionPool is None:
             raise RuntimeError('DATABASE_URL 已設定，但 PostgreSQL driver/pool 尚未安裝')
-        last=None
         for attempt in range(3):
             try:
                 return _PgCompat(DATABASE_URL)
-            except Exception as e:
-                last=e
+            except Exception:
                 if attempt < 2:
                     import time
                     time.sleep(2)
-        raise RuntimeError(f'PostgreSQL 暫時無法連線：{type(last).__name__}: {last}')
+        # Driver errors can include connection settings. Never expose their text,
+        # type, or chained traceback through this public database entry point.
+        raise RuntimeError('POSTGRES_CONNECTION_UNAVAILABLE; SQLite fallback is forbidden') from None
     # Local development fallback only.
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     con=sqlite3.connect(DB, timeout=30); con.row_factory=sqlite3.Row
