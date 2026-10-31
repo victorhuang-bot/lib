@@ -1,0 +1,4698 @@
+{
+  "source": {
+    "project_id": "falling-truth-69257666",
+    "branch_id": "br-hidden-poetry-azep4vcu",
+    "branch_name": "production",
+    "database": "neondb",
+    "queried_at": "2026-10-31",
+    "source_type": "Neon read-only catalog",
+    "candidate_commit": "371e36b8d8d06cbe9e3452413b096952e405dc1d"
+  },
+  "catalog": {
+    "relations": [
+      {
+        "kind": "r",
+        "name": "users",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "sessions",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "password_resets",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "routes",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "drivers",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "driver_devices",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "driver_activation_tokens",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "branches",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "daily_routes",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "corrections",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "audit_logs",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "branch_sessions",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "driver_sessions",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "daily_reports",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "email_recipients",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "app_settings",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "delivery_exceptions",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "global_closures",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "route_handoffs",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "delivery_driver_assignments",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "route_segment_signatures",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "email_logs",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "delivery_items",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "deliveries",
+        "schema": "public"
+      },
+      {
+        "kind": "r",
+        "name": "branch_signers",
+        "schema": "public"
+      }
+    ],
+    "columns": [
+      {
+        "type": "int8",
+        "table": "users",
+        "column": "id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "YES",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": "BY DEFAULT"
+      },
+      {
+        "type": "int8",
+        "table": "password_resets",
+        "column": "id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "YES",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": "BY DEFAULT"
+      },
+      {
+        "type": "int8",
+        "table": "routes",
+        "column": "id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "YES",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": "BY DEFAULT"
+      },
+      {
+        "type": "int8",
+        "table": "drivers",
+        "column": "id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "YES",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": "BY DEFAULT"
+      },
+      {
+        "type": "int8",
+        "table": "driver_devices",
+        "column": "id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "YES",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": "BY DEFAULT"
+      },
+      {
+        "type": "int8",
+        "table": "driver_activation_tokens",
+        "column": "id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "YES",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": "BY DEFAULT"
+      },
+      {
+        "type": "int8",
+        "table": "branches",
+        "column": "id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "YES",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": "BY DEFAULT"
+      },
+      {
+        "type": "int8",
+        "table": "daily_routes",
+        "column": "id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "YES",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": "BY DEFAULT"
+      },
+      {
+        "type": "int8",
+        "table": "deliveries",
+        "column": "id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "YES",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": "BY DEFAULT"
+      },
+      {
+        "type": "int8",
+        "table": "corrections",
+        "column": "id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "YES",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": "BY DEFAULT"
+      },
+      {
+        "type": "int8",
+        "table": "audit_logs",
+        "column": "id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "YES",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": "BY DEFAULT"
+      },
+      {
+        "type": "int8",
+        "table": "daily_reports",
+        "column": "id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "YES",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": "BY DEFAULT"
+      },
+      {
+        "type": "int8",
+        "table": "email_recipients",
+        "column": "id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "YES",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": "BY DEFAULT"
+      },
+      {
+        "type": "int8",
+        "table": "email_logs",
+        "column": "id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "YES",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": "BY DEFAULT"
+      },
+      {
+        "type": "int8",
+        "table": "delivery_exceptions",
+        "column": "id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "YES",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": "BY DEFAULT"
+      },
+      {
+        "type": "int8",
+        "table": "global_closures",
+        "column": "id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "YES",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": "BY DEFAULT"
+      },
+      {
+        "type": "int8",
+        "table": "route_handoffs",
+        "column": "id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "YES",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": "BY DEFAULT"
+      },
+      {
+        "type": "int8",
+        "table": "delivery_driver_assignments",
+        "column": "id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "YES",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": "BY DEFAULT"
+      },
+      {
+        "type": "int8",
+        "table": "route_segment_signatures",
+        "column": "id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "YES",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": "BY DEFAULT"
+      },
+      {
+        "type": "int8",
+        "table": "delivery_items",
+        "column": "id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "YES",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": "BY DEFAULT"
+      },
+      {
+        "type": "int8",
+        "table": "branch_signers",
+        "column": "id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "YES",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": "BY DEFAULT"
+      },
+      {
+        "type": "int4",
+        "table": "password_resets",
+        "column": "user_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "users",
+        "column": "locked_until",
+        "schema": "public",
+        "default": null,
+        "ordinal": 8,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "deliveries",
+        "column": "admin_closed_by",
+        "schema": "public",
+        "default": null,
+        "ordinal": 27,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "daily_routes",
+        "column": "driver_signature",
+        "schema": "public",
+        "default": null,
+        "ordinal": 6,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "branches",
+        "column": "name",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "email_recipients",
+        "column": "created_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 5,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "route_segment_signatures",
+        "column": "daily_route_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "app_settings",
+        "column": "value",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "email_logs",
+        "column": "status",
+        "schema": "public",
+        "default": null,
+        "ordinal": 5,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "deliveries",
+        "column": "void_reason",
+        "schema": "public",
+        "default": null,
+        "ordinal": 25,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "delivery_exceptions",
+        "column": "branch_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "deliveries",
+        "column": "admin_closed_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 26,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "corrections",
+        "column": "requested_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "driver_devices",
+        "column": "device_key",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "delivery_driver_assignments",
+        "column": "driver_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "branches",
+        "column": "delivery_weekdays",
+        "schema": "public",
+        "default": "'1,2,3,4,5'::text",
+        "ordinal": 14,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "email_logs",
+        "column": "bcc_addresses",
+        "schema": "public",
+        "default": null,
+        "ordinal": 13,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "delivery_exceptions",
+        "column": "created_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 7,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "branches",
+        "column": "qr_created_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 9,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "sessions",
+        "column": "expires_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "email_logs",
+        "column": "provider",
+        "schema": "public",
+        "default": null,
+        "ordinal": 15,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "deliveries",
+        "column": "row_version",
+        "schema": "public",
+        "default": "1",
+        "ordinal": 20,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "branches",
+        "column": "pin_hash",
+        "schema": "public",
+        "default": null,
+        "ordinal": 7,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "daily_reports",
+        "column": "secretary_signed_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "branch_signers",
+        "column": "active",
+        "schema": "public",
+        "default": "1",
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "delivery_driver_assignments",
+        "column": "assigned_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "route_handoffs",
+        "column": "created_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 10,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "corrections",
+        "column": "requested_by_driver_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "global_closures",
+        "column": "service_date",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "driver_devices",
+        "column": "activated_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "delivery_items",
+        "column": "created_by",
+        "schema": "public",
+        "default": null,
+        "ordinal": 6,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "deliveries",
+        "column": "service_date",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "sessions",
+        "column": "token_hash",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "NO",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "delivery_exceptions",
+        "column": "exception_type",
+        "schema": "public",
+        "default": null,
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "deliveries",
+        "column": "signer_name",
+        "schema": "public",
+        "default": null,
+        "ordinal": 12,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "deliveries",
+        "column": "inbound_final",
+        "schema": "public",
+        "default": null,
+        "ordinal": 10,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "route_segment_signatures",
+        "column": "driver_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "deliveries",
+        "column": "corrected_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 18,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "branches",
+        "column": "route_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "route_handoffs",
+        "column": "service_date",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "deliveries",
+        "column": "correction_reason",
+        "schema": "public",
+        "default": null,
+        "ordinal": 17,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "branch_signers",
+        "column": "name",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "daily_reports",
+        "column": "secretary_signature",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "routes",
+        "column": "code",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "corrections",
+        "column": "status",
+        "schema": "public",
+        "default": null,
+        "ordinal": 7,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "audit_logs",
+        "column": "action",
+        "schema": "public",
+        "default": null,
+        "ordinal": 5,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "deliveries",
+        "column": "note_final",
+        "schema": "public",
+        "default": null,
+        "ordinal": 11,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "users",
+        "column": "is_active",
+        "schema": "public",
+        "default": "1",
+        "ordinal": 6,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "driver_activation_tokens",
+        "column": "driver_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "daily_routes",
+        "column": "secretary_signature",
+        "schema": "public",
+        "default": null,
+        "ordinal": 8,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "daily_routes",
+        "column": "driver_signed_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 7,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "global_closures",
+        "column": "created_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 5,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "audit_logs",
+        "column": "created_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 11,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "deliveries",
+        "column": "document_return_final",
+        "schema": "public",
+        "default": null,
+        "ordinal": 21,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "deliveries",
+        "column": "status",
+        "schema": "public",
+        "default": "'WAITING_SECRETARY'::text",
+        "ordinal": 5,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "driver_sessions",
+        "column": "token_hash",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "NO",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "corrections",
+        "column": "resolved_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 8,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "daily_routes",
+        "column": "secretary_signed_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 9,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "users",
+        "column": "role",
+        "schema": "public",
+        "default": null,
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "route_handoffs",
+        "column": "to_driver_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 5,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "deliveries",
+        "column": "branch_signed_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 13,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "deliveries",
+        "column": "correction_signature",
+        "schema": "public",
+        "default": null,
+        "ordinal": 15,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "delivery_exceptions",
+        "column": "created_by",
+        "schema": "public",
+        "default": null,
+        "ordinal": 6,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "driver_devices",
+        "column": "last_seen_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 6,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "delivery_items",
+        "column": "item_name",
+        "schema": "public",
+        "default": "''::text",
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "drivers",
+        "column": "active",
+        "schema": "public",
+        "default": "1",
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "audit_logs",
+        "column": "reason",
+        "schema": "public",
+        "default": null,
+        "ordinal": 10,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "branches",
+        "column": "active",
+        "schema": "public",
+        "default": "1",
+        "ordinal": 6,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "audit_logs",
+        "column": "actor_type",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "daily_routes",
+        "column": "route_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "driver_activation_tokens",
+        "column": "expires_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 5,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "route_segment_signatures",
+        "column": "signed_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 6,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "driver_sessions",
+        "column": "expires_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "delivery_items",
+        "column": "updated_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 7,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "password_resets",
+        "column": "used_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 5,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "users",
+        "column": "password_hash",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "email_logs",
+        "column": "report_type",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "email_recipients",
+        "column": "email",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "branches",
+        "column": "access_token_hash",
+        "schema": "public",
+        "default": null,
+        "ordinal": 8,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "email_logs",
+        "column": "cc_addresses",
+        "schema": "public",
+        "default": null,
+        "ordinal": 12,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "email_logs",
+        "column": "subject",
+        "schema": "public",
+        "default": null,
+        "ordinal": 10,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "email_logs",
+        "column": "delivery_identifier",
+        "schema": "public",
+        "default": null,
+        "ordinal": 18,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "daily_reports",
+        "column": "locked_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 6,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "branch_signers",
+        "column": "updated_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 6,
+        "identity": "NO",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "deliveries",
+        "column": "voided_by",
+        "schema": "public",
+        "default": null,
+        "ordinal": 24,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "email_logs",
+        "column": "triggered_by",
+        "schema": "public",
+        "default": null,
+        "ordinal": 17,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "driver_sessions",
+        "column": "device_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "deliveries",
+        "column": "driver_confirmed_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 19,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "daily_routes",
+        "column": "driver_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "branch_sessions",
+        "column": "branch_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "drivers",
+        "column": "pin_hash",
+        "schema": "public",
+        "default": null,
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "delivery_items",
+        "column": "item_type",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "email_logs",
+        "column": "to_addresses",
+        "schema": "public",
+        "default": null,
+        "ordinal": 11,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "corrections",
+        "column": "driver_note",
+        "schema": "public",
+        "default": null,
+        "ordinal": 6,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "users",
+        "column": "failed_count",
+        "schema": "public",
+        "default": "0",
+        "ordinal": 7,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "branch_sessions",
+        "column": "expires_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "password_resets",
+        "column": "created_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 6,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "driver_activation_tokens",
+        "column": "created_by",
+        "schema": "public",
+        "default": null,
+        "ordinal": 8,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "audit_logs",
+        "column": "actor_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "daily_routes",
+        "column": "service_date",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "branch_signers",
+        "column": "created_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 5,
+        "identity": "NO",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "daily_reports",
+        "column": "status",
+        "schema": "public",
+        "default": "'OPEN'::text",
+        "ordinal": 5,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "drivers",
+        "column": "name",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "deliveries",
+        "column": "admin_close_reason",
+        "schema": "public",
+        "default": null,
+        "ordinal": 28,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "email_recipients",
+        "column": "active",
+        "schema": "public",
+        "default": "1",
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "audit_logs",
+        "column": "after_json",
+        "schema": "public",
+        "default": null,
+        "ordinal": 9,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "email_logs",
+        "column": "recipients",
+        "schema": "public",
+        "default": null,
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "route_handoffs",
+        "column": "note",
+        "schema": "public",
+        "default": null,
+        "ordinal": 8,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "deliveries",
+        "column": "outbound_original",
+        "schema": "public",
+        "default": null,
+        "ordinal": 8,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "audit_logs",
+        "column": "entity_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 7,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "corrections",
+        "column": "fields_json",
+        "schema": "public",
+        "default": null,
+        "ordinal": 5,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "branch_sessions",
+        "column": "token_hash",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "NO",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "email_logs",
+        "column": "message_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 16,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "delivery_items",
+        "column": "delivery_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "deliveries",
+        "column": "document_original",
+        "schema": "public",
+        "default": null,
+        "ordinal": 6,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "email_logs",
+        "column": "sent_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 7,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "driver_sessions",
+        "column": "driver_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "audit_logs",
+        "column": "role",
+        "schema": "public",
+        "default": null,
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "branch_sessions",
+        "column": "delivery_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "branches",
+        "column": "delivery_frequency",
+        "schema": "public",
+        "default": "'每週固定'::text",
+        "ordinal": 15,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "route_handoffs",
+        "column": "start_delivery_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 6,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "email_logs",
+        "column": "email_type",
+        "schema": "public",
+        "default": null,
+        "ordinal": 9,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "email_logs",
+        "column": "sender",
+        "schema": "public",
+        "default": null,
+        "ordinal": 14,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "delivery_exceptions",
+        "column": "reason",
+        "schema": "public",
+        "default": null,
+        "ordinal": 5,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "branches",
+        "column": "contact_info",
+        "schema": "public",
+        "default": "''::text",
+        "ordinal": 13,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "driver_devices",
+        "column": "revoked_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 5,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "delivery_driver_assignments",
+        "column": "handoff_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 5,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "branches",
+        "column": "stop_order",
+        "schema": "public",
+        "default": null,
+        "ordinal": 5,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "users",
+        "column": "username",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "email_logs",
+        "column": "period",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "email_recipients",
+        "column": "recipient_type",
+        "schema": "public",
+        "default": "'TO'::text",
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "driver_activation_tokens",
+        "column": "used_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 6,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "route_segment_signatures",
+        "column": "signature",
+        "schema": "public",
+        "default": null,
+        "ordinal": 5,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "routes",
+        "column": "active",
+        "schema": "public",
+        "default": "1",
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "delivery_items",
+        "column": "quantity",
+        "schema": "public",
+        "default": "0",
+        "ordinal": 5,
+        "identity": "NO",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "branches",
+        "column": "phone",
+        "schema": "public",
+        "default": "''::text",
+        "ordinal": 11,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "sessions",
+        "column": "user_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "driver_activation_tokens",
+        "column": "created_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "deliveries",
+        "column": "receipt_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 22,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "delivery_exceptions",
+        "column": "service_date",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "deliveries",
+        "column": "branch_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "global_closures",
+        "column": "created_by",
+        "schema": "public",
+        "default": null,
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "driver_devices",
+        "column": "driver_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "delivery_driver_assignments",
+        "column": "delivery_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "deliveries",
+        "column": "voided_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 23,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "branches",
+        "column": "address",
+        "schema": "public",
+        "default": "''::text",
+        "ordinal": 10,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "branches",
+        "column": "contact_name",
+        "schema": "public",
+        "default": "''::text",
+        "ordinal": 12,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "password_resets",
+        "column": "token_hash",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "email_logs",
+        "column": "created_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 8,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "route_handoffs",
+        "column": "from_driver_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "audit_logs",
+        "column": "entity_type",
+        "schema": "public",
+        "default": null,
+        "ordinal": 6,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "deliveries",
+        "column": "correction_signer_name",
+        "schema": "public",
+        "default": null,
+        "ordinal": 16,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "branches",
+        "column": "code",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "route_segment_signatures",
+        "column": "service_date",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "users",
+        "column": "email",
+        "schema": "public",
+        "default": null,
+        "ordinal": 5,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "daily_routes",
+        "column": "status",
+        "schema": "public",
+        "default": "'ACTIVE'::text",
+        "ordinal": 5,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "route_handoffs",
+        "column": "created_by",
+        "schema": "public",
+        "default": null,
+        "ordinal": 9,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "email_logs",
+        "column": "error_message",
+        "schema": "public",
+        "default": null,
+        "ordinal": 6,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "driver_activation_tokens",
+        "column": "token_hash",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "deliveries",
+        "column": "document_final",
+        "schema": "public",
+        "default": null,
+        "ordinal": 7,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "audit_logs",
+        "column": "before_json",
+        "schema": "public",
+        "default": null,
+        "ordinal": 8,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "app_settings",
+        "column": "key",
+        "schema": "public",
+        "default": null,
+        "ordinal": 1,
+        "identity": "NO",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int8",
+        "table": "branch_signers",
+        "column": "branch_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "NO",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "daily_reports",
+        "column": "service_date",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "route_handoffs",
+        "column": "reason",
+        "schema": "public",
+        "default": null,
+        "ordinal": 7,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "deliveries",
+        "column": "outbound_final",
+        "schema": "public",
+        "default": null,
+        "ordinal": 9,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "routes",
+        "column": "name",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "deliveries",
+        "column": "branch_signature",
+        "schema": "public",
+        "default": null,
+        "ordinal": 14,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "route_handoffs",
+        "column": "daily_route_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "password_resets",
+        "column": "expires_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 4,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "global_closures",
+        "column": "reason",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "corrections",
+        "column": "delivery_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 2,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "text",
+        "table": "driver_activation_tokens",
+        "column": "revoked_at",
+        "schema": "public",
+        "default": null,
+        "ordinal": 7,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      },
+      {
+        "type": "int4",
+        "table": "deliveries",
+        "column": "daily_route_id",
+        "schema": "public",
+        "default": null,
+        "ordinal": 3,
+        "identity": "NO",
+        "nullable": "YES",
+        "generated": "NEVER",
+        "identity_generation": null
+      }
+    ],
+    "indexes": [
+      {
+        "name": "users_pkey",
+        "table": "users",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX users_pkey ON public.users USING btree (id)"
+      },
+      {
+        "name": "users_username_key",
+        "table": "users",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX users_username_key ON public.users USING btree (username)"
+      },
+      {
+        "name": "sessions_pkey",
+        "table": "sessions",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX sessions_pkey ON public.sessions USING btree (token_hash)"
+      },
+      {
+        "name": "password_resets_pkey",
+        "table": "password_resets",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX password_resets_pkey ON public.password_resets USING btree (id)"
+      },
+      {
+        "name": "password_resets_token_hash_key",
+        "table": "password_resets",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX password_resets_token_hash_key ON public.password_resets USING btree (token_hash)"
+      },
+      {
+        "name": "routes_pkey",
+        "table": "routes",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX routes_pkey ON public.routes USING btree (id)"
+      },
+      {
+        "name": "routes_code_key",
+        "table": "routes",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX routes_code_key ON public.routes USING btree (code)"
+      },
+      {
+        "name": "drivers_pkey",
+        "table": "drivers",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX drivers_pkey ON public.drivers USING btree (id)"
+      },
+      {
+        "name": "driver_devices_pkey",
+        "table": "driver_devices",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX driver_devices_pkey ON public.driver_devices USING btree (id)"
+      },
+      {
+        "name": "driver_devices_device_key_key",
+        "table": "driver_devices",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX driver_devices_device_key_key ON public.driver_devices USING btree (device_key)"
+      },
+      {
+        "name": "driver_activation_tokens_pkey",
+        "table": "driver_activation_tokens",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX driver_activation_tokens_pkey ON public.driver_activation_tokens USING btree (id)"
+      },
+      {
+        "name": "driver_activation_tokens_token_hash_key",
+        "table": "driver_activation_tokens",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX driver_activation_tokens_token_hash_key ON public.driver_activation_tokens USING btree (token_hash)"
+      },
+      {
+        "name": "branches_pkey",
+        "table": "branches",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX branches_pkey ON public.branches USING btree (id)"
+      },
+      {
+        "name": "branches_code_key",
+        "table": "branches",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX branches_code_key ON public.branches USING btree (code)"
+      },
+      {
+        "name": "branches_access_token_hash_key",
+        "table": "branches",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX branches_access_token_hash_key ON public.branches USING btree (access_token_hash)"
+      },
+      {
+        "name": "daily_routes_pkey",
+        "table": "daily_routes",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX daily_routes_pkey ON public.daily_routes USING btree (id)"
+      },
+      {
+        "name": "daily_routes_service_date_route_id_key",
+        "table": "daily_routes",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX daily_routes_service_date_route_id_key ON public.daily_routes USING btree (service_date, route_id)"
+      },
+      {
+        "name": "deliveries_pkey",
+        "table": "deliveries",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX deliveries_pkey ON public.deliveries USING btree (id)"
+      },
+      {
+        "name": "deliveries_service_date_branch_id_key",
+        "table": "deliveries",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX deliveries_service_date_branch_id_key ON public.deliveries USING btree (service_date, branch_id)"
+      },
+      {
+        "name": "corrections_pkey",
+        "table": "corrections",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX corrections_pkey ON public.corrections USING btree (id)"
+      },
+      {
+        "name": "audit_logs_pkey",
+        "table": "audit_logs",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX audit_logs_pkey ON public.audit_logs USING btree (id)"
+      },
+      {
+        "name": "branch_sessions_pkey",
+        "table": "branch_sessions",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX branch_sessions_pkey ON public.branch_sessions USING btree (token_hash)"
+      },
+      {
+        "name": "driver_sessions_pkey",
+        "table": "driver_sessions",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX driver_sessions_pkey ON public.driver_sessions USING btree (token_hash)"
+      },
+      {
+        "name": "daily_reports_pkey",
+        "table": "daily_reports",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX daily_reports_pkey ON public.daily_reports USING btree (id)"
+      },
+      {
+        "name": "daily_reports_service_date_key",
+        "table": "daily_reports",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX daily_reports_service_date_key ON public.daily_reports USING btree (service_date)"
+      },
+      {
+        "name": "email_recipients_pkey",
+        "table": "email_recipients",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX email_recipients_pkey ON public.email_recipients USING btree (id)"
+      },
+      {
+        "name": "email_logs_pkey",
+        "table": "email_logs",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX email_logs_pkey ON public.email_logs USING btree (id)"
+      },
+      {
+        "name": "app_settings_pkey",
+        "table": "app_settings",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX app_settings_pkey ON public.app_settings USING btree (key)"
+      },
+      {
+        "name": "delivery_exceptions_pkey",
+        "table": "delivery_exceptions",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX delivery_exceptions_pkey ON public.delivery_exceptions USING btree (id)"
+      },
+      {
+        "name": "delivery_exceptions_service_date_branch_id_key",
+        "table": "delivery_exceptions",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX delivery_exceptions_service_date_branch_id_key ON public.delivery_exceptions USING btree (service_date, branch_id)"
+      },
+      {
+        "name": "global_closures_pkey",
+        "table": "global_closures",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX global_closures_pkey ON public.global_closures USING btree (id)"
+      },
+      {
+        "name": "global_closures_service_date_key",
+        "table": "global_closures",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX global_closures_service_date_key ON public.global_closures USING btree (service_date)"
+      },
+      {
+        "name": "route_handoffs_pkey",
+        "table": "route_handoffs",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX route_handoffs_pkey ON public.route_handoffs USING btree (id)"
+      },
+      {
+        "name": "delivery_driver_assignments_pkey",
+        "table": "delivery_driver_assignments",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX delivery_driver_assignments_pkey ON public.delivery_driver_assignments USING btree (id)"
+      },
+      {
+        "name": "delivery_driver_assignments_delivery_id_key",
+        "table": "delivery_driver_assignments",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX delivery_driver_assignments_delivery_id_key ON public.delivery_driver_assignments USING btree (delivery_id)"
+      },
+      {
+        "name": "route_segment_signatures_pkey",
+        "table": "route_segment_signatures",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX route_segment_signatures_pkey ON public.route_segment_signatures USING btree (id)"
+      },
+      {
+        "name": "route_segment_signatures_service_date_daily_route_id_driver_key",
+        "table": "route_segment_signatures",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX route_segment_signatures_service_date_daily_route_id_driver_key ON public.route_segment_signatures USING btree (service_date, daily_route_id, driver_id)"
+      },
+      {
+        "name": "idx_email_logs_delivery_identifier",
+        "table": "email_logs",
+        "schema": "public",
+        "definition": "CREATE INDEX idx_email_logs_delivery_identifier ON public.email_logs USING btree (delivery_identifier, status)"
+      },
+      {
+        "name": "delivery_items_pkey",
+        "table": "delivery_items",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX delivery_items_pkey ON public.delivery_items USING btree (id)"
+      },
+      {
+        "name": "idx_delivery_items_delivery_id",
+        "table": "delivery_items",
+        "schema": "public",
+        "definition": "CREATE INDEX idx_delivery_items_delivery_id ON public.delivery_items USING btree (delivery_id)"
+      },
+      {
+        "name": "branch_signers_pkey",
+        "table": "branch_signers",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX branch_signers_pkey ON public.branch_signers USING btree (id)"
+      },
+      {
+        "name": "branch_signers_branch_id_name_key",
+        "table": "branch_signers",
+        "schema": "public",
+        "definition": "CREATE UNIQUE INDEX branch_signers_branch_id_name_key ON public.branch_signers USING btree (branch_id, name)"
+      }
+    ],
+    "constraints": [
+      {
+        "name": "users_id_not_null",
+        "type": "n",
+        "table": "users",
+        "schema": "public",
+        "definition": "NOT NULL id"
+      },
+      {
+        "name": "users_pkey",
+        "type": "p",
+        "table": "users",
+        "schema": "public",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "users_username_key",
+        "type": "u",
+        "table": "users",
+        "schema": "public",
+        "definition": "UNIQUE (username)"
+      },
+      {
+        "name": "sessions_token_hash_not_null",
+        "type": "n",
+        "table": "sessions",
+        "schema": "public",
+        "definition": "NOT NULL token_hash"
+      },
+      {
+        "name": "sessions_pkey",
+        "type": "p",
+        "table": "sessions",
+        "schema": "public",
+        "definition": "PRIMARY KEY (token_hash)"
+      },
+      {
+        "name": "password_resets_id_not_null",
+        "type": "n",
+        "table": "password_resets",
+        "schema": "public",
+        "definition": "NOT NULL id"
+      },
+      {
+        "name": "password_resets_pkey",
+        "type": "p",
+        "table": "password_resets",
+        "schema": "public",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "password_resets_token_hash_key",
+        "type": "u",
+        "table": "password_resets",
+        "schema": "public",
+        "definition": "UNIQUE (token_hash)"
+      },
+      {
+        "name": "routes_id_not_null",
+        "type": "n",
+        "table": "routes",
+        "schema": "public",
+        "definition": "NOT NULL id"
+      },
+      {
+        "name": "routes_pkey",
+        "type": "p",
+        "table": "routes",
+        "schema": "public",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "routes_code_key",
+        "type": "u",
+        "table": "routes",
+        "schema": "public",
+        "definition": "UNIQUE (code)"
+      },
+      {
+        "name": "drivers_id_not_null",
+        "type": "n",
+        "table": "drivers",
+        "schema": "public",
+        "definition": "NOT NULL id"
+      },
+      {
+        "name": "drivers_pkey",
+        "type": "p",
+        "table": "drivers",
+        "schema": "public",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "driver_devices_id_not_null",
+        "type": "n",
+        "table": "driver_devices",
+        "schema": "public",
+        "definition": "NOT NULL id"
+      },
+      {
+        "name": "driver_devices_pkey",
+        "type": "p",
+        "table": "driver_devices",
+        "schema": "public",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "driver_devices_device_key_key",
+        "type": "u",
+        "table": "driver_devices",
+        "schema": "public",
+        "definition": "UNIQUE (device_key)"
+      },
+      {
+        "name": "driver_activation_tokens_id_not_null",
+        "type": "n",
+        "table": "driver_activation_tokens",
+        "schema": "public",
+        "definition": "NOT NULL id"
+      },
+      {
+        "name": "driver_activation_tokens_pkey",
+        "type": "p",
+        "table": "driver_activation_tokens",
+        "schema": "public",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "driver_activation_tokens_token_hash_key",
+        "type": "u",
+        "table": "driver_activation_tokens",
+        "schema": "public",
+        "definition": "UNIQUE (token_hash)"
+      },
+      {
+        "name": "branches_id_not_null",
+        "type": "n",
+        "table": "branches",
+        "schema": "public",
+        "definition": "NOT NULL id"
+      },
+      {
+        "name": "branches_pkey",
+        "type": "p",
+        "table": "branches",
+        "schema": "public",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "branches_code_key",
+        "type": "u",
+        "table": "branches",
+        "schema": "public",
+        "definition": "UNIQUE (code)"
+      },
+      {
+        "name": "branches_access_token_hash_key",
+        "type": "u",
+        "table": "branches",
+        "schema": "public",
+        "definition": "UNIQUE (access_token_hash)"
+      },
+      {
+        "name": "daily_routes_id_not_null",
+        "type": "n",
+        "table": "daily_routes",
+        "schema": "public",
+        "definition": "NOT NULL id"
+      },
+      {
+        "name": "daily_routes_pkey",
+        "type": "p",
+        "table": "daily_routes",
+        "schema": "public",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "daily_routes_service_date_route_id_key",
+        "type": "u",
+        "table": "daily_routes",
+        "schema": "public",
+        "definition": "UNIQUE (service_date, route_id)"
+      },
+      {
+        "name": "deliveries_id_not_null",
+        "type": "n",
+        "table": "deliveries",
+        "schema": "public",
+        "definition": "NOT NULL id"
+      },
+      {
+        "name": "deliveries_pkey",
+        "type": "p",
+        "table": "deliveries",
+        "schema": "public",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "deliveries_service_date_branch_id_key",
+        "type": "u",
+        "table": "deliveries",
+        "schema": "public",
+        "definition": "UNIQUE (service_date, branch_id)"
+      },
+      {
+        "name": "corrections_id_not_null",
+        "type": "n",
+        "table": "corrections",
+        "schema": "public",
+        "definition": "NOT NULL id"
+      },
+      {
+        "name": "corrections_pkey",
+        "type": "p",
+        "table": "corrections",
+        "schema": "public",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "audit_logs_id_not_null",
+        "type": "n",
+        "table": "audit_logs",
+        "schema": "public",
+        "definition": "NOT NULL id"
+      },
+      {
+        "name": "audit_logs_pkey",
+        "type": "p",
+        "table": "audit_logs",
+        "schema": "public",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "branch_sessions_token_hash_not_null",
+        "type": "n",
+        "table": "branch_sessions",
+        "schema": "public",
+        "definition": "NOT NULL token_hash"
+      },
+      {
+        "name": "branch_sessions_pkey",
+        "type": "p",
+        "table": "branch_sessions",
+        "schema": "public",
+        "definition": "PRIMARY KEY (token_hash)"
+      },
+      {
+        "name": "driver_sessions_token_hash_not_null",
+        "type": "n",
+        "table": "driver_sessions",
+        "schema": "public",
+        "definition": "NOT NULL token_hash"
+      },
+      {
+        "name": "driver_sessions_pkey",
+        "type": "p",
+        "table": "driver_sessions",
+        "schema": "public",
+        "definition": "PRIMARY KEY (token_hash)"
+      },
+      {
+        "name": "daily_reports_id_not_null",
+        "type": "n",
+        "table": "daily_reports",
+        "schema": "public",
+        "definition": "NOT NULL id"
+      },
+      {
+        "name": "daily_reports_pkey",
+        "type": "p",
+        "table": "daily_reports",
+        "schema": "public",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "daily_reports_service_date_key",
+        "type": "u",
+        "table": "daily_reports",
+        "schema": "public",
+        "definition": "UNIQUE (service_date)"
+      },
+      {
+        "name": "email_recipients_id_not_null",
+        "type": "n",
+        "table": "email_recipients",
+        "schema": "public",
+        "definition": "NOT NULL id"
+      },
+      {
+        "name": "email_recipients_pkey",
+        "type": "p",
+        "table": "email_recipients",
+        "schema": "public",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "email_logs_id_not_null",
+        "type": "n",
+        "table": "email_logs",
+        "schema": "public",
+        "definition": "NOT NULL id"
+      },
+      {
+        "name": "email_logs_pkey",
+        "type": "p",
+        "table": "email_logs",
+        "schema": "public",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "app_settings_key_not_null",
+        "type": "n",
+        "table": "app_settings",
+        "schema": "public",
+        "definition": "NOT NULL key"
+      },
+      {
+        "name": "app_settings_pkey",
+        "type": "p",
+        "table": "app_settings",
+        "schema": "public",
+        "definition": "PRIMARY KEY (key)"
+      },
+      {
+        "name": "delivery_exceptions_id_not_null",
+        "type": "n",
+        "table": "delivery_exceptions",
+        "schema": "public",
+        "definition": "NOT NULL id"
+      },
+      {
+        "name": "delivery_exceptions_pkey",
+        "type": "p",
+        "table": "delivery_exceptions",
+        "schema": "public",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "delivery_exceptions_service_date_branch_id_key",
+        "type": "u",
+        "table": "delivery_exceptions",
+        "schema": "public",
+        "definition": "UNIQUE (service_date, branch_id)"
+      },
+      {
+        "name": "global_closures_id_not_null",
+        "type": "n",
+        "table": "global_closures",
+        "schema": "public",
+        "definition": "NOT NULL id"
+      },
+      {
+        "name": "global_closures_pkey",
+        "type": "p",
+        "table": "global_closures",
+        "schema": "public",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "global_closures_service_date_key",
+        "type": "u",
+        "table": "global_closures",
+        "schema": "public",
+        "definition": "UNIQUE (service_date)"
+      },
+      {
+        "name": "route_handoffs_id_not_null",
+        "type": "n",
+        "table": "route_handoffs",
+        "schema": "public",
+        "definition": "NOT NULL id"
+      },
+      {
+        "name": "route_handoffs_pkey",
+        "type": "p",
+        "table": "route_handoffs",
+        "schema": "public",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "delivery_driver_assignments_id_not_null",
+        "type": "n",
+        "table": "delivery_driver_assignments",
+        "schema": "public",
+        "definition": "NOT NULL id"
+      },
+      {
+        "name": "delivery_driver_assignments_pkey",
+        "type": "p",
+        "table": "delivery_driver_assignments",
+        "schema": "public",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "delivery_driver_assignments_delivery_id_key",
+        "type": "u",
+        "table": "delivery_driver_assignments",
+        "schema": "public",
+        "definition": "UNIQUE (delivery_id)"
+      },
+      {
+        "name": "route_segment_signatures_id_not_null",
+        "type": "n",
+        "table": "route_segment_signatures",
+        "schema": "public",
+        "definition": "NOT NULL id"
+      },
+      {
+        "name": "route_segment_signatures_pkey",
+        "type": "p",
+        "table": "route_segment_signatures",
+        "schema": "public",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "route_segment_signatures_service_date_daily_route_id_driver_key",
+        "type": "u",
+        "table": "route_segment_signatures",
+        "schema": "public",
+        "definition": "UNIQUE (service_date, daily_route_id, driver_id)"
+      },
+      {
+        "name": "delivery_items_id_not_null",
+        "type": "n",
+        "table": "delivery_items",
+        "schema": "public",
+        "definition": "NOT NULL id"
+      },
+      {
+        "name": "delivery_items_pkey",
+        "type": "p",
+        "table": "delivery_items",
+        "schema": "public",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "branch_signers_id_not_null",
+        "type": "n",
+        "table": "branch_signers",
+        "schema": "public",
+        "definition": "NOT NULL id"
+      },
+      {
+        "name": "branch_signers_branch_id_not_null",
+        "type": "n",
+        "table": "branch_signers",
+        "schema": "public",
+        "definition": "NOT NULL branch_id"
+      },
+      {
+        "name": "branch_signers_name_not_null",
+        "type": "n",
+        "table": "branch_signers",
+        "schema": "public",
+        "definition": "NOT NULL name"
+      },
+      {
+        "name": "branch_signers_active_not_null",
+        "type": "n",
+        "table": "branch_signers",
+        "schema": "public",
+        "definition": "NOT NULL active"
+      },
+      {
+        "name": "branch_signers_created_at_not_null",
+        "type": "n",
+        "table": "branch_signers",
+        "schema": "public",
+        "definition": "NOT NULL created_at"
+      },
+      {
+        "name": "branch_signers_updated_at_not_null",
+        "type": "n",
+        "table": "branch_signers",
+        "schema": "public",
+        "definition": "NOT NULL updated_at"
+      },
+      {
+        "name": "branch_signers_pkey",
+        "type": "p",
+        "table": "branch_signers",
+        "schema": "public",
+        "definition": "PRIMARY KEY (id)"
+      },
+      {
+        "name": "branch_signers_branch_id_name_key",
+        "type": "u",
+        "table": "branch_signers",
+        "schema": "public",
+        "definition": "UNIQUE (branch_id, name)"
+      },
+      {
+        "name": "branch_signers_branch_id_fkey",
+        "type": "f",
+        "table": "branch_signers",
+        "schema": "public",
+        "definition": "FOREIGN KEY (branch_id) REFERENCES branches(id)"
+      },
+      {
+        "name": "delivery_items_delivery_id_not_null",
+        "type": "n",
+        "table": "delivery_items",
+        "schema": "public",
+        "definition": "NOT NULL delivery_id"
+      },
+      {
+        "name": "delivery_items_item_type_not_null",
+        "type": "n",
+        "table": "delivery_items",
+        "schema": "public",
+        "definition": "NOT NULL item_type"
+      },
+      {
+        "name": "delivery_items_quantity_not_null",
+        "type": "n",
+        "table": "delivery_items",
+        "schema": "public",
+        "definition": "NOT NULL quantity"
+      }
+    ],
+    "column_comparison": [
+      {
+        "table": "users",
+        "column": "id",
+        "expected_type": "INTEGER",
+        "actual_type": "int8",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "users",
+        "column": "username",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "users",
+        "column": "password_hash",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "users",
+        "column": "role",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "users",
+        "column": "email",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "users",
+        "column": "is_active",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "users",
+        "column": "failed_count",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "users",
+        "column": "locked_until",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "sessions",
+        "column": "token_hash",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "sessions",
+        "column": "user_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "sessions",
+        "column": "expires_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "password_resets",
+        "column": "id",
+        "expected_type": "INTEGER",
+        "actual_type": "int8",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "password_resets",
+        "column": "user_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "password_resets",
+        "column": "token_hash",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "password_resets",
+        "column": "expires_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "password_resets",
+        "column": "used_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "password_resets",
+        "column": "created_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "routes",
+        "column": "id",
+        "expected_type": "INTEGER",
+        "actual_type": "int8",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "routes",
+        "column": "code",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "routes",
+        "column": "name",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "routes",
+        "column": "active",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "drivers",
+        "column": "id",
+        "expected_type": "INTEGER",
+        "actual_type": "int8",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "drivers",
+        "column": "name",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "drivers",
+        "column": "active",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "drivers",
+        "column": "pin_hash",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "driver_devices",
+        "column": "id",
+        "expected_type": "INTEGER",
+        "actual_type": "int8",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "driver_devices",
+        "column": "driver_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "driver_devices",
+        "column": "device_key",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "driver_devices",
+        "column": "activated_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "driver_devices",
+        "column": "revoked_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "driver_devices",
+        "column": "last_seen_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "driver_activation_tokens",
+        "column": "id",
+        "expected_type": "INTEGER",
+        "actual_type": "int8",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "driver_activation_tokens",
+        "column": "driver_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "driver_activation_tokens",
+        "column": "token_hash",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "driver_activation_tokens",
+        "column": "created_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "driver_activation_tokens",
+        "column": "expires_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "driver_activation_tokens",
+        "column": "used_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "driver_activation_tokens",
+        "column": "revoked_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "driver_activation_tokens",
+        "column": "created_by",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "branches",
+        "column": "id",
+        "expected_type": "INTEGER",
+        "actual_type": "int8",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "branches",
+        "column": "code",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "branches",
+        "column": "name",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "branches",
+        "column": "route_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "branches",
+        "column": "stop_order",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "branches",
+        "column": "active",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "branches",
+        "column": "pin_hash",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "branches",
+        "column": "access_token_hash",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "branches",
+        "column": "qr_created_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "branches",
+        "column": "address",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "branches",
+        "column": "phone",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "branches",
+        "column": "contact_name",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "branches",
+        "column": "contact_info",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "branches",
+        "column": "delivery_weekdays",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "branches",
+        "column": "delivery_frequency",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "daily_routes",
+        "column": "id",
+        "expected_type": "INTEGER",
+        "actual_type": "int8",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "daily_routes",
+        "column": "service_date",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "daily_routes",
+        "column": "route_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "daily_routes",
+        "column": "driver_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "daily_routes",
+        "column": "status",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "daily_routes",
+        "column": "driver_signature",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "daily_routes",
+        "column": "driver_signed_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "id",
+        "expected_type": "INTEGER",
+        "actual_type": "int8",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "service_date",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "daily_route_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "branch_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "status",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "document_original",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "document_final",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "document_return_final",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "outbound_original",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "outbound_final",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "inbound_final",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "note_final",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "signer_name",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "branch_signed_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "branch_signature",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "receipt_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "voided_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "voided_by",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "void_reason",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "admin_closed_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "admin_closed_by",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "admin_close_reason",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "correction_signature",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "correction_signer_name",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "correction_reason",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "corrected_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "driver_confirmed_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "deliveries",
+        "column": "row_version",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "corrections",
+        "column": "id",
+        "expected_type": "INTEGER",
+        "actual_type": "int8",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "corrections",
+        "column": "delivery_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "corrections",
+        "column": "requested_by_driver_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "corrections",
+        "column": "requested_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "corrections",
+        "column": "fields_json",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "corrections",
+        "column": "driver_note",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "corrections",
+        "column": "status",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "corrections",
+        "column": "resolved_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "audit_logs",
+        "column": "id",
+        "expected_type": "INTEGER",
+        "actual_type": "int8",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "audit_logs",
+        "column": "actor_type",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "audit_logs",
+        "column": "actor_id",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "audit_logs",
+        "column": "role",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "audit_logs",
+        "column": "action",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "audit_logs",
+        "column": "entity_type",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "audit_logs",
+        "column": "entity_id",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "audit_logs",
+        "column": "before_json",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "audit_logs",
+        "column": "after_json",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "audit_logs",
+        "column": "reason",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "audit_logs",
+        "column": "created_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "branch_sessions",
+        "column": "token_hash",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "branch_sessions",
+        "column": "branch_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "branch_sessions",
+        "column": "delivery_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "branch_sessions",
+        "column": "expires_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "driver_sessions",
+        "column": "token_hash",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "driver_sessions",
+        "column": "driver_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "driver_sessions",
+        "column": "device_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "driver_sessions",
+        "column": "expires_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "daily_reports",
+        "column": "id",
+        "expected_type": "INTEGER",
+        "actual_type": "int8",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "daily_reports",
+        "column": "service_date",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "daily_reports",
+        "column": "secretary_signature",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "daily_reports",
+        "column": "secretary_signed_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "daily_reports",
+        "column": "status",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "daily_reports",
+        "column": "locked_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_recipients",
+        "column": "id",
+        "expected_type": "INTEGER",
+        "actual_type": "int8",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_recipients",
+        "column": "email",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_recipients",
+        "column": "recipient_type",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_recipients",
+        "column": "active",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_recipients",
+        "column": "created_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_logs",
+        "column": "id",
+        "expected_type": "INTEGER",
+        "actual_type": "int8",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_logs",
+        "column": "report_type",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_logs",
+        "column": "period",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_logs",
+        "column": "recipients",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_logs",
+        "column": "status",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_logs",
+        "column": "error_message",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_logs",
+        "column": "sent_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_logs",
+        "column": "created_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_logs",
+        "column": "email_type",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_logs",
+        "column": "subject",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_logs",
+        "column": "to_addresses",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_logs",
+        "column": "cc_addresses",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_logs",
+        "column": "bcc_addresses",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_logs",
+        "column": "sender",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_logs",
+        "column": "provider",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_logs",
+        "column": "message_id",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_logs",
+        "column": "triggered_by",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "email_logs",
+        "column": "delivery_identifier",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "app_settings",
+        "column": "key",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "app_settings",
+        "column": "value",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "delivery_exceptions",
+        "column": "id",
+        "expected_type": "INTEGER",
+        "actual_type": "int8",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "delivery_exceptions",
+        "column": "service_date",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "delivery_exceptions",
+        "column": "branch_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "delivery_exceptions",
+        "column": "exception_type",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "delivery_exceptions",
+        "column": "reason",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "delivery_exceptions",
+        "column": "created_by",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "delivery_exceptions",
+        "column": "created_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "global_closures",
+        "column": "id",
+        "expected_type": "INTEGER",
+        "actual_type": "int8",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "global_closures",
+        "column": "service_date",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "global_closures",
+        "column": "reason",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "global_closures",
+        "column": "created_by",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "global_closures",
+        "column": "created_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "route_handoffs",
+        "column": "id",
+        "expected_type": "INTEGER",
+        "actual_type": "int8",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "route_handoffs",
+        "column": "service_date",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "route_handoffs",
+        "column": "daily_route_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "route_handoffs",
+        "column": "from_driver_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "route_handoffs",
+        "column": "to_driver_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "route_handoffs",
+        "column": "start_delivery_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "route_handoffs",
+        "column": "reason",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "route_handoffs",
+        "column": "note",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "route_handoffs",
+        "column": "created_by",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "route_handoffs",
+        "column": "created_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "delivery_driver_assignments",
+        "column": "id",
+        "expected_type": "INTEGER",
+        "actual_type": "int8",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "delivery_driver_assignments",
+        "column": "delivery_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "delivery_driver_assignments",
+        "column": "driver_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "delivery_driver_assignments",
+        "column": "assigned_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "delivery_driver_assignments",
+        "column": "handoff_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "route_segment_signatures",
+        "column": "id",
+        "expected_type": "INTEGER",
+        "actual_type": "int8",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "route_segment_signatures",
+        "column": "service_date",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "route_segment_signatures",
+        "column": "daily_route_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "route_segment_signatures",
+        "column": "driver_id",
+        "expected_type": "INTEGER",
+        "actual_type": "int4",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "route_segment_signatures",
+        "column": "signature",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      },
+      {
+        "table": "route_segment_signatures",
+        "column": "signed_at",
+        "expected_type": "TEXT",
+        "actual_type": "text",
+        "result": "PASS",
+        "scope": "BASE_SCHEMA basic type only; migration/default/identity not yet fully compared"
+      }
+    ]
+  }
+}

@@ -17,6 +17,8 @@
 #branchHistory .history-desktop table{width:100%;border-collapse:collapse}
 #branchHistory .history-desktop th,#branchHistory .history-desktop td{padding:8px;border-bottom:1px solid #e1e6ee;text-align:left}
 @media(min-width:800px){#branchHistory .history-mobile{display:none}#branchHistory .history-desktop{display:block;overflow-x:auto}}
+.signer-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}.signer-row input{flex:1;min-width:120px;max-width:100%}#branchSigners{margin-top:18px}
+.signing-identity select{display:block;width:100%;max-width:100%;min-width:0;min-height:44px;font-size:16px;box-sizing:border-box}.signing-identity button{min-height:44px;margin:4px 0;max-width:100%}.signing-identity p{overflow-wrap:anywhere}
 </style></head><body>
 <div id="desktopLogin" class="desktop-login-card">
   <h2>分館桌機登入</h2>
@@ -26,7 +28,7 @@
     <label>4 位 PIN<input id="desktopBranchPin" type="password" inputmode="numeric" maxlength="4"></label>
     <button class="btn" onclick="desktopLogin()">登入</button>
   </div>
-</div><main class="mobile"><div class="card"><h1>分館簽收驗證</h1><div id="verify"><p class="muted">請輸入 4 位分館驗證碼</p><input id="pin" inputmode="numeric" maxlength="4" placeholder="○ ○ ○ ○" style="width:100%;font-size:26px;text-align:center"><button class="btn big" style="margin-top:10px" onclick="verifyBranch()">確認</button></div><div id="work" class="hidden"></div><section id="branchHistory" class="hidden" aria-label="本站配送歷史紀錄"><h2>本站配送紀錄</h2><div class="history-tools"><label>月份 <select id="branchHistoryMonth" onchange="loadBranchHistory()"></select></label><label><input type="checkbox" id="branchHistoryPending" onchange="loadBranchHistory()"> 只看待補簽</label></div><div id="branchHistoryBody" aria-live="polite"></div></section><div id="msg"></div></div></main><script src="/static/common.js"></script><script>
+</div><main class="mobile"><div class="card"><h1>分館簽收驗證</h1><div id="verify"><p class="muted">請輸入 4 位分館驗證碼</p><input id="pin" inputmode="numeric" maxlength="4" placeholder="○ ○ ○ ○" style="width:100%;font-size:26px;text-align:center"><button class="btn big" style="margin-top:10px" onclick="verifyBranch()">確認</button></div><div id="work" class="hidden"></div><section id="branchSigners" class="hidden" aria-label="常用簽收人員"><h2>常用簽收人員</h2><p class="muted">僅管理本站名單，姓名修改或停用不會更改歷史簽收紀錄。手寫簽名仍須由實際簽收人完成。</p><form onsubmit="addBranchSigner(event)"><label for="newBranchSigner">新增姓名</label><input id="newBranchSigner" maxlength="80" required autocomplete="off"><button class="btn" type="submit">新增</button></form><p><label><input id="showInactiveSigners" type="checkbox" onchange="loadBranchSigners()"> 同時查看已停用人員</label> <button class="btn alt" type="button" onclick="loadBranchSigners()">重新載入名單</button></p><div id="branchSignerMessage" role="status" aria-live="polite"></div><div id="branchSignerList"></div></section><section id="branchHistory" class="hidden" aria-label="本站配送歷史紀錄"><h2>本站配送紀錄</h2><div class="history-tools"><label>月份 <select id="branchHistoryMonth" onchange="loadBranchHistory()"></select></label><label><input type="checkbox" id="branchHistoryPending" onchange="loadBranchHistory()"> 只看待補簽</label></div><div id="branchHistoryBody" aria-live="polite"></div></section><div id="msg"></div></div></main><script src="/static/common.js"></script><script src="/static/branch-signers.js"></script><script src="/static/branch-signing-identity.js"></script><script src="/static/branch-history-signatures.js"></script><script>
 function fmtDateTime(v){
   if(v===null||v===undefined||v==='') return '—';
   const s=String(v).trim();
@@ -63,7 +65,7 @@ async function desktopLogin(){
   }catch(e){alert(e.message)}
 }
 async function verifyBranch(){try{let x=await api('/api/branch-session/verify',{method:'POST',body:JSON.stringify({token:branchToken,pin:document.querySelector('#pin').value})});session=x.session;document.querySelector('#verify').classList.add('hidden');work.classList.remove('hidden');await load()}catch(e){msg.innerHTML='<div class="error">'+e.message+'</div>'}}
-async function load(){data=await bapi('/api/branch-session/today');await setupBranchHistory();await renderTaskChooser();if(data.status==='WAITING_BRANCH'||data.status==='LATE_BRANCH_PENDING')renderSign();else if(data.status==='WAITING_BRANCH_CORRECTION')renderCorrection();else work.innerHTML=`<h2>${data.branch_name}</h2><p><b>配送日期：${data.service_date}</b></p><div class="ok"><b>簽收已送出完成</b><br>目前狀態：${statusText(data.status)}</div><p>簽收人：${data.correction_signer_name||data.signer_name||'—'}</p><p>實際簽收時間：${fmtDateTime(data.receipt_at||data.corrected_at||data.branch_signed_at)}</p><p class="muted">系統已保存本次簽名，請勿重複送出。</p>`}
+async function load(){data=await bapi('/api/branch-session/today');await setupBranchHistory();await renderTaskChooser();await loadBranchSigners();if(data.status==='WAITING_BRANCH'||data.status==='LATE_BRANCH_PENDING')renderSign();else if(data.status==='WAITING_BRANCH_CORRECTION')renderCorrection();else if(data.status==='NO_DELIVERY')work.textContent='目前沒有待簽收配送，仍可管理本站常用簽收人員及查詢歷史。';else work.innerHTML=`<h2>${data.branch_name}</h2><p><b>配送日期：${data.service_date}</b></p><div class="ok"><b>簽收已送出完成</b><br>目前狀態：${statusText(data.status)}</div><p>簽收人：${data.correction_signer_name||data.signer_name||'—'}</p><p>實際簽收時間：${fmtDateTime(data.receipt_at||data.corrected_at||data.branch_signed_at)}</p><p class="muted">系統已保存本次簽名，請勿重複送出。</p>`}
 function branchHistoryEscape(v){return String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}
 function branchHistoryStatus(x){
   if(x.late_pending)return '待分館補簽';
@@ -76,8 +78,8 @@ async function setupBranchHistory(){
   host.classList.remove('hidden');
   if(branchHistoryInitialized){await loadBranchHistory();return}
   const d=new Date(),y=d.getFullYear(),m=d.getMonth()+1;
-  const months=[y+'-'+String(m).padStart(2,'0'),(m===1?y-1:y)+'-'+String(m===1?12:m-1).padStart(2,'0')];
-  document.getElementById('branchHistoryMonth').innerHTML=months.map((v,i)=>'<option value="'+v+'">'+(i===0?'本月':'上個月')+'（'+v+'）</option>').join('');
+  const months=Array.from({length:12},(_,i)=>{const t=new Date(y,m-1-i,1);return t.getFullYear()+'-'+String(t.getMonth()+1).padStart(2,'0')});
+  document.getElementById('branchHistoryMonth').innerHTML=months.map((v,i)=>'<option value="'+v+'">'+(i===0?'本月':'歷史月份')+'（'+v+'）</option>').join('');
   branchHistoryInitialized=true;
   await loadBranchHistory();
 }
@@ -90,11 +92,12 @@ async function loadBranchHistory(){
     const x=await bapi('/api/branch-session/history?month='+encodeURIComponent(month)+'&pending_only='+pending);
     if(!x.records.length){host.innerHTML='<p class="muted">所選月份沒有符合條件的配送紀錄。</p>';return}
     const count=v=>v===null||v===undefined?'待補':String(v);
-    const fields=[['document_final','公文送出'],['document_return_final','公文收回'],['outbound_final','圖書送出'],['inbound_final','圖書收回']];
+    const fields=[['document_final','公文－總館送出'],['document_return_final','公文－分館送出'],['outbound_final','圖書－倉庫送出'],['inbound_final','圖書－分館送出']];
     const qty=r=>fields.map(([k,label])=>'<div><small>'+label+'</small><strong>'+count(r[k])+'</strong></div>').join('');
     const info=r=>'<div class="muted">路線：'+branchHistoryEscape(r.route_code)+' 線｜司機：'+branchHistoryEscape(r.driver_name||'—')+'</div><div class="muted">簽收人：'+branchHistoryEscape(r.correction_signer_name||r.signer_name||'—')+'｜簽收時間：'+branchHistoryEscape(fmtDateTime(r.receipt_at||r.corrected_at||r.branch_signed_at))+'</div>';
-    const cards=x.records.map(r=>'<article class="history-card"><h3>'+branchHistoryEscape(r.service_date)+'｜'+branchHistoryEscape(branchHistoryStatus(r))+'</h3>'+info(r)+'<div class="history-four">'+qty(r)+'</div>'+(r.late_pending?'<button class="btn alt" onclick="selectBranchTask('+Number(r.id)+')">前往補簽</button>':'')+'</article>').join('');
-    const table='<table><thead><tr><th>日期</th><th>路線</th><th>狀態</th>'+fields.map(([k,label])=>'<th>'+label+'</th>').join('')+'<th>簽收人</th><th>簽收時間</th><th>操作</th></tr></thead><tbody>'+x.records.map(r=>'<tr><td>'+branchHistoryEscape(r.service_date)+'</td><td>'+branchHistoryEscape(r.route_code)+'</td><td>'+branchHistoryEscape(branchHistoryStatus(r))+'</td>'+fields.map(([k])=>'<td>'+count(r[k])+'</td>').join('')+'<td>'+branchHistoryEscape(r.correction_signer_name||r.signer_name||'—')+'</td><td>'+branchHistoryEscape(fmtDateTime(r.receipt_at||r.corrected_at||r.branch_signed_at))+'</td><td>'+(r.late_pending?'<button class="btn alt" onclick="selectBranchTask('+Number(r.id)+')">補簽</button>':'—')+'</td></tr>').join('')+'</tbody></table>';
+    const signatures=r=>r.has_signatures?'<button class="btn alt" type="button" onclick="viewBranchSignatures('+Number(r.id)+')">查看簽名</button>':'';
+    const cards=x.records.map(r=>'<article class="history-card"><h3>'+branchHistoryEscape(r.service_date)+'｜'+branchHistoryEscape(branchHistoryStatus(r))+'</h3>'+info(r)+'<div class="history-four">'+qty(r)+'</div>'+signatures(r)+(r.late_pending?'<button class="btn alt" onclick="selectBranchTask('+Number(r.id)+')">前往補簽</button>':'')+'</article>').join('');
+    const table='<table><thead><tr><th>日期</th><th>路線</th><th>狀態</th>'+fields.map(([k,label])=>'<th>'+label+'</th>').join('')+'<th>簽收人</th><th>簽收時間</th><th>操作</th></tr></thead><tbody>'+x.records.map(r=>'<tr><td>'+branchHistoryEscape(r.service_date)+'</td><td>'+branchHistoryEscape(r.route_code)+'</td><td>'+branchHistoryEscape(branchHistoryStatus(r))+'</td>'+fields.map(([k])=>'<td>'+count(r[k])+'</td>').join('')+'<td>'+branchHistoryEscape(r.correction_signer_name||r.signer_name||'—')+'</td><td>'+branchHistoryEscape(fmtDateTime(r.receipt_at||r.corrected_at||r.branch_signed_at))+'</td><td>'+signatures(r)+(r.late_pending?'<button class="btn alt" onclick="selectBranchTask('+Number(r.id)+')">補簽</button>':'—')+'</td></tr>').join('')+'</tbody></table>';
     host.innerHTML='<p class="muted">共 '+x.total+' 筆配送紀錄</p><div class="history-mobile">'+cards+'</div><div class="history-desktop">'+table+'</div>';
   }catch(e){host.textContent='查詢失敗：'+e.message}
 }
@@ -119,22 +122,23 @@ async function selectBranchTask(id){
 function canvasBlock(){return `<canvas id="sig" class="sig" width="600" height="220"></canvas><button class="btn alt" onclick="clearSig()">清除簽名</button>`}
 function carriedItemsText(){const names={DOCUMENT_BAG:'公文袋',ATTACHMENT_BAG:'附件袋',PRIZE:'獎品',CONSUMABLE:'耗材',POSTER:'海報',NEWBORN_GIFT:'新生兒閱讀好禮',BOOKCLUB_RESOURCE:'讀書會資源庫用書',PROMOTION:'文宣',STATIONERY:'文具'};const a=data.items||[];return a.length?a.map(x=>`${x.item_type==='OTHER'?(x.item_name||'其他'):(names[x.item_type]||x.item_type)} ${x.quantity}`).join('、'):'無'}
 function receiptInputValue(v){if(v){return String(v).replace(' ','T').slice(0,16)}const d=new Date(),p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`}
-function renderSign(){const late=data.status==='LATE_BRANCH_PENDING';work.innerHTML=`<h2>${data.branch_name}</h2><div class="${late?'notice':'muted'}">配送日期：<b>${data.service_date}</b>${late?'<br>此筆為未完成簽名的補填資料。可補填/修正數量並完成第一次簽名；送出後即鎖定，司機不需再次確認。<br>請核對司機已填寫的圖書收回箱數，若不符可直接修改後簽名。':''}</div><div class="ok"><b>總館公文送出：</b>${data.document_final??'尚未填寫'}<br><b>司機圖書送出：</b>${data.outbound_final??0}<br><b>總館其他隨車物品：</b>${carriedItemsText()}</div><div class="qty-grid" aria-label="分館四項簽收數量">
-        <label>公文送出<input id="doc" type="number" min="0" value="${data.document_final??0}"></label>
-        <label>公文收回<input id="docReturn" type="number" min="0" value="${data.document_return_final??0}"></label>
-        <label>圖書送出<input id="out" type="number" min="0" value="${data.outbound_final??0}"></label>
-        <label>圖書收回${late&&data.inbound_final!==null?'（司機已填數量，請核對）':''}<input id="inn" type="number" min="0" value="${data.inbound_final??0}"></label>
-        </div><p>備註</p><textarea id="note" style="width:100%">${data.note_final||''}</textarea><p>實際簽收時間</p><input id="receiptAt" type="datetime-local" value="${receiptInputValue(data.receipt_at)}" style="width:100%"><div class="muted">預設目前時間，可依實際簽收時間修改；系統真正送出簽名時間會另外保留。</div><p>簽收人姓名</p><input id="signer" style="width:100%"> <p>請簽名</p>${canvasBlock()}<button id="branchSignBtn" class="btn big" style="margin-top:12px" onclick="sign()">${late?'確認補填並完成簽名':'確認簽收'}</button>`;getSig=sigPad(document.querySelector('#sig'))}
-function renderCorrection(){let c=data.correction;work.innerHTML=`<h2>${data.branch_name}</h2><p><b>配送日期：${data.service_date}</b></p><div class="notice"><b>司機要求更正</b><br>${c?.driver_note||'請重新確認數量；只需填寫需要修改的欄位'}</div><div class="ok" style="margin-top:10px">數量欄位為選填。留白代表沿用目前數量，不會被改成 0。</div><div class="ok"><b>總館公文送出：</b>${data.document_final??'尚未填寫'}<br><b>司機圖書送出：</b>${data.outbound_final??0}<br><b>總館其他隨車物品：</b>${carriedItemsText()}</div><p>公文收回（目前：${data.document_return_final??0}）</p><input id="document_return" type="number" min="0" placeholder="若不修改請留白" style="width:100%"><p>圖書收回（目前：${data.inbound_final??0}）</p><input id="inbound" type="number" min="0" placeholder="若不修改請留白" style="width:100%"><p>更正原因＊</p><textarea id="reason" style="width:100%"></textarea><p>更正人姓名＊</p><input id="signer" style="width:100%"><p>請重新簽名</p>${canvasBlock()}<button class="btn big" style="margin-top:12px" onclick="correct()">送出更正並重新簽名</button>`;getSig=sigPad(document.querySelector('#sig'))}
-function clearSig(){let c=document.querySelector('#sig');c.getContext('2d').clearRect(0,0,c.width,c.height)}
+function renderSign(){const late=data.status==='LATE_BRANCH_PENDING';work.innerHTML=`<h2>${data.branch_name}</h2><div class="${late?'notice':'muted'}">配送日期：<b>${data.service_date}</b>${late?'<br>此筆為未完成簽名的補填資料。可補填/修正數量並完成第一次簽名；送出後即鎖定，司機不需再次確認。<br>請核對司機已填寫的圖書－分館送出箱數，若不符可直接修改後簽名。':''}</div><div class="ok"><b>公文－總館送出：</b>${data.document_final??'尚未填寫'}<br><b>圖書－倉庫送出：</b>${data.outbound_final??0}<br><b>總館其他隨車物品：</b>${carriedItemsText()}</div><div class="qty-grid" aria-label="分館四項簽收數量">
+        <label>公文－總館送出<input id="doc" type="number" min="0" value="${data.document_final??0}"></label>
+        <label>公文－分館送出<input id="docReturn" type="number" min="0" value="${data.document_return_final??0}"></label>
+        <label>圖書－倉庫送出<input id="out" type="number" min="0" value="${data.outbound_final??0}"></label>
+        <label>圖書－分館送出${late&&data.inbound_final!==null?'（司機已填數量，請核對）':''}<input id="inn" type="number" min="0" value="${data.inbound_final??0}"></label>
+        </div><p>備註</p><textarea id="note" style="width:100%">${data.note_final||''}</textarea><p>實際簽收時間</p><input id="receiptAt" type="datetime-local" value="${receiptInputValue(data.receipt_at)}" style="width:100%"><div class="muted">預設目前時間，可依實際簽收時間修改；系統真正送出簽名時間會另外保留。</div>${branchSigningIdentityMarkup()} <p>請簽名</p>${canvasBlock()}<button id="branchSignBtn" disabled class="btn big" style="margin-top:12px" onclick="sign()">${late?'確認補填並完成簽名':'確認簽收'}</button>`;initBranchSigningIdentity()}
+function renderCorrection(){let c=data.correction;work.innerHTML=`<h2>${data.branch_name}</h2><p><b>配送日期：${data.service_date}</b></p><div class="notice"><b>司機要求更正</b><br>${c?.driver_note||'請重新確認數量；只需填寫需要修改的欄位'}</div><div class="ok" style="margin-top:10px">數量欄位為選填。留白代表沿用目前數量，不會被改成 0。</div><div class="ok"><b>公文－總館送出：</b>${data.document_final??'尚未填寫'}<br><b>圖書－倉庫送出：</b>${data.outbound_final??0}<br><b>總館其他隨車物品：</b>${carriedItemsText()}</div><p>公文－分館送出（目前：${data.document_return_final??0}）</p><input id="document_return" type="number" min="0" placeholder="若不修改請留白" style="width:100%"><p>圖書－分館送出（目前：${data.inbound_final??0}）</p><input id="inbound" type="number" min="0" placeholder="若不修改請留白" style="width:100%"><p>更正原因＊</p><textarea id="reason" style="width:100%"></textarea>${branchSigningIdentityMarkup()}<p>請重新簽名</p>${canvasBlock()}<button id="branchCorrectBtn" disabled class="btn big" style="margin-top:12px" onclick="correct()">送出更正並重新簽名</button>`;initBranchSigningIdentity()}
+function clearSig(){let c=document.querySelector('#sig');c.getContext('2d').clearRect(0,0,c.width,c.height);updateBranchSigningReady()}
 async function sign(){
-  if(!confirm('配送日期：'+data.service_date+'\\n'+(data.status==='LATE_BRANCH_PENDING'?'確認補填數量並完成簽名？送出後即不可再修改。':'確認完成本次簽收？')))return;
+  if(!confirm('配送日期：'+data.service_date+'\\n'+(data.status==='LATE_BRANCH_PENDING'?'確認補填數量並完成簽名？送出後即不可再修改。':'請核對四項配送數量、簽收人員及手寫簽名。確認完成本次簽收？')))return;
   const btn=document.querySelector('#branchSignBtn');
   if(btn?.disabled)return;
   const signature=getSig();
-  if(!signer.value.trim()){alert('請輸入簽收人姓名');return}
+  const person=selectedBranchSigningPerson();
+  if(!person){alert('請選擇簽收人員');return}
   if(!signature){alert('請完成簽名');return}
-  const payload={document:+doc.value,document_return:+docReturn.value,outbound:+out.value,inbound:+inn.value,note:note.value,signer:signer.value.trim(),signature,receipt_at:receiptAt.value};
+  const payload={document:+doc.value,document_return:+docReturn.value,outbound:+out.value,inbound:+inn.value,note:note.value,...person,signature,receipt_at:receiptAt.value};
   if(btn){btn.disabled=true;btn.textContent='送出中…'}
   try{
     const r=await bapi('/api/branch-session/sign',{method:'POST',body:JSON.stringify(payload)});
@@ -145,8 +149,21 @@ async function sign(){
       try{await load();return}catch(_){}
     }
     alert(e.message);
-    if(btn){btn.disabled=false;btn.textContent=data.status==='LATE_BRANCH_PENDING'?'確認補填並完成簽名':'確認簽收'}
+    if(btn){updateBranchSigningReady();btn.textContent=data.status==='LATE_BRANCH_PENDING'?'確認補填並完成簽名':'確認簽收'}
   }
 }
-async function correct(){try{if(!confirm('配送日期：'+data.service_date+'\\n確定送出更正並重新簽名？'))return;const val=id=>{const v=document.getElementById(id).value.trim();return v===''?null:Number(v)};await bapi('/api/branch-session/correct',{method:'POST',body:JSON.stringify({document_return:val('document_return'),inbound:val('inbound'),reason:reason.value,signer:signer.value,signature:getSig()})});await load()}catch(e){alert(e.message)}}
+async function correct(){
+  const button=document.getElementById('branchCorrectBtn');
+  if(button.disabled)return;
+  const person=selectedBranchSigningPerson(), signature=getSig();
+  if(!person || !signature){alert('請選擇簽收人員並完成手寫簽名');return}
+  if(!reason.value.trim()){alert('請填寫更正原因');return}
+  if(!confirm('配送日期：'+data.service_date+'\n請核對數量、人員及新簽名。確定送出更正？'))return;
+  button.disabled=true;
+  try{
+    const val=id=>{const v=document.getElementById(id).value.trim();return v===''?null:Number(v)};
+    await bapi('/api/branch-session/correct',{method:'POST',body:JSON.stringify({document_return:val('document_return'),inbound:val('inbound'),reason:reason.value,...person,signature})});
+    await load();
+  }catch(e){alert(e.message);updateBranchSigningReady()}
+}
 </script></body></html>
