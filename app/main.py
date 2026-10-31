@@ -41,7 +41,7 @@ if _PRODUCTION_RUNTIME and not DATABASE_URL:
 if _PRODUCTION_RUNTIME and (psycopg is None or ConnectionPool is None):
     raise RuntimeError('Production PostgreSQL driver/pool is required; SQLite fallback is forbidden')
 USE_POSTGRES = bool(DATABASE_URL)
-APP_VERSION='V19.4-dev'
+APP_VERSION='V19.5-dev'
 
 QUANTITY_LABELS = {
     '公文送出':'公文－總館送出', '公文收回':'公文－分館送出',
@@ -742,6 +742,23 @@ def is_report_locked(c, service_date=None):
     d=service_date or today()
     r=c.execute("SELECT status FROM daily_reports WHERE service_date=?",(d,)).fetchone()
     return bool(r and r['status']=='LOCKED')
+
+def manual_document_workday(c, service_date, branch_id=None):
+    """Existing calendar: Mon-Fri, global closures (including configured holidays)
+    and branch STOP. A branch's fixed weekdays deliberately do not restrict this.
+    ADD never overrides a closed day or weekend for manual document postponement.
+    """
+    if date.fromisoformat(service_date).isoweekday() > 5:
+        return False
+    if c.execute('SELECT 1 FROM global_closures WHERE service_date=?', (service_date,)).fetchone():
+        return False
+    if branch_id is not None:
+        entry = c.execute('SELECT exception_type FROM delivery_exceptions WHERE service_date=? AND branch_id=?',
+                          (service_date, branch_id)).fetchone()
+        if entry and entry['exception_type'] != 'ADD':
+            return False
+    return True
+
 
 def branch_expected_on(c,b,service_date):
     if c.execute('SELECT 1 FROM global_closures WHERE service_date=?',(service_date,)).fetchone():

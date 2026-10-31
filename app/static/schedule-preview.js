@@ -9,7 +9,7 @@ function confirmSchedulePreview(preview, label, body) {
     const range = document.createElement('p');
     range.textContent = body.start_date + ' ～ ' + body.end_date;
     const hint = document.createElement('p');
-    hint.textContent = '僅搬移尚未開始配送的預填公文。跳過休館、停送及非配送日；已操作、簽收或鎖定資料會阻擋整批變更。';
+    hint.textContent = body.manual_target_date ? '手動補送工作日：'+body.manual_target_date+'；不受分館固定配送星期限制。只補送公文，不搬移圖書；已有操作、簽名或鎖定資料會阻擋。' : '僅搬移尚未開始配送的預填公文。跳過休館、停送及非配送日；已操作、簽收或鎖定資料會阻擋整批變更。';
     dialog.append(title, range, hint);
     const list = document.createElement('ul'); list.style.cssText='padding-left:24px;overflow-wrap:anywhere';
     for (const row of preview.plan) {
