@@ -28,6 +28,17 @@ BASE = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.getenv('DATA_DIR', str(BASE / 'data')))
 DB = DATA_DIR / 'app.db'
 DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
+# Render production must never silently open a local SQLite database.
+# Fail at import/startup before any application data can be read or initialized.
+_PRODUCTION_RUNTIME = (
+    (os.getenv('APP_ENV') or '').strip().lower() in ('production', 'prod')
+    or (os.getenv('RENDER') or '').strip().lower() == 'true'
+    or bool((os.getenv('RENDER_SERVICE_ID') or '').strip())
+)
+if _PRODUCTION_RUNTIME and not DATABASE_URL:
+    raise RuntimeError('Production PostgreSQL DATABASE_URL is required; SQLite fallback is forbidden')
+if _PRODUCTION_RUNTIME and (psycopg is None or ConnectionPool is None):
+    raise RuntimeError('Production PostgreSQL driver/pool is required; SQLite fallback is forbidden')
 USE_POSTGRES = bool(DATABASE_URL)
 APP_VERSION='V19.4-dev'
 
