@@ -1,0 +1,85 @@
+/* Driver-only refinement: no API, data, state, signature or shared CSS changes. */
+.driver-ui {
+  color: #1d2633;
+  background: #f5f7fa;
+  font-size: 16px;
+  line-height: 1.5;
+}
+.driver-ui .mobile {
+  max-width: 760px;
+  margin: 20px auto;
+  padding: 0 16px;
+}
+.driver-ui .card {
+  min-width: 0;
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 16px;
+  box-shadow: none;
+}
+.driver-ui h1 { font-size: 24px; line-height: 1.3; margin: 0 0 24px; }
+.driver-ui h2 { font-size: 20px; line-height: 1.4; overflow-wrap: anywhere; }
+.driver-ui h3 { font-size: 18px; line-height: 1.4; }
+.driver-ui .muted { color: #586575; }
+.driver-ui .driver-pin-label { display: block; margin-bottom: 12px; font-weight: 600; }
+.driver-ui .btn,
+.driver-ui input,
+.driver-ui select {
+  min-height: 48px;
+  font: inherit;
+  border-radius: 8px;
+}
+.driver-ui .btn { min-width: 48px; white-space: normal; line-height: 1.5; }
+.driver-ui .btn.big { font-size: 16px; padding: 12px 16px; }
+.driver-ui .btn.alt { color: #1d2633; background: #e8edf2; }
+.driver-ui .btn.warn { color: #fff; background: #8b4d00; }
+.driver-ui button:focus-visible,
+.driver-ui input:focus-visible,
+.driver-ui select:focus-visible {
+  outline: 3px solid #1e6091;
+  outline-offset: 3px;
+}
+.driver-ui input { background: #fff; border-color: #9aa8b7; }
+.driver-ui input[type="number"] {
+  font-size: 24px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  padding: 12px;
+  margin: 8px 0 12px;
+}
+.driver-ui .driver-count-line { gap: 16px; padding: 12px; border-radius: 8px; }
+.driver-ui .driver-count-line span { flex: 1; min-width: 0; font-size: 16px; overflow-wrap: anywhere; }
+.driver-ui .driver-count-line strong { flex: none; min-width: 4ch; font-size: 24px; }
+.driver-ui .driver-quantity-cell span { font-size: 14px; line-height: 1.5; }
+.driver-ui .driver-quantity-cell strong {
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.driver-ui .status { display: inline-block; font-size: 16px; margin: 0 0 12px; line-height: 1.5; }
+.driver-ui .notice,
+.driver-ui .ok,
+.driver-ui .error { border-radius: 8px; line-height: 1.6; overflow-wrap: anywhere; }
+.driver-ui .notice { color: #754600; }
+.driver-ui .ok { color: #155c2d; }
+.driver-ui .error { color: #902c2c; }
+.driver-ui #msg:not(:empty) { margin-top: 16px; }
+.driver-ui .driver-desktop-summary { max-width: 100%; overflow-x: auto; }
+.driver-ui .driver-desktop-summary table { min-width: 640px; }
+.driver-ui .driver-desktop-summary th,
+.driver-ui .driver-desktop-summary td { display: table-cell; }
+.driver-ui .driver-desktop-summary th:not(:first-child),
+.driver-ui .driver-desktop-summary td:not(:first-child) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 700px) {
+  .driver-ui .card { padding: 16px; }
+  .driver-ui .mobile { margin-top: 16px; }
+  .driver-ui .driver-quantity-grid { gap: 12px; }
+  .driver-ui #routeSwitcher button { min-height: 64px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .driver-ui { scroll-behavior: auto; }
+}

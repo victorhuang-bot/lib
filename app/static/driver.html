@@ -10,9 +10,9 @@
 .driver-quantity-cell span{display:block;color:#59677a;font-size:13px}
 .driver-quantity-cell strong{display:block;font-size:21px;overflow-wrap:anywhere}
 }
- .driver-count-rows{display:grid;gap:8px;margin:12px 0}.driver-count-line{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border:1px solid #dce3eb;border-radius:10px}.driver-count-line span{font-weight:600}.driver-count-line strong{font-size:20px;font-variant-numeric:tabular-nums;text-align:right}</style></head><body><main class="mobile"><div class="card"><h1>今日配送</h1><div id="unlock"><p>請輸入司機 4 位 PIN</p><input id="pin" maxlength="4" inputmode="numeric" style="width:100%;font-size:28px;text-align:center"><button class="btn big" style="margin-top:10px" onclick="unlockDriver()">進入今日路線</button></div>
+ .driver-count-rows{display:grid;gap:8px;margin:12px 0}.driver-count-line{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border:1px solid #dce3eb;border-radius:10px}.driver-count-line span{font-weight:600}.driver-count-line strong{font-size:20px;font-variant-numeric:tabular-nums;text-align:right}</style><link rel="stylesheet" href="/static/driver-ui.css"></head><body class="driver-ui"><main class="mobile"><div class="card"><h1>今日配送</h1><div id="unlock"><label class="driver-pin-label" for="pin">請輸入司機 4 位 PIN</label><input id="pin" maxlength="4" inputmode="numeric" style="width:100%;font-size:28px;text-align:center"><button class="btn big" style="margin-top:10px" onclick="unlockDriver()">進入今日路線</button></div>
 <div id="routeSwitcher" class="hidden" style="margin:12px 0"></div>
-<div id="list" class="hidden"></div><div id="routeSigns" class="hidden"></div><div id="msg"></div></div></main><script src="/static/common.js"></script><script>
+<div id="list" class="hidden"></div><div id="routeSigns" class="hidden"></div><div id="msg" role="status" aria-live="polite"></div></div></main><script src="/static/common.js"></script><script>
 function fmtDateTime(v){
   if(v===null||v===undefined||v==='') return '—';
   const s=String(v).trim();

@@ -1,0 +1,4 @@
+{
+  "hook": { "enabled": false },
+  "detector": { "ignoreFiles": [".agents/**", ".impeccable/engine/**"] }
+}
