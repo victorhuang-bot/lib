@@ -5,6 +5,22 @@
 #work .qty-grid input[readonly]{background:#f1f5f9;color:#344054;cursor:default}#work .qty-grid input{display:block;width:100%!important;min-width:0;max-width:100%;box-sizing:border-box;margin:0;text-align:right;font-size:20px}
 @media(max-width:380px){#work .qty-grid label{grid-template-columns:minmax(0,1fr) minmax(0,135px);gap:8px}}
 
+/* Branch mobile: keep desktop login off phone screens and prevent horizontal overflow. */
+@media(max-width:700px){
+  #desktopLogin{display:none!important}
+  body{max-width:100%;overflow-x:hidden}
+  main.mobile,main.mobile>.card,#work,#branchTaskChooser{min-width:0;max-width:100%}
+  main.mobile{width:100%;margin:12px auto}
+  #work .qty-grid{gap:10px!important}
+  #work .qty-grid label{grid-template-columns:minmax(0,1fr) 84px!important;gap:8px!important;font-size:clamp(13px,3.8vw,16px);line-height:1.45;white-space:nowrap;letter-spacing:-.025em}
+  #work .qty-grid input{width:84px!important;min-height:48px;padding:8px 9px;font-size:19px}
+  #work .qty-grid input[readonly]{background:#f1f5f9}
+  #work textarea,#work input[type="datetime-local"],#verify input{max-width:100%;box-sizing:border-box}
+}
+@media(max-width:340px){
+  #work .qty-grid label{grid-template-columns:minmax(0,1fr) 70px!important;gap:5px!important;font-size:12px}
+  #work .qty-grid input{width:70px!important;padding:7px 6px}
+}
 /* V19.3 branch delivery history: mobile cards, desktop table */
 #branchHistory{margin-top:14px}
 #branchHistory .history-tools{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:12px 0}
