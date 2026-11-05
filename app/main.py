@@ -1489,6 +1489,54 @@ async def void_delivery(did:int,req:Request):
     audit(c,'USER',u['id'],u['role'],'VOID_DELIVERY','DELIVERY',did,before=before,after={'status':'VOID','reason':reason})
     c.commit(); c.close(); await publish({'type':'delivery.updated','id':did}); return {'ok':True}
 
+@app.get('/api/secretary/documents/prefill-items')
+def prefill_items(req:Request,service_date:str,branch_id:int):
+    require_user(req,['ADMIN','SECRETARY','SECRETARIAT'])
+    try: date.fromisoformat(service_date)
+    except: raise HTTPException(400,'日期格式錯誤')
+    c=db()
+    x=c.execute('SELECT id FROM deliveries WHERE service_date=? AND branch_id=? AND status<>?',(service_date,branch_id,'VOID')).fetchone()
+    rows=[dict(r) for r in c.execute('SELECT item_type,item_name,quantity FROM delivery_items WHERE delivery_id=? ORDER BY id',(x['id'],)).fetchall()] if x else []
+    c.close()
+    return rows
+
+@app.put('/api/secretary/documents/prefill-items')
+async def save_prefill_items(req:Request):
+    u=require_user(req,['ADMIN','SECRETARY','SECRETARIAT'])
+    p=await req.json()
+    try:
+        d=str(p['service_date']); date.fromisoformat(d); bid=int(p['branch_id'])
+    except: raise HTTPException(400,'配送日期或分館格式錯誤')
+    if d<today(): raise HTTPException(400,'不可預填過去日期')
+    items=p.get('items')
+    if not isinstance(items,list): raise HTTPException(400,'隨車物品格式錯誤')
+    allowed={'DOCUMENT_BAG','ATTACHMENT_BAG','PRIZE','CONSUMABLE','POSTER','NEWBORN_GIFT','BOOKCLUB_RESOURCE','PROMOTION','STATIONERY','OTHER'}
+    clean=[]
+    for item in items:
+        if not isinstance(item,dict): raise HTTPException(400,'隨車物品格式錯誤')
+        typ=str(item.get('item_type') or '').upper(); name=str(item.get('item_name') or '').strip()
+        try: qty=int(item.get('quantity') or 0)
+        except: raise HTTPException(400,'數量必須是整數')
+        if typ not in allowed or qty<0 or (typ=='OTHER' and not name):
+            raise HTTPException(400,'隨車物品類型、名稱或數量錯誤')
+        if qty: clean.append((typ,name,qty))
+    c=db()
+    try:
+        lock_schedule_writes(c)
+        x=ensure_prefill_delivery(c,d,bid)
+        dr=c.execute('SELECT secretary_signature FROM daily_routes WHERE id=?',(x['daily_route_id'],)).fetchone()
+        if (dr and dr['secretary_signature']) or is_report_locked(c,d):
+            raise HTTPException(409,'路線已簽核或日報已鎖定，不能修改隨車物品')
+        c.execute('DELETE FROM delivery_items WHERE delivery_id=?',(x['id'],))
+        for typ,name,qty in clean:
+            c.execute('INSERT INTO delivery_items(delivery_id,item_type,item_name,quantity,created_by,updated_at) VALUES(?,?,?,?,?,?)',(x['id'],typ,name,qty,u['id'],now()))
+        audit(c,'USER',u['id'],u['role'],'PREFILL_DELIVERY_ITEMS','DELIVERY',x['id'],after={'service_date':d,'items':[{'item_type':t,'item_name':n,'quantity':q} for t,n,q in clean]})
+        c.commit(); _prefill_cache_clear(d)
+        return {'ok':True,'count':len(clean)}
+    except:
+        c.rollback(); raise
+    finally: c.close()
+
 @app.get('/api/secretary/deliveries/{did}/items')
 def get_delivery_items(did:int,req:Request):
     require_user(req,['ADMIN','SECRETARY']); c=db()
