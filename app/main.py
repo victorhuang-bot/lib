@@ -897,34 +897,39 @@ def require_user(req, roles=None):
     u=current_user(req)
     if not u: raise HTTPException(401,'UNAUTHENTICATED')
     if u['role']=='SECRETARIAT':
-        # Explicit server-side permission boundary: do not grant general SECRETARY
-        # access to account administration, branch management, devices, or audit logs.
+        # Same operational permissions as SECRETARY on the seven secretariat
+        # pages, but no branch/driver administration or security management.
         path=req.url.path
-        allowed=(
+        method=req.method
+        operational_prefixes=(
             '/api/dashboard/', '/api/pending-', '/api/secretary/',
             '/api/schedule-exceptions', '/api/deliveries/',
             '/api/history/', '/api/reports/', '/api/email/',
-            '/api/routes/', '/api/route-handoffs',
-            '/api/daily-routes', '/api/events',
-            '/api/account/change-password', '/api/account/security',
-            '/api/branches', '/api/drivers',
+            '/api/route-handoffs', '/api/events',
         )
-        if not any(path.startswith(prefix) for prefix in allowed):
+        read_only_directories=(
+            '/api/branches', '/api/drivers', '/api/routes',
+            '/api/daily-routes',
+        )
+        allowed=(
+            any(path.startswith(prefix) for prefix in operational_prefixes)
+            or (method=='GET' and path in read_only_directories)
+            or (path.startswith('/api/routes/') and (
+                path.endswith('/signed-summary')
+                or path.endswith('/secretary-sign')
+                or path.endswith('/driver-signatures')
+            ))
+            or (path.startswith('/api/daily-routes/') and
+                method=='GET' and path.endswith('/handoff-options'))
+            or path in ('/api/account/change-password','/api/account/security')
+        )
+        if not allowed:
             raise HTTPException(403,'FORBIDDEN')
-        if path.startswith('/api/branches') and (path!='/api/branches' or req.method!='GET'):
-            raise HTTPException(403,'FORBIDDEN')
-        if path.startswith('/api/drivers') and (path!='/api/drivers' or req.method!='GET'):
-            raise HTTPException(403,'FORBIDDEN')
-        if path.startswith('/api/routes/') and not (
-            path.endswith('/signed-summary') or path.endswith('/secretary-sign')
-            or path.endswith('/driver-signatures')
-        ):
-            raise HTTPException(403,'FORBIDDEN')
-        if path.startswith('/api/daily-routes') and req.method!='GET':
-            raise HTTPException(403,'FORBIDDEN')
+        # Preserve ADMIN-only operations even inside permitted page prefixes.
         if roles and 'SECRETARY' not in roles and 'SECRETARIAT' not in roles:
             raise HTTPException(403,'FORBIDDEN')
-    elif roles and u['role'] not in roles: raise HTTPException(403,'FORBIDDEN')
+    elif roles and u['role'] not in roles:
+        raise HTTPException(403,'FORBIDDEN')
     return u
 
 async def publish(event):
