@@ -1095,7 +1095,7 @@ def export_active_branch_qr(req:Request):
     try:
         rows=c.execute("""SELECT b.id,b.code,b.name,r.code AS route_code
             FROM branches b JOIN routes r ON r.id=b.route_id
-            WHERE b.active=1 AND b.code NOT IN ('B13','J13','C01','C01M')
+            WHERE b.active=1
             ORDER BY r.code,b.stop_order,b.code""").fetchall()
         base=public_base_url(req)
         result=[]
@@ -1106,7 +1106,7 @@ def export_active_branch_qr(req:Request):
                 'status':'有效' if token else '無法驗證',
                 'url':base+'/branch/'+token if token else ''})
         return {'count':len(result),'branches':result,
-                'excluded_codes':['B13','J13','C01','C01M']}
+                'excluded_codes':[]}
     finally:
         c.close()
 
