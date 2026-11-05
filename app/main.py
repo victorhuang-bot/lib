@@ -679,7 +679,7 @@ def stabilize_accounts_and_today_drivers(c):
     # Independent secretariat account. Never overwrite a changed password.
     office=c.execute("SELECT id FROM users WHERE username=?",('secretariat',)).fetchone()
     if not office:
-        pw=initial_secret('SECRETARIAT_INITIAL_PASSWORD','27552823')
+        pw=initial_secret('SECRETARIAT_INITIAL_PASSWORD',secrets.token_urlsafe(24))
         c.execute('INSERT INTO users(username,password_hash,role,email,is_active) VALUES(?,?,?,?,1)',
                   ('secretariat',hash_secret(pw),'SECRETARIAT',RESET_EMAIL))
 
