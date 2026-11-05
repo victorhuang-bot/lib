@@ -1086,6 +1086,30 @@ def raw_branch_token(c,bid):
         if isinstance(token,str) and token and hmac.compare_digest(thash(token),branch['access_token_hash']):
             return token
     return None
+@app.get('/api/branches/qr-export')
+def export_active_branch_qr(req:Request):
+    # Only authenticated administrators/secretaries can retrieve live QR URLs.
+    # Read-only: does not rotate tokens, modify PINs, or alter branch settings.
+    require_user(req,['ADMIN','SECRETARY'])
+    c=db()
+    try:
+        rows=c.execute("""SELECT b.id,b.code,b.name,r.code AS route_code
+            FROM branches b JOIN routes r ON r.id=b.route_id
+            WHERE b.active=1 AND b.code NOT IN ('B13','J13','C01','C01M')
+            ORDER BY r.code,b.stop_order,b.code""").fetchall()
+        base=public_base_url(req)
+        result=[]
+        for b in rows:
+            token=raw_branch_token(c,b['id'])
+            result.append({'code':b['code'],'name':b['name'],
+                'route':b['route_code'],
+                'status':'有效' if token else '無法驗證',
+                'url':base+'/branch/'+token if token else ''})
+        return {'count':len(result),'branches':result,
+                'excluded_codes':['B13','J13','C01','C01M']}
+    finally:
+        c.close()
+
 @app.get('/api/branches/{bid}/qr')
 def branch_qr(req:Request,bid:int):
     require_user(req,['ADMIN','SECRETARY'])
