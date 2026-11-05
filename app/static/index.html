@@ -134,7 +134,7 @@
   </div>
   <div style="overflow:auto">
     <table>
-      <thead><tr><th>路線</th><th>預設/已指派司機</th><th>分館代碼</th><th>分館</th><th>公文－總館送出數量</th></tr></thead>
+      <thead><tr><th>路線</th><th>預設/已指派司機</th><th>分館代碼</th><th>分館</th><th>公文－總館送出數量</th><th>隨車物品</th></tr></thead>
       <tbody id="nextDayDocsBody"></tbody>
     </table>
   </div>
@@ -320,7 +320,7 @@ async function loadPrefillDocs(serviceDate){
   try{
     const startedAt=performance.now();
     hint.textContent=`正在載入 ${serviceDate} 配送清單…`;
-    body.innerHTML=`<tr><td colspan="5"><div class="muted">正在讀取分館、排程與既有公文資料，請稍候…</div></td></tr>`;
+    body.innerHTML=`<tr><td colspan="6"><div class="muted">正在讀取分館、排程與既有公文資料，請稍候…</div></td></tr>`;
     const x=await api('/api/secretary/documents/prefill-v4?service_date='+encodeURIComponent(serviceDate));
     const elapsed=((performance.now()-startedAt)/1000).toFixed(1);
     nextDocDate=x.service_date;
@@ -338,8 +338,8 @@ async function loadPrefillDocs(serviceDate){
     body.innerHTML=x.rows.length?x.rows.map((d,i)=>{const routeNo=Number(d.route_code)||0;const routeStart=i===0||String(x.rows[i-1].route_code)!==String(d.route_code);const routeClass=`${routeNo%2?'route-odd':'route-even'} ${routeStart?'route-start':''}`;const routeCell=`<span class="route-badge-v19212">${d.route_code}線</span>${routeStart?'<span class="route-section-note">路線分隔</span>':''}`;
       const value=d.document_final??'';
       const editor=`<div class="row"><input id="nextdocb${d.branch_id}" type="number" min="0" value="${value}" style="width:90px"><button class="btn alt small" onclick="setNextDoc(${d.branch_id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">存檔</button></div><span class="muted">總館路線簽核前皆可修改</span>`;
-      return `<tr class="${routeClass}"><td>${routeCell}</td><td>${d.driver_name||'未指派'}</td><td>${d.branch_code}</td><td>${d.branch_name}</td><td>${editor}</td></tr>`;
-    }).join(''):`<tr><td colspan="5" class="muted">${x.service_date} 沒有符合固定排程或非固定運送的分館。</td></tr>`;
+      return `<tr class="${routeClass}"><td>${routeCell}</td><td>${d.driver_name||'未指派'}</td><td>${d.branch_code}</td><td>${d.branch_name}</td><td>${editor}</td><td><button class="btn alt small" onclick="editItems(${d.id||'null'},${JSON.stringify(d.branch_name).replace(/\"/g,'&quot;')},${d.branch_id},nextDocDate)">填寫／查看隨車物品</button></td></tr>`;
+    }).join(''):`<tr><td colspan="6" class="muted">${x.service_date} 沒有符合固定排程或非固定運送的分館。</td></tr>`;
   }catch(e){
     hint.textContent=`公文預填清單讀取失敗：${e.message}`;
     body.innerHTML='';
@@ -623,7 +623,7 @@ async function viewRouteSummary(id,readonly=true){
       <div class="row" style="justify-content:space-between"><div><h3>${r.service_date}｜${r.code}線｜${r.driver_name||'—'}｜原始簽收明細</h3><div class="muted">歷史檢視為唯讀；所有修改應走協助修正／更正／行政結案流程。</div></div><div class="row"><button class="btn" onclick="downloadRoutePng(${id})">下載本路線 PNG</button><button class="btn alt small" onclick="routeDetailHost.innerHTML=''">關閉</button></div></div>
       <div style="overflow:auto"><table><tr><th>分館</th><th>狀態</th><th>公文－總館送出</th><th>公文－分館送出</th><th>圖書－倉庫送出</th><th>圖書－分館送出</th><th>備註</th><th>實際簽收時間</th><th>系統簽名時間</th><th>簽收人</th><th>分館簽名</th></tr>
       ${x.stops.map(s=>`<tr><td>${s.branch_name}<br><span class="muted">${s.branch_code}</span></td><td>${s.late_signed?'補簽完成 ✓':(s.status==='ADMIN_CLOSED'?'管理者結案／未取得分館簽名':statusText(s.status))}${s.admin_close_reason?`<br><span class="muted">${s.admin_close_reason}</span>`:''}</td><td>${s.document_final??'—'}</td><td>${s.document_return_final??'—'}</td><td>${s.outbound_final??'—'}</td><td>${s.inbound_final??'—'}</td><td>${s.note_final||'—'}</td><td>${fmtDateTime(s.receipt_at)}</td><td>${fmtDateTime(s.corrected_at||s.branch_signed_at)}</td><td>${s.correction_signer_name||s.signer_name||'—'}</td><td>${(s.correction_signature||s.branch_signature)?`<img src="${s.correction_signature||s.branch_signature}" style="max-width:150px;max-height:65px;border:1px solid #ddd">`:'—'}</td></tr>`).join('')}
-      <tr><th>本線總計</th><th></th><th>${t.document}</th><th>${t.document_return}</th><th>${t.outbound}</th><th>${t.inbound}</th><th colspan="5"></th></tr></table></div>
+      <tr><th>本線總計</th><th></th><th>${t.document}</th><th>${t.document_return}</th><th>${t.outbound}</th><th>${t.inbound}</th><th colspan="6"></th></tr></table></div>
       <div class="grid" style="grid-template-columns:1fr 1fr;margin-top:16px">
         <div>${driverSignaturesHtml(x)}<h4>舊版司機路線簽名</h4>${r.driver_signature?`<img src="${r.driver_signature}" style="max-width:320px;max-height:100px;border:1px solid #ddd">`:'尚未簽名'}<div class="muted">${r.driver_signed_at||''}</div></div>
         <div><h4>總館路線簽核</h4>${r.secretary_signature?`<img src="${r.secretary_signature}" style="max-width:320px;max-height:100px;border:1px solid #ddd">`:'尚未簽核'}<div class="muted">${r.secretary_signed_at||''}</div></div>
@@ -775,9 +775,10 @@ const CARRIED_ITEM_LABELS={
   POSTER:'海報',NEWBORN_GIFT:'新生兒閱讀好禮',BOOKCLUB_RESOURCE:'讀書會資源庫用書',
   PROMOTION:'文宣',STATIONERY:'文具',OTHER:'其他'
 };
-async function editItems(id,name){
+async function editItems(id,name,branchId=null,serviceDate=null){
   try{
-    const rows=await api('/api/secretary/deliveries/'+id+'/items');
+    const prefill=branchId!==null&&serviceDate!==null;
+    const rows=await api(prefill?('/api/secretary/documents/prefill-items?service_date='+encodeURIComponent(serviceDate)+'&branch_id='+branchId):('/api/secretary/deliveries/'+id+'/items'));
     const by={};
     const others=[];
     for(const x of rows){
@@ -800,14 +801,14 @@ async function editItems(id,name){
       <h3>其他</h3>
       <div id="otherItems">${others.map(x=>`<div class="row" style="margin:6px 0"><input class="otherName" placeholder="其他項目名稱" value="${x.item_name||''}"><input class="otherQty" type="number" min="0" value="${x.quantity||0}" style="width:120px"><button class="btn alt small" onclick="this.parentElement.remove()">刪除</button></div>`).join('')}</div>
       <button class="btn alt small" onclick="addOtherItem()">＋新增其他項目</button>
-      <div class="toolbar"><button class="btn" onclick="saveItems(${id})">儲存隨車物品</button><button class="btn alt" onclick="closeModal()">取消</button></div>
+      <div class="toolbar"><button class="btn" onclick="saveItems(${id===null?'null':id},${branchId===null?'null':branchId},${serviceDate?JSON.stringify(serviceDate):'null'})">儲存隨車物品</button><button class="btn alt" onclick="closeModal()">取消</button></div>
     </div></div>`;
   }catch(e){alert(e.message)}
 }
 function addOtherItem(){
   document.querySelector('#otherItems').insertAdjacentHTML('beforeend',`<div class="row" style="margin:6px 0"><input class="otherName" placeholder="其他項目名稱"><input class="otherQty" type="number" min="0" value="1" style="width:120px"><button class="btn alt small" onclick="this.parentElement.remove()">刪除</button></div>`)
 }
-async function saveItems(id){
+async function saveItems(id,branchId=null,serviceDate=null){
   try{
     const items=[];
     CARRIED_ITEM_TYPES.forEach(([type],i)=>{
@@ -825,11 +826,15 @@ async function saveItems(id){
       if(q<0||!Number.isInteger(q))throw new Error('其他項目數量請輸入 0 以上整數');
       if(name&&q>0)items.push({item_type:'OTHER',item_name:name,quantity:q});
     });
-    await api('/api/secretary/deliveries/'+id+'/items',{method:'PUT',body:JSON.stringify({items})});
+    if(branchId!==null&&serviceDate!==null){
+      await api('/api/secretary/documents/prefill-items',{method:'PUT',body:JSON.stringify({service_date:serviceDate,branch_id:branchId,items})});
+    }else{
+      await api('/api/secretary/deliveries/'+id+'/items',{method:'PUT',body:JSON.stringify({items})});
+    }
     const summaryEl=document.querySelector('#itemSummary'+id);
     if(summaryEl){summaryEl.innerHTML=formatCarriedItemSummary(items);summaryEl.classList.toggle('muted',!items.length)}
     closeModal();
-    alert('隨車物品已儲存，外層摘要已更新');
+    alert('隨車物品已儲存');
   }catch(e){alert(e.message)}
 }
 
