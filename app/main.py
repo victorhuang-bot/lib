@@ -1068,7 +1068,9 @@ async def reset_secretary_password(req:Request):
     if len(newp)<8: raise HTTPException(400,'新密碼至少 8 碼')
     c=db(); admin=c.execute('SELECT * FROM users WHERE id=?',(u['id'],)).fetchone()
     if not admin or not verify_secret(admin_password,admin['password_hash']): c.close(); raise HTTPException(400,'管理者密碼驗證失敗')
-    target=(p.get('target_username') or SECRETARY_USERNAME).strip()\n    if target not in (SECRETARY_USERNAME,'secretariat'): c.close(); raise HTTPException(400,'不可重設此帳號')\n    sec=c.execute('SELECT * FROM users WHERE username=?',(target,)).fetchone()
+    target=(p.get('target_username') or SECRETARY_USERNAME).strip()
+    if target not in (SECRETARY_USERNAME,'secretariat'): c.close(); raise HTTPException(400,'不可重設此帳號')
+    sec=c.execute('SELECT * FROM users WHERE username=?',(target,)).fetchone()
     if not sec: c.close(); raise HTTPException(404,'找不到總館帳號')
     c.execute('UPDATE users SET password_hash=? WHERE id=?',(hash_secret(newp),sec['id'])); c.execute('DELETE FROM sessions WHERE user_id=?',(sec['id'],)); audit(c,'USER',u['id'],u['role'],'RESET_SECRETARY_PASSWORD','USER',sec['id']); c.commit(); c.close(); return {'ok':True}
 
