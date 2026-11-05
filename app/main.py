@@ -897,13 +897,14 @@ def require_user(req, roles=None):
             '/api/history/', '/api/reports/', '/api/email/',
             '/api/routes/', '/api/route-handoffs',
             '/api/daily-routes', '/api/events',
-            '/api/account/change-password', '/api/account/security',\n            '/api/branches', '/api/drivers',
+            '/api/account/change-password', '/api/account/security',
+            '/api/branches', '/api/drivers',
         )
         if not any(path.startswith(prefix) for prefix in allowed):
             raise HTTPException(403,'FORBIDDEN')
-        if path.startswith('/api/branches') and path!='/api/branches':
+        if path.startswith('/api/branches') and (path!='/api/branches' or req.method!='GET'):
             raise HTTPException(403,'FORBIDDEN')
-        if path.startswith('/api/drivers') and path!='/api/drivers':
+        if path.startswith('/api/drivers') and (path!='/api/drivers' or req.method!='GET'):
             raise HTTPException(403,'FORBIDDEN')
         if path.startswith('/api/routes/') and not (
             path.endswith('/signed-summary') or path.endswith('/secretary-sign')
