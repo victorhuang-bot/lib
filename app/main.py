@@ -1089,7 +1089,7 @@ def account_security(req:Request):
 
 @app.get('/api/dashboard/today')
 def dashboard(req:Request):
-    require_user(req,['ADMIN','SECRETARY']); c=db(); ensure_today(c)
+    require_user(req,['ADMIN','SECRETARY','SECRETARIAT']); c=db(); ensure_today(c)
     rows=c.execute("SELECT status,COUNT(*) n FROM deliveries WHERE service_date=? AND status<>'VOID' GROUP BY status",(today(),)).fetchall(); counts={r['status']:r['n'] for r in rows}; total=sum(counts.values()); completed=counts.get('STOP_COMPLETED',0)+counts.get('LATE_BRANCH_PENDING',0)+counts.get('ADMIN_CLOSED',0)
     routes=c.execute('''SELECT dr.id,r.code,r.name,d.name driver,
         (SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID') total,
@@ -1103,7 +1103,7 @@ def dashboard(req:Request):
     c.close(); return {'date':today(),'total':total,'completed':completed,'waiting_branch':counts.get('WAITING_BRANCH',0),'late_pending':counts.get('LATE_BRANCH_PENDING',0),'waiting_driver':counts.get('WAITING_DRIVER',0),'waiting_driver_confirm':counts.get('WAITING_DRIVER_CONFIRM',0)+counts.get('WAITING_DRIVER_RECONFIRM',0),'waiting_correction':counts.get('WAITING_BRANCH_CORRECTION',0),'routes':[dict(x) for x in routes]}
 @app.get('/api/dashboard/deliveries')
 def dashboard_deliveries(req:Request, status:str|None=None, route:str|None=None, search:str|None=None):
-    require_user(req,['ADMIN','SECRETARY']); c=db(); q='''SELECT x.*,b.code branch_code,b.name branch_name,r.code route_code,d.name driver_name FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id JOIN drivers d ON d.id=dr.driver_id WHERE x.service_date=?'''; args=[today()]
+    require_user(req,['ADMIN','SECRETARY','SECRETARIAT']); c=db(); q='''SELECT x.*,b.code branch_code,b.name branch_name,r.code route_code,d.name driver_name FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id JOIN drivers d ON d.id=dr.driver_id WHERE x.service_date=?'''; args=[today()]
     if status:q+=' AND x.status=?';args.append(status)
     if route:q+=' AND r.code=?';args.append(route)
     if search:q+=' AND b.name LIKE ?';args.append('%'+search+'%')
@@ -1928,7 +1928,7 @@ def ensure_prefill_delivery(c, service_date, branch_id):
 
 @app.get('/api/secretary/documents/prefill-v4')
 def document_prefill_v4(req:Request, service_date:str|None=None):
-    require_user(req,['ADMIN','SECRETARY'])
+    require_user(req,['ADMIN','SECRETARY','SECRETARIAT'])
     d=service_date or next_service_date()
     try:
         selected=date.fromisoformat(d)
@@ -2043,7 +2043,7 @@ def _prefill_save_db(user_id,user_role,d,bid,qty):
 
 @app.post('/api/secretary/documents/prefill-save')
 async def document_prefill_save(req:Request):
-    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); d=str(p.get('service_date') or '')
+    u=require_user(req,['ADMIN','SECRETARY','SECRETARIAT']); p=await req.json(); d=str(p.get('service_date') or '')
     try: date.fromisoformat(d); bid=int(p.get('branch_id')); qty=int(p.get('qty'))
     except: raise HTTPException(400,'日期、分館或公文數量格式錯誤')
     if qty<0: raise HTTPException(400,'公文數量不可小於 0')
@@ -2076,14 +2076,14 @@ def _prefill_batch_db(user_id,user_role,d,items):
 
 @app.post('/api/secretary/documents/prefill-batch')
 async def document_prefill_batch(req:Request):
-    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); d=str(p.get('service_date') or ''); items=p.get('items') or []
+    u=require_user(req,['ADMIN','SECRETARY','SECRETARIAT']); p=await req.json(); d=str(p.get('service_date') or ''); items=p.get('items') or []
     try: date.fromisoformat(d)
     except: raise HTTPException(400,'日期格式錯誤')
     return await asyncio.to_thread(_prefill_batch_db,u['id'],u['role'],d,items)
 
 @app.patch('/api/secretary/deliveries/{did}/document')
 async def set_doc(did:int,req:Request):
-    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json()
+    u=require_user(req,['ADMIN','SECRETARY','SECRETARIAT']); p=await req.json()
     try: qty=int(p.get('qty'))
     except: raise HTTPException(400,'公文數量必須是整數')
     if qty < 0: raise HTTPException(400,'公文數量不可小於 0')
@@ -2102,7 +2102,7 @@ async def set_doc(did:int,req:Request):
 
 @app.post('/api/secretary/documents/zero-all')
 async def zero_all(req:Request, service_date:str|None=None):
-    u=require_user(req,['ADMIN','SECRETARY'])
+    u=require_user(req,['ADMIN','SECRETARY','SECRETARIAT'])
     d=service_date or today()
     try: date.fromisoformat(d)
     except: raise HTTPException(400,'日期格式錯誤')
@@ -2121,7 +2121,7 @@ async def zero_all(req:Request, service_date:str|None=None):
 
 @app.post('/api/secretary/documents/batch')
 async def batch_documents(req:Request):
-    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); items=p.get('items') or []
+    u=require_user(req,['ADMIN','SECRETARY','SECRETARIAT']); p=await req.json(); items=p.get('items') or []
     if not isinstance(items,list) or not items: raise HTTPException(400,'沒有可存檔的公文數量')
     d=p.get('service_date') or today()
     try: date.fromisoformat(d)
