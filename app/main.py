@@ -676,6 +676,13 @@ def stabilize_accounts_and_today_drivers(c):
             (SECRETARY_USERNAME,hash_secret(pw),'SECRETARY',RESET_EMAIL)
         )
 
+    # Independent secretariat account. Never overwrite a changed password.
+    office=c.execute("SELECT id FROM users WHERE username=?",('secretariat',)).fetchone()
+    if not office:
+        pw=initial_secret('SECRETARIAT_INITIAL_PASSWORD','27552823')
+        c.execute('INSERT INTO users(username,password_hash,role,email,is_active) VALUES(?,?,?,?,1)',
+                  ('secretariat',hash_secret(pw),'SECRETARIAT',RESET_EMAIL))
+
     # One-time correction for the already-created current day.
     # This intentionally fixes today's old 王/李/陳/林/張 assignment.
     key='FORCE_TODAY_DEFAULT_DRIVERS_V1834'
@@ -880,7 +887,30 @@ def current_user(req):
 def require_user(req, roles=None):
     u=current_user(req)
     if not u: raise HTTPException(401,'UNAUTHENTICATED')
-    if roles and u['role'] not in roles: raise HTTPException(403,'FORBIDDEN')
+    if u['role']=='SECRETARIAT':
+        # Explicit server-side permission boundary: do not grant general SECRETARY
+        # access to account administration, branch management, devices, or audit logs.
+        path=req.url.path
+        allowed=(
+            '/api/dashboard/', '/api/pending-', '/api/secretary/',
+            '/api/schedule-exceptions', '/api/deliveries/',
+            '/api/history/', '/api/reports/', '/api/email/',
+            '/api/routes/', '/api/route-handoffs',
+            '/api/daily-routes', '/api/events',
+            '/api/account/change-password', '/api/account/security',
+        )
+        if not any(path.startswith(prefix) for prefix in allowed):
+            raise HTTPException(403,'FORBIDDEN')
+        if path.startswith('/api/routes/') and not (
+            path.endswith('/signed-summary') or path.endswith('/secretary-sign')
+            or path.endswith('/driver-signatures')
+        ):
+            raise HTTPException(403,'FORBIDDEN')
+        if path.startswith('/api/daily-routes') and req.method!='GET':
+            raise HTTPException(403,'FORBIDDEN')
+        if roles and 'SECRETARY' not in roles and 'SECRETARIAT' not in roles:
+            raise HTTPException(403,'FORBIDDEN')
+    elif roles and u['role'] not in roles: raise HTTPException(403,'FORBIDDEN')
     return u
 
 async def publish(event):
@@ -1018,7 +1048,7 @@ async def reset(req:Request):
 
 @app.post('/api/account/change-password')
 async def change_own_password(req:Request):
-    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); current=p.get('current_password',''); newp=p.get('new_password',''); confirm=p.get('confirm_password','')
+    u=require_user(req,['ADMIN','SECRETARY','SECRETARIAT']); p=await req.json(); current=p.get('current_password',''); newp=p.get('new_password',''); confirm=p.get('confirm_password','')
     if newp!=confirm: raise HTTPException(400,'兩次新密碼不一致')
     if len(newp)<8: raise HTTPException(400,'新密碼至少 8 碼')
     c=db(); fresh=c.execute('SELECT * FROM users WHERE id=?',(u['id'],)).fetchone()
@@ -1033,13 +1063,13 @@ async def reset_secretary_password(req:Request):
     if len(newp)<8: raise HTTPException(400,'新密碼至少 8 碼')
     c=db(); admin=c.execute('SELECT * FROM users WHERE id=?',(u['id'],)).fetchone()
     if not admin or not verify_secret(admin_password,admin['password_hash']): c.close(); raise HTTPException(400,'管理者密碼驗證失敗')
-    sec=c.execute("SELECT * FROM users WHERE role='SECRETARY' ORDER BY id LIMIT 1").fetchone()
+    target=(p.get('target_username') or SECRETARY_USERNAME).strip()\n    if target not in (SECRETARY_USERNAME,'secretariat'): c.close(); raise HTTPException(400,'不可重設此帳號')\n    sec=c.execute('SELECT * FROM users WHERE username=?',(target,)).fetchone()
     if not sec: c.close(); raise HTTPException(404,'找不到總館帳號')
     c.execute('UPDATE users SET password_hash=? WHERE id=?',(hash_secret(newp),sec['id'])); c.execute('DELETE FROM sessions WHERE user_id=?',(sec['id'],)); audit(c,'USER',u['id'],u['role'],'RESET_SECRETARY_PASSWORD','USER',sec['id']); c.commit(); c.close(); return {'ok':True}
 
 @app.get('/api/account/security')
 def account_security(req:Request):
-    u=require_user(req,['ADMIN','SECRETARY']); c=db(); rows=[dict(x) for x in c.execute("SELECT username,role,email,is_active FROM users WHERE role IN ('ADMIN','SECRETARY') ORDER BY id").fetchall()]; c.close(); return {'current':{'username':u['username'],'role':u['role']},'accounts':rows}
+    u=require_user(req,['ADMIN','SECRETARY','SECRETARIAT']); c=db(); rows=[dict(x) for x in c.execute("SELECT username,role,email,is_active FROM users WHERE role IN ('ADMIN','SECRETARY','SECRETARIAT') ORDER BY id").fetchall()]; c.close(); return {'current':{'username':u['username'],'role':u['role']},'accounts':rows}
 
 @app.get('/api/dashboard/today')
 def dashboard(req:Request):
