@@ -1068,9 +1068,24 @@ def branches(req:Request):
     require_user(req,['ADMIN','SECRETARY']); c=db(); rows=[dict(x) for x in c.execute("SELECT b.id,b.code,b.name,r.code route_code,b.route_id,b.stop_order,b.active,b.qr_created_at,b.address,b.phone,b.contact_name,b.contact_info,b.delivery_weekdays,b.delivery_frequency,CASE WHEN b.pin_hash IS NULL THEN '未設定' ELSE '已設定' END pin_status FROM branches b JOIN routes r ON r.id=b.route_id ORDER BY b.active DESC,r.code,b.stop_order").fetchall()];c.close();return rows
 
 def raw_branch_token(c,bid):
-    # demo-only retrieval of current token from last rotate/seed audit record
-    rows=c.execute("SELECT after_json FROM audit_logs WHERE entity_type='BRANCH' AND entity_id=? AND action IN ('SEED_BRANCH_TOKEN','ROTATE_BRANCH_QR') ORDER BY id DESC LIMIT 1",(str(bid),)).fetchone()
-    return json.loads(rows['after_json'])['token'] if rows else None
+    # Official branches use SEED_OFFICIAL_BRANCH_TOKEN; demo branches use
+    # SEED_BRANCH_TOKEN. Always verify against the current stored hash so a
+    # rotated or stale audit token can never be returned as a working QR.
+    branch=c.execute('SELECT access_token_hash FROM branches WHERE id=?',(bid,)).fetchone()
+    if not branch or not branch['access_token_hash']:
+        return None
+    rows=c.execute("""SELECT after_json FROM audit_logs
+        WHERE entity_type='BRANCH' AND entity_id=?
+          AND action IN ('SEED_BRANCH_TOKEN','SEED_OFFICIAL_BRANCH_TOKEN','ROTATE_BRANCH_QR')
+        ORDER BY id DESC""",(str(bid),)).fetchall()
+    for row in rows:
+        try:
+            token=json.loads(row['after_json'] or '{}').get('token')
+        except (ValueError,TypeError):
+            continue
+        if isinstance(token,str) and token and hmac.compare_digest(thash(token),branch['access_token_hash']):
+            return token
+    return None
 @app.get('/api/branches/{bid}/qr')
 def branch_qr(req:Request,bid:int):
     require_user(req,['ADMIN','SECRETARY'])
