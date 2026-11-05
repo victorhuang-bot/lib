@@ -2151,7 +2151,7 @@ async def batch_documents(req:Request):
 
 @app.get('/api/schedule-exceptions')
 def schedule_exceptions(req:Request, month:str=''):
-    require_user(req,['ADMIN','SECRETARY']); month=month or today()[:7]; c=db()
+    require_user(req,['ADMIN','SECRETARY','SECRETARIAT']); month=month or today()[:7]; c=db()
     rows=[dict(x) for x in c.execute("""SELECT e.id,e.service_date,e.branch_id,e.exception_type,e.reason,e.created_at,b.code branch_code,b.name branch_name,r.code route_code FROM delivery_exceptions e JOIN branches b ON b.id=e.branch_id LEFT JOIN routes r ON r.id=b.route_id WHERE e.service_date LIKE ? ORDER BY e.service_date,r.code,b.stop_order""",(month+'%',)).fetchall()]
     for g in c.execute("SELECT id,service_date,reason,created_at FROM global_closures WHERE service_date LIKE ? ORDER BY service_date",(month+'%',)).fetchall():
         rows.append({'id':'G'+str(g['id']),'service_date':g['service_date'],'branch_id':None,'exception_type':'CLOSED_ALL','reason':g['reason'],'created_at':g['created_at'],'branch_code':'ALL','branch_name':'全部分館','route_code':'全部'})
@@ -2167,7 +2167,7 @@ def date_span(start_date,end_date):
 @app.post('/api/schedule-exceptions/range')
 async def save_schedule_range(req:Request):
     from app.services.schedule_postponement import save_range
-    u=require_user(req,['ADMIN','SECRETARY'])
+    u=require_user(req,['ADMIN','SECRETARY','SECRETARIAT'])
     result=save_range(sys.modules[__name__],u,await req.json())
     if not result.get('preview'):
         _prefill_cache_clear()
@@ -2177,7 +2177,7 @@ async def save_schedule_range(req:Request):
 @app.delete('/api/schedule-exceptions/{eid}')
 async def delete_schedule_exception(eid:str,req:Request):
     from app.services.schedule_postponement import cancel_exception
-    u=require_user(req,['ADMIN','SECRETARY'])
+    u=require_user(req,['ADMIN','SECRETARY','SECRETARIAT'])
     result=cancel_exception(sys.modules[__name__],u,eid)
     _prefill_cache_clear()
     await publish({'type':'schedule.updated'})
