@@ -875,6 +875,15 @@ def validate_startup_schema():
     c=db()
     try:
         validate_schema(c)
+        # One-time, idempotent account provisioning for existing production databases.
+        # Preserve all existing users and any password the secretariat has changed.
+        if not c.execute("SELECT 1 FROM users WHERE username=?", ('secretariat',)).fetchone():
+            initial_password = initial_secret('SECRETARIAT_INITIAL_PASSWORD', secrets.token_urlsafe(24))
+            c.execute(
+                'INSERT INTO users(username,password_hash,role,email,is_active) VALUES(?,?,?,?,1)',
+                ('secretariat', hash_secret(initial_password), 'SECRETARIAT', RESET_EMAIL)
+            )
+            c.commit()
     finally:
         c.close()
 
