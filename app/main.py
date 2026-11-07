@@ -1936,7 +1936,7 @@ async def branch_sign(req:Request):
         action='BRANCH_LATE_SIGN' if late else 'BRANCH_SIGN'
 
         if late:
-            c.execute(
+            updated=c.execute(
                 """UPDATE deliveries
                    SET document_final=?,document_return_final=?,outbound_final=?,inbound_final=?,
                        note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,receipt_at=?,
@@ -1946,7 +1946,7 @@ async def branch_sign(req:Request):
                  next_status,signed_at,x['id'],x['row_version'])
             )
         else:
-            c.execute(
+            updated=c.execute(
                 """UPDATE deliveries
                    SET document_final=?,document_return_final=?,outbound_final=?,inbound_final=?,
                        note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,receipt_at=?,
@@ -1955,6 +1955,9 @@ async def branch_sign(req:Request):
                 (document,document_return,outbound,inbound,note,signer,signature,signed_at,receipt_at,
                  next_status,x['id'],x['row_version'])
             )
+
+        if updated.rowcount!=1:
+            raise HTTPException(409,'資料已由其他人修改，請重新整理後重新簽名')
 
         audit(
             c,'BRANCH',sess['branch_id'],'BRANCH',action,'DELIVERY',x['id'],
