@@ -1201,8 +1201,7 @@ def drivers(req:Request):
 @app.post('/api/drivers/{did}/activation')
 async def activation(req:Request,did:int):
     u=require_user(req,['ADMIN']); raw=secrets.token_urlsafe(32); c=db()
-    # Only the newest activation QR remains valid. Older unused QR codes are revoked immediately.
-    c.execute('UPDATE driver_activation_tokens SET revoked_at=? WHERE driver_id=? AND used_at IS NULL AND revoked_at IS NULL',(now(),did))
+    # QR may activate multiple devices until expiry; explicit revocation still works.
     c.execute('INSERT INTO driver_activation_tokens(driver_id,token_hash,created_at,expires_at,created_by) VALUES(?,?,?,?,?)',(did,thash(raw),now(),future_iso(minutes=10),u['id']))
     audit(c,'USER',u['id'],u['role'],'CREATE_DRIVER_ACTIVATION_QR','DRIVER',did,after={'expires_in_seconds':600})
     c.commit();c.close()
@@ -1213,15 +1212,25 @@ async def activation(req:Request,did:int):
 @app.get('/api/driver-activation/{token}')
 def activation_info(token:str):
     c=db(); r=c.execute('''SELECT t.*,d.name FROM driver_activation_tokens t JOIN drivers d ON d.id=t.driver_id WHERE t.token_hash=?''',(thash(token),)).fetchone();c.close();
-    if not r or r['used_at'] or r['revoked_at'] or r['expires_at']<=now(): raise HTTPException(410,'此啟用QR Code已失效')
+    if not r or r['revoked_at'] or r['expires_at']<=now(): raise HTTPException(410,'此啟用QR Code已失效')
     return {'driver':r['name'],'expires_at':r['expires_at']}
 @app.post('/api/driver-activation/{token}')
 async def activate_driver(token:str, req:Request):
     p=await req.json(); pin=p.get('pin','');
     if len(pin)!=4 or not pin.isdigit():raise HTTPException(400,'PIN需為4位數字')
     c=db(); c.execute('BEGIN IMMEDIATE'); r=c.execute('SELECT * FROM driver_activation_tokens WHERE token_hash=?',(thash(token),)).fetchone()
-    if not r or r['used_at'] or r['revoked_at'] or r['expires_at']<=now(): c.rollback();c.close();raise HTTPException(410,'此啟用QR Code已失效')
-    device_key=secrets.token_urlsafe(24); c.execute('UPDATE drivers SET pin_hash=? WHERE id=?',(hash_secret(pin),r['driver_id'])); c.execute('INSERT INTO driver_devices(driver_id,device_key,activated_at,last_seen_at) VALUES(?,?,?,?)',(r['driver_id'],device_key,now(),now())); c.execute('UPDATE driver_activation_tokens SET used_at=? WHERE id=?',(now(),r['id']));c.commit();c.close();return {'ok':True,'device_key':device_key}
+    if not r or r['revoked_at'] or r['expires_at']<=now(): c.rollback();c.close();raise HTTPException(410,'此啟用QR Code已失效')
+    driver=c.execute('SELECT pin_hash,active FROM drivers WHERE id=?',(r['driver_id'],)).fetchone()
+    if not driver or not driver['active']:
+        c.rollback();c.close();raise HTTPException(403,'司機已停用')
+    if driver['pin_hash'] and not verify_secret(pin,driver['pin_hash']):
+        c.rollback();c.close();raise HTTPException(401,'司機 PIN 錯誤')
+    device_key=secrets.token_urlsafe(24)
+    if not driver['pin_hash']:
+        c.execute('UPDATE drivers SET pin_hash=? WHERE id=?',(hash_secret(pin),r['driver_id']))
+    c.execute('INSERT INTO driver_devices(driver_id,device_key,activated_at,last_seen_at) VALUES(?,?,?,?)',(r['driver_id'],device_key,now(),now()))
+    audit(c,'DRIVER',r['driver_id'],'DRIVER','ACTIVATE_ADDITIONAL_DEVICE','DRIVER',r['driver_id'])
+    c.commit();c.close();return {'ok':True,'device_key':device_key}
 @app.post('/api/driver/unlock')
 async def driver_unlock(req:Request):
     p=await req.json(); c=db(); dev=c.execute('''SELECT dd.*,d.pin_hash FROM driver_devices dd JOIN drivers d ON d.id=dd.driver_id WHERE dd.device_key=? AND dd.revoked_at IS NULL''',(p.get('device_key',''),)).fetchone()
@@ -1283,6 +1292,8 @@ async def confirm(did:int,req:Request):
     x=c.execute('''SELECT x.*,COALESCE(dda.driver_id,dr.driver_id) driver_id FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id WHERE x.id=?''',(did,)).fetchone()
     if not x or x['driver_id']!=s['driver_id']:c.close();raise HTTPException(403)
     if x['status'] not in ('WAITING_DRIVER_CONFIRM','WAITING_DRIVER_RECONFIRM'):c.close();raise HTTPException(409,'目前狀態不可完成本站')
+    if not x['branch_signed_at'] or not x['branch_signature'] or any(x[k] is None for k in ('document_final','document_return_final','outbound_final','inbound_final')):
+        c.close();raise HTTPException(409,'請先完成四項數量與分館簽名')
     c.execute("UPDATE deliveries SET status='STOP_COMPLETED',driver_confirmed_at=?,row_version=row_version+1 WHERE id=?",(now(),did));audit(c,'DRIVER',s['driver_id'],'DRIVER','CONFIRM_STOP','DELIVERY',did);c.commit();c.close();await publish({'type':'delivery.updated','id':did});return {'ok':True}
 @app.post('/api/driver/deliveries/{did}/defer-branch-sign')
 async def defer_branch_sign(did:int,req:Request):
@@ -1591,7 +1602,6 @@ async def branch_desktop_login(req:Request):
                          ORDER BY service_date DESC,id DESC LIMIT 1""",(b['id'],)).fetchone()
 
     raw=secrets.token_urlsafe(32)
-    c.execute('DELETE FROM branch_sessions WHERE branch_id=?',(b['id'],))
     c.execute('INSERT INTO branch_sessions(token_hash,branch_id,delivery_id,expires_at) VALUES(?,?,?,?)',
               (thash(raw),b['id'],x['id'] if x else None,future_iso(hours=12)))
     c.commit(); c.close()
@@ -1833,6 +1843,46 @@ async def branch_session_select_task(req:Request):
     c.commit();c.close()
     return {'ok':True,'delivery_id':did,'service_date':x['service_date']}
 
+@app.post('/api/branch-session/prefill')
+async def branch_prefill(req:Request):
+    """Allow branch to draft all four counts before secretary/driver input."""
+    sess=branch_auth(req)
+    p=await req.json()
+    c=db()
+    try:
+        lock_schedule_writes(c)
+        _signer_branch(c,sess)
+        x=c.execute('SELECT * FROM deliveries WHERE id=? AND branch_id=?',
+                    (sess['delivery_id'],sess['branch_id'])).fetchone()
+        if not x: raise HTTPException(404,'找不到配送資料')
+        if x['service_date']!=today() or is_report_locked(c,x['service_date']):
+            raise HTTPException(409,'僅可預填今日未鎖定的配送')
+        if x['status'] not in ('WAITING_SECRETARY','WAITING_DRIVER','WAITING_BRANCH') or x['branch_signed_at']:
+            raise HTTPException(409,'分館已簽收或此筆不可預填')
+        if type(p.get('row_version')) is not int or p['row_version']!=x['row_version']:
+            raise HTTPException(409,'數量已被其他人修改，請重新整理後再儲存')
+        keys=('document','document_return','outbound','inbound')
+        if any(type(p.get(k)) is not int or not 0<=p[k]<=1000000 for k in keys):
+            raise HTTPException(400,'四項數量必須是非負整數')
+        result=c.execute("""UPDATE deliveries SET
+            document_final=?,document_return_final=?,outbound_final=?,inbound_final=?,
+            row_version=row_version+1
+            WHERE id=? AND row_version=? AND branch_signed_at IS NULL""",
+            (*(p[k] for k in keys),x['id'],x['row_version']))
+        if result.rowcount!=1:
+            raise HTTPException(409,'資料已變更，請重新整理')
+        audit(c,'BRANCH',sess['branch_id'],'BRANCH','PREFILL_FOUR_COUNTS','DELIVERY',x['id'],
+              before={k:x[col] for k,col in zip(keys,('document_final','document_return_final','outbound_final','inbound_final'))},
+              after={**{k:p[k] for k in keys},'document_by':'BRANCH_ON_BEHALF_OF_SECRETARIAT',
+                     'outbound_by':'BRANCH_ON_BEHALF_OF_DRIVER'})
+        c.commit()
+    except Exception:
+        c.rollback();raise
+    finally:
+        c.close()
+    await publish({'type':'delivery.updated','id':x['id']})
+    return {'ok':True,'row_version':x['row_version']+1}
+
 @app.post('/api/branch-session/sign')
 async def branch_sign(req:Request):
     sess=branch_auth(req)
@@ -1861,8 +1911,11 @@ async def branch_sign(req:Request):
         if x['branch_signed_at'] or x['branch_signature']:
             signed_at=x['branch_signed_at']
             return {'ok':True,'already_signed':True,'signed_at':signed_at,'status':x['status']}
-        if x['status'] not in ('WAITING_BRANCH','LATE_BRANCH_PENDING'):
+        if x['status'] not in ('WAITING_SECRETARY','WAITING_DRIVER','WAITING_BRANCH','LATE_BRANCH_PENDING'):
             raise HTTPException(409,'此筆目前不是可簽收狀態')
+
+        if type(p.get('row_version')) is not int or p['row_version']!=x['row_version']:
+            raise HTTPException(409,'資料已由其他人更新，請重新整理並核對後再簽名')
 
         try:
             document=int(p.get('document',x['document_final'] if x['document_final'] is not None else 0) or 0)
@@ -1872,8 +1925,8 @@ async def branch_sign(req:Request):
         except (TypeError,ValueError):
             raise HTTPException(400,'四個數量欄位格式錯誤')
 
-        if min(document,document_return,outbound,inbound) < 0:
-            raise HTTPException(400,'數量不可小於 0')
+        if min(document,document_return,outbound,inbound) < 0 or max(document,document_return,outbound,inbound)>1000000:
+            raise HTTPException(400,'數量須為合理的非負整數')
 
         note=p.get('note','')
         signer,signature=_selected_signing_identity(c,sess,p)
@@ -1888,9 +1941,9 @@ async def branch_sign(req:Request):
                    SET document_final=?,document_return_final=?,outbound_final=?,inbound_final=?,
                        note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,receipt_at=?,
                        status=?,driver_confirmed_at=COALESCE(driver_confirmed_at,?),row_version=row_version+1
-                   WHERE id=?""",
+                   WHERE id=? AND row_version=? AND branch_signed_at IS NULL""",
                 (document,document_return,outbound,inbound,note,signer,signature,signed_at,receipt_at,
-                 next_status,signed_at,x['id'])
+                 next_status,signed_at,x['id'],x['row_version'])
             )
         else:
             c.execute(
@@ -1898,9 +1951,9 @@ async def branch_sign(req:Request):
                    SET document_final=?,document_return_final=?,outbound_final=?,inbound_final=?,
                        note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,receipt_at=?,
                        status=?,row_version=row_version+1
-                   WHERE id=?""",
+                   WHERE id=? AND row_version=? AND branch_signed_at IS NULL""",
                 (document,document_return,outbound,inbound,note,signer,signature,signed_at,receipt_at,
-                 next_status,x['id'])
+                 next_status,x['id'],x['row_version'])
             )
 
         audit(
