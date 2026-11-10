@@ -363,7 +363,7 @@ def init_db():
         initialize_schema(c, USE_POSTGRES, (
             migrate_branch_signers, migrate_corrections_for_repeat_requests,
             migrate_email_logs_gmail_api, migrate_route_secretary_signatures,
-            migrate_document_return_final, migrate_v1929,
+            migrate_document_return_final, migrate_v1929, migrate_carried_item_units,
         ))
     finally:
         c.close()
@@ -423,6 +423,15 @@ def migrate_branch_signers(c):
     SchemaTransaction(c, USE_POSTGRES).executescript("""CREATE TABLE IF NOT EXISTS branch_signers(id INTEGER PRIMARY KEY, branch_id BIGINT NOT NULL REFERENCES branches(id), name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(branch_id,name));""")
     c.commit()
 
+
+def migrate_carried_item_units(c):
+    """Additive migration: preserve all existing carried-item rows."""
+    if USE_POSTGRES:
+        c.execute("ALTER TABLE delivery_items ADD COLUMN IF NOT EXISTS unit TEXT DEFAULT '件'")
+    else:
+        cols={r['name'] for r in c.execute('PRAGMA table_info(delivery_items)').fetchall()}
+        if 'unit' not in cols:
+            c.execute("ALTER TABLE delivery_items ADD COLUMN unit TEXT DEFAULT '件'")
 
 def migrate_email_logs_gmail_api(c):
     cols=[
@@ -1496,7 +1505,7 @@ def prefill_items(req:Request,service_date:str,branch_id:int):
     except: raise HTTPException(400,'日期格式錯誤')
     c=db()
     x=c.execute('SELECT id FROM deliveries WHERE service_date=? AND branch_id=? AND status<>?',(service_date,branch_id,'VOID')).fetchone()
-    rows=[dict(r) for r in c.execute('SELECT item_type,item_name,quantity FROM delivery_items WHERE delivery_id=? ORDER BY id',(x['id'],)).fetchall()] if x else []
+    rows=[dict(r) for r in c.execute('SELECT item_type,item_name,quantity,unit FROM delivery_items WHERE delivery_id=? ORDER BY id',(x['id'],)).fetchall()] if x else []
     c.close()
     return rows
 
@@ -1519,7 +1528,7 @@ async def save_prefill_items(req:Request):
         except: raise HTTPException(400,'數量必須是整數')
         if typ not in allowed or qty<0 or (typ=='OTHER' and not name):
             raise HTTPException(400,'隨車物品類型、名稱或數量錯誤')
-        if qty: clean.append((typ,name,qty))
+        if qty: clean.append((typ,name,qty,str(item.get('unit') or '件').strip()[:20] or '件'))
     c=db()
     try:
         lock_schedule_writes(c)
@@ -1528,9 +1537,9 @@ async def save_prefill_items(req:Request):
         if (dr and dr['secretary_signature']) or is_report_locked(c,d):
             raise HTTPException(409,'路線已簽核或日報已鎖定，不能修改隨車物品')
         c.execute('DELETE FROM delivery_items WHERE delivery_id=?',(x['id'],))
-        for typ,name,qty in clean:
-            c.execute('INSERT INTO delivery_items(delivery_id,item_type,item_name,quantity,created_by,updated_at) VALUES(?,?,?,?,?,?)',(x['id'],typ,name,qty,u['id'],now()))
-        audit(c,'USER',u['id'],u['role'],'PREFILL_DELIVERY_ITEMS','DELIVERY',x['id'],after={'service_date':d,'items':[{'item_type':t,'item_name':n,'quantity':q} for t,n,q in clean]})
+        for typ,name,qty,unit in clean:
+            c.execute('INSERT INTO delivery_items(delivery_id,item_type,item_name,quantity,unit,created_by,updated_at) VALUES(?,?,?,?,?,?,?)',(x['id'],typ,name,qty,unit,u['id'],now()))
+        audit(c,'USER',u['id'],u['role'],'PREFILL_DELIVERY_ITEMS','DELIVERY',x['id'],after={'service_date':d,'items':[{'item_type':t,'item_name':n,'quantity':q,'unit':unit} for t,n,q,unit in clean]})
         c.commit(); _prefill_cache_clear(d)
         return {'ok':True,'count':len(clean)}
     except:
@@ -1539,13 +1548,13 @@ async def save_prefill_items(req:Request):
 
 @app.get('/api/secretary/deliveries/{did}/items')
 def get_delivery_items(did:int,req:Request):
-    require_user(req,['ADMIN','SECRETARY']); c=db()
-    rows=[dict(x) for x in c.execute("SELECT id,item_type,item_name,quantity,updated_at FROM delivery_items WHERE delivery_id=? ORDER BY id",(did,)).fetchall()]
+    require_user(req,['ADMIN','SECRETARY','SECRETARIAT']); c=db()
+    rows=[dict(x) for x in c.execute("SELECT id,item_type,item_name,quantity,unit,updated_at FROM delivery_items WHERE delivery_id=? ORDER BY id",(did,)).fetchall()]
     c.close(); return rows
 
 @app.put('/api/secretary/deliveries/{did}/items')
 async def put_delivery_items(did:int,req:Request):
-    u=require_user(req,['SECRETARY']); p=await req.json(); items=p.get('items') or []
+    u=require_user(req,['SECRETARY','SECRETARIAT']); p=await req.json(); items=p.get('items') or []
     if not isinstance(items,list): raise HTTPException(400,'隨車物品格式錯誤')
     c=db(); lock_schedule_writes(c); x=c.execute('SELECT * FROM deliveries WHERE id=?',(did,)).fetchone()
     if not x: c.close(); raise HTTPException(404,'找不到配送資料')
@@ -1561,11 +1570,11 @@ async def put_delivery_items(did:int,req:Request):
         if qty<0: c.close(); raise HTTPException(400,'隨車物品數量不可小於 0')
         if typ=='OTHER' and not name: c.close(); raise HTTPException(400,'其他項目請填名稱')
         if qty==0: continue
-        clean.append((typ,name,qty))
+        clean.append((typ,name,qty,str(item.get('unit') or '件').strip()[:20] or '件'))
     c.execute('DELETE FROM delivery_items WHERE delivery_id=?',(did,))
-    for typ,name,qty in clean:
-        c.execute('INSERT INTO delivery_items(delivery_id,item_type,item_name,quantity,created_by,updated_at) VALUES(?,?,?,?,?,?)',(did,typ,name,qty,u['id'],now()))
-    audit(c,'USER',u['id'],u['role'],'SET_DELIVERY_ITEMS','DELIVERY',did,after={'items':[{'item_type':a,'item_name':b,'quantity':q} for a,b,q in clean]})
+    for typ,name,qty,unit in clean:
+        c.execute('INSERT INTO delivery_items(delivery_id,item_type,item_name,quantity,unit,created_by,updated_at) VALUES(?,?,?,?,?,?,?)',(did,typ,name,qty,unit,u['id'],now()))
+    audit(c,'USER',u['id'],u['role'],'SET_DELIVERY_ITEMS','DELIVERY',did,after={'items':[{'item_type':a,'item_name':b,'quantity':q,'unit':unit} for a,b,q,unit in clean]})
     c.commit(); c.close(); return {'ok':True,'items':[{'item_type':a,'item_name':b,'quantity':q} for a,b,q in clean]}
 
 
