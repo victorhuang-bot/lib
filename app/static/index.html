@@ -348,8 +348,9 @@ async function loadPrefillDocs(serviceDate){rememberPrefillDrafts();
     body.innerHTML=x.rows.length?x.rows.map((d,i)=>{const routeNo=Number(d.route_code)||0;const routeStart=i===0||String(x.rows[i-1].route_code)!==String(d.route_code);const routeClass=`${routeNo%2?'route-odd':'route-even'} ${routeStart?'route-start':''}`;const routeCell=`<span class="route-badge-v19212">${d.route_code}線</span>${routeStart?'<span class="route-section-note">路線分隔</span>':''}`;
       const draftId='nextdocb'+d.branch_id;const saved=readDraft('prefill',draftId,x.service_date);const value=prefillDrafts.has(x.service_date+':'+draftId)?prefillDrafts.get(x.service_date+':'+draftId):(saved!==null?saved:(d.document_final??''));
       const editor=`<div class="row"><input id="nextdocb${d.branch_id}" type="number" min="0" value="${value}" style="width:90px"><button class="btn alt small" onclick="setNextDoc(${d.branch_id},${JSON.stringify(d.branch_name).replace(/"/g,'&quot;')})">存檔</button></div><span class="muted">總館路線簽核前皆可修改</span>`;
-      return `<tr class="${routeClass}"><td>${routeCell}</td><td>${d.driver_name||'未指派'}</td><td>${d.branch_code}</td><td>${d.branch_name}</td><td>${editor}</td><td><button class="btn alt small" onclick="editItems(${d.id||'null'},${JSON.stringify(d.branch_name).replace(/\"/g,'&quot;')},${d.branch_id},nextDocDate)">填寫／查看隨車物品</button></td></tr>`;
+      return `<tr class="${routeClass}"><td>${routeCell}</td><td>${d.driver_name||'未指派'}</td><td>${d.branch_code}</td><td>${d.branch_name}</td><td>${editor}</td><td><button class="btn alt small" onclick="editItems(${d.id||'null'},${JSON.stringify(d.branch_name).replace(/\"/g,'&quot;')},${d.branch_id},nextDocDate)">填寫／查看隨車物品</button><div id="prefillItemSummary${d.branch_id}" class="muted" style="margin-top:8px;font-size:.9em">正在讀取隨車物品…</div></td></tr>`;
     }).join(''):`<tr><td colspan="6" class="muted">${x.service_date} 沒有符合固定排程或非固定運送的分館。</td></tr>`;
+    await loadPrefillItemSummaries(x.rows,x.service_date);
   }catch(e){
     hint.textContent=`公文預填清單讀取失敗：${e.message}`;
     body.innerHTML='';
@@ -357,6 +358,19 @@ async function loadPrefillDocs(serviceDate){rememberPrefillDrafts();
     td.colSpan=5;box.className='error';box.textContent=`無法讀取 ${serviceDate} 公文清單：${e.message}`;
     td.appendChild(box);tr.appendChild(td);body.appendChild(tr);
   }
+}
+async function loadPrefillItemSummaries(rows,serviceDate){
+  await Promise.all((rows||[]).map(async d=>{
+    const el=document.getElementById('prefillItemSummary'+d.branch_id);
+    if(!el)return;
+    try{
+      const items=await api('/api/secretary/documents/prefill-items?service_date='+encodeURIComponent(serviceDate)+'&branch_id='+encodeURIComponent(d.branch_id));
+      if(el.isConnected&&nextDocDate===serviceDate){
+        el.innerHTML=formatCarriedItemSummary(items);
+        el.classList.toggle('muted',!items.length);
+      }
+    }catch(e){if(el.isConnected)el.textContent='隨車物品：讀取失敗'}
+  }));
 }
 async function setNextDoc(branchId,branchName){
   try{
@@ -850,7 +864,9 @@ async function saveItems(id,branchId=null,serviceDate=null){
     }else{
       await api('/api/secretary/deliveries/'+id+'/items',{method:'PUT',body:JSON.stringify({items})});
     }
-    const summaryEl=document.querySelector('#itemSummary'+id);
+    const summaryEl=(branchId!==null&&serviceDate!==null)
+      ?document.getElementById('prefillItemSummary'+branchId)
+      :document.getElementById('itemSummary'+id);
     if(summaryEl){summaryEl.innerHTML=formatCarriedItemSummary(items);summaryEl.classList.toggle('muted',!items.length)}
     closeModal();
     alert('隨車物品已儲存');
