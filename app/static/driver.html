@@ -10,7 +10,7 @@
 .driver-quantity-cell span{display:block;color:#59677a;font-size:13px}
 .driver-quantity-cell strong{display:block;font-size:21px;overflow-wrap:anywhere}
 }
- .driver-count-rows{display:grid;gap:8px;margin:12px 0}.driver-count-line{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border:1px solid #dce3eb;border-radius:10px}.driver-count-line span{font-weight:600}.driver-count-line strong{font-size:20px;font-variant-numeric:tabular-nums;text-align:right}.driver-outbound-qty{display:block;width:100%;min-width:120px;max-width:100%;height:52px;box-sizing:border-box;font-size:20px;font-variant-numeric:tabular-nums;padding:12px 14px;margin:8px 0 12px}</style></head><body><main class="mobile"><div class="card"><h1>今日配送</h1><div id="unlock"><p>請輸入司機 4 位 PIN</p><input id="pin" maxlength="4" inputmode="numeric" style="width:100%;font-size:28px;text-align:center"><button class="btn big" style="margin-top:10px" onclick="unlockDriver()">進入今日路線</button></div>
+ .driver-count-rows{display:grid;gap:8px;margin:12px 0}.driver-count-line{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border:1px solid #dce3eb;border-radius:10px}.driver-count-line span{font-weight:600}.driver-count-line strong{font-size:20px;font-variant-numeric:tabular-nums;text-align:right}.driver-outbound-qty{display:block;width:100%;min-width:120px;max-width:100%;height:52px;box-sizing:border-box;font-size:20px;font-variant-numeric:tabular-nums;padding:12px 14px;margin:8px 0 12px}</style></head><body><main class="mobile"><div class="card"><h1>今日配送</h1><div id="unlock"><p>請使用司機專屬 QR Code 或網址登入。已啟用的舊裝置仍可使用 PIN。</p><input id="pin" maxlength="4" inputmode="numeric" style="width:100%;font-size:28px;text-align:center"><button class="btn big" style="margin-top:10px" onclick="unlockDriver()">進入今日路線</button></div>
 <div id="routeSwitcher" class="hidden" style="margin:12px 0"></div>
 <div id="list" class="hidden"></div><div id="routeSigns" class="hidden"></div><div id="msg"></div></div></main><script src="/static/common.js"></script><script>
 function fmtDateTime(v){
@@ -27,7 +27,7 @@ function fmtDateTime(v){
   return s;
 }
 
-let token=null,itemMap={},todayDeliveries=[],todayRoutes=[],handoffNotices=[],selectedRoute=null;
+let token=sessionStorage.getItem('driver_session_token'),itemMap={},todayDeliveries=[],todayRoutes=[],handoffNotices=[],selectedRoute=null;
 
 async function dapi(url,opt={}){
   opt.headers={...(opt.headers||{}),'Authorization':'Bearer '+token,'Content-Type':'application/json'};
@@ -37,6 +37,20 @@ async function dapi(url,opt={}){
   return j;
 }
 
+async function resumeDriverSession(){
+ if(!token)return;
+ try{
+  document.getElementById('unlock').classList.add('hidden');
+  routeSwitcher.classList.remove('hidden');
+  list.classList.remove('hidden');
+  await load();
+ }catch(e){
+  token=null;sessionStorage.removeItem('driver_session_token');
+  document.getElementById('unlock').classList.remove('hidden');
+  routeSwitcher.classList.add('hidden');list.classList.add('hidden');
+  msg.textContent='登入已失效，請重新開啟司機 QR 網址';
+ }
+}
 async function unlockDriver(){
   try{
     let key=localStorage.getItem('driver_device_key');
@@ -221,3 +235,5 @@ function setupRouteCanvas(id){const c=document.getElementById('rs'+id);if(!c||c.
 function clearRouteSig(id){const c=document.getElementById('rs'+id);c.getContext('2d').clearRect(0,0,c.width,c.height);c.dataset.dirty=''}
 async function signRoute(id){const c=document.getElementById('rs'+id);if(!c||c.dataset.dirty!=='1'){alert('請先完成路線簽名');return}if(!confirm('確認本人負責的站點均已完成運送並簽名？'))return;try{await dapi('/api/driver/routes/'+id+'/segment-sign',{method:'POST',body:JSON.stringify({signature:c.toDataURL('image/png')})});alert('本人區段簽名完成，系統會彙整同線其他司機簽名。');load()}catch(e){alert(e.message)}}
 </script></body></html>
+
+<script>resumeDriverSession();</script>
