@@ -106,11 +106,11 @@ def pg_pool():
             conninfo=DATABASE_URL,
             min_size=0,
             max_size=5,
-            timeout=8,
+            timeout=25,
             max_idle=60,
             kwargs={
                 'row_factory': dict_row,
-                'connect_timeout': 5
+                'connect_timeout': 12
             },
             open=True
         )
@@ -268,12 +268,23 @@ def db():
         for attempt in range(3):
             try:
                 return _PgCompat(DATABASE_URL)
-            except Exception:
+            except Exception as error:
+                # Never log exception messages or traceback: libpq errors can
+                # contain credentials and the complete connection string.
+                # SQLSTATE is a safe, actionable diagnostic when available.
+                sqlstate=getattr(error, 'sqlstate', None)
+                category=type(error).__name__
+                logging.getLogger('movingmatch.database').warning(
+                    'PostgreSQL connection attempt %s/3 failed; category=%s sqlstate=%s',
+                    attempt+1, category if category in (
+                        'PoolTimeout','OperationalError','InterfaceError',
+                        'ConnectionTimeout','ProgrammingError') else 'Other',
+                    sqlstate if isinstance(sqlstate,str) and len(sqlstate)==5 else 'none'
+                )
                 if attempt < 2:
                     import time
-                    time.sleep(2)
-        # Driver errors can include connection settings. Never expose their text,
-        # type, or chained traceback through this public database entry point.
+                    time.sleep(2*(attempt+1))
+        # Never fall back to SQLite in production.
         raise RuntimeError('POSTGRES_CONNECTION_UNAVAILABLE; SQLite fallback is forbidden') from None
     # Local development fallback only.
     DATA_DIR.mkdir(parents=True, exist_ok=True)
