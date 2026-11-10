@@ -1234,28 +1234,56 @@ def drivers(req:Request):
     require_user(req,['ADMIN','SECRETARY']);c=db();rows=[dict(x) for x in c.execute("SELECT id,name,active,CASE WHEN pin_hash IS NULL THEN 0 ELSE 1 END pin_set FROM drivers ORDER BY active DESC,id").fetchall()];c.close();return rows
 @app.post('/api/drivers/{did}/activation')
 async def activation(req:Request,did:int):
-    u=require_user(req,['ADMIN']); raw=secrets.token_urlsafe(32); c=db()
-    # Only the newest activation QR remains valid. Older unused QR codes are revoked immediately.
-    c.execute('UPDATE driver_activation_tokens SET revoked_at=? WHERE driver_id=? AND used_at IS NULL AND revoked_at IS NULL',(now(),did))
-    c.execute('INSERT INTO driver_activation_tokens(driver_id,token_hash,created_at,expires_at,created_by) VALUES(?,?,?,?,?)',(did,thash(raw),now(),future_iso(minutes=10),u['id']))
-    audit(c,'USER',u['id'],u['role'],'CREATE_DRIVER_ACTIVATION_QR','DRIVER',did,after={'expires_in_seconds':600})
-    c.commit();c.close()
+    u=require_user(req,['ADMIN'])
+    c=db()
+    try:
+        driver=c.execute('SELECT id,active FROM drivers WHERE id=?',(did,)).fetchone()
+        if not driver or not driver['active']:
+            raise HTTPException(404,'找不到啟用中的司機')
+        # Explicit regeneration revokes prior links; normal use never consumes a link.
+        raw=secrets.token_urlsafe(32)
+        c.execute('UPDATE driver_activation_tokens SET revoked_at=? WHERE driver_id=? AND revoked_at IS NULL',(now(),did))
+        c.execute('INSERT INTO driver_activation_tokens(driver_id,token_hash,created_at,expires_at,created_by) VALUES(?,?,?,?,?)',(did,thash(raw),now(),future_iso(hours=24*365*30),u['id']))
+        audit(c,'USER',u['id'],u['role'],'REGENERATE_DRIVER_QR','DRIVER',did)
+        c.commit()
+    except:
+        c.rollback()
+        raise
+    finally:
+        c.close()
     url=public_base_url(req)+'/activate-driver/'+raw
     im=qrcode.make(url); bio=io.BytesIO(); im.save(bio,'PNG')
-    png_data_url='data:image/png;base64,'+base64.b64encode(bio.getvalue()).decode('ascii')
-    return {'url':url,'png_data_url':png_data_url,'expires_in_seconds':600}
+    return {'url':url,'png_data_url':'data:image/png;base64,'+base64.b64encode(bio.getvalue()).decode('ascii'),'reusable':True}
+
 @app.get('/api/driver-activation/{token}')
 def activation_info(token:str):
-    c=db(); r=c.execute('''SELECT t.*,d.name FROM driver_activation_tokens t JOIN drivers d ON d.id=t.driver_id WHERE t.token_hash=?''',(thash(token),)).fetchone();c.close();
-    if not r or r['used_at'] or r['revoked_at'] or r['expires_at']<=now(): raise HTTPException(410,'此啟用QR Code已失效')
-    return {'driver':r['name'],'expires_at':r['expires_at']}
+    c=db()
+    try:
+        r=c.execute('''SELECT t.*,d.name,d.active FROM driver_activation_tokens t JOIN drivers d ON d.id=t.driver_id WHERE t.token_hash=?''',(thash(token),)).fetchone()
+        if not r or r['revoked_at'] or not r['active']:
+            raise HTTPException(410,'此司機登入網址已停用，請向管理員取得新網址')
+        return {'driver':r['name'],'reusable':True}
+    finally:
+        c.close()
+
 @app.post('/api/driver-activation/{token}')
 async def activate_driver(token:str, req:Request):
-    p=await req.json(); pin=p.get('pin','');
-    if len(pin)!=4 or not pin.isdigit():raise HTTPException(400,'PIN需為4位數字')
-    c=db(); c.execute('BEGIN IMMEDIATE'); r=c.execute('SELECT * FROM driver_activation_tokens WHERE token_hash=?',(thash(token),)).fetchone()
-    if not r or r['used_at'] or r['revoked_at'] or r['expires_at']<=now(): c.rollback();c.close();raise HTTPException(410,'此啟用QR Code已失效')
-    device_key=secrets.token_urlsafe(24); c.execute('UPDATE drivers SET pin_hash=? WHERE id=?',(hash_secret(pin),r['driver_id'])); c.execute('INSERT INTO driver_devices(driver_id,device_key,activated_at,last_seen_at) VALUES(?,?,?,?)',(r['driver_id'],device_key,now(),now())); c.execute('UPDATE driver_activation_tokens SET used_at=? WHERE id=?',(now(),r['id']));c.commit();c.close();return {'ok':True,'device_key':device_key}
+    # The long-lived URL is the credential; no PIN, device binding or one-use rule.
+    c=db()
+    try:
+        r=c.execute('''SELECT t.driver_id,d.active FROM driver_activation_tokens t JOIN drivers d ON d.id=t.driver_id WHERE t.token_hash=? AND t.revoked_at IS NULL''',(thash(token),)).fetchone()
+        if not r or not r['active']:
+            raise HTTPException(410,'此司機登入網址已停用，請向管理員取得新網址')
+        raw=secrets.token_urlsafe(32)
+        c.execute('INSERT INTO driver_sessions(token_hash,driver_id,device_id,expires_at) VALUES(?,?,?,?)',(thash(raw),r['driver_id'],None,future_iso(hours=12)))
+        c.commit()
+        return {'ok':True,'token':raw}
+    except:
+        c.rollback()
+        raise
+    finally:
+        c.close()
+
 @app.post('/api/driver/unlock')
 async def driver_unlock(req:Request):
     p=await req.json(); c=db(); dev=c.execute('''SELECT dd.*,d.pin_hash FROM driver_devices dd JOIN drivers d ON d.id=dd.driver_id WHERE dd.device_key=? AND dd.revoked_at IS NULL''',(p.get('device_key',''),)).fetchone()
