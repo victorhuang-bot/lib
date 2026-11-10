@@ -2272,11 +2272,11 @@ def schedule_exceptions(req:Request, month:str=''):
         rows.append({'id':'G'+str(g['id']),'service_date':g['service_date'],'branch_id':None,'exception_type':'CLOSED_ALL','reason':g['reason'],'created_at':g['created_at'],'branch_code':'ALL','branch_name':'全部分館','route_code':'全部'})
     c.close(); rows.sort(key=lambda x:(x['service_date'],str(x.get('route_code') or ''))); return rows
 
-def date_span(start_date,end_date):
+def date_span(start_date,end_date,max_days=63):
     try: a=date.fromisoformat(start_date); b=date.fromisoformat(end_date or start_date)
     except: raise HTTPException(400,'日期格式錯誤')
     if b<a: a,b=b,a
-    if (b-a).days>62: raise HTTPException(400,'單次日期範圍最多63天')
+    if (b-a).days>=max_days: raise HTTPException(400,f'單次日期範圍最多{max_days}天')
     return [(a+timedelta(days=i)).isoformat() for i in range((b-a).days+1)]
 
 @app.post('/api/schedule-exceptions/range')
