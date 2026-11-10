@@ -201,7 +201,18 @@ class _PgCursor:
 class _PgCompat:
     def __init__(self, url):
         self.pool=pg_pool()
-        self.con=self.pool.getconn(timeout=8)
+        self._direct=False
+        try:
+            self.con=self.pool.getconn(timeout=12)
+        except Exception as error:
+            if type(error).__name__ != 'PoolTimeout':
+                raise
+            # A pool timeout can be caused by a stalled pool worker, not Neon.
+            # Make one bounded direct attempt; never use SQLite in production.
+            logging.getLogger('movingmatch.database').warning(
+                'PostgreSQL pool timed out; attempting bounded direct connection')
+            self.con=psycopg.connect(url, connect_timeout=8, row_factory=dict_row)
+            self._direct=True
         self.con.row_factory=dict_row
         # Neon pooler rejects statement_timeout as a startup parameter.
         # Apply it only after a connection is acquired.
@@ -257,7 +268,10 @@ class _PgCompat:
                         self.con.rollback()
                 except Exception:
                     pass
-                self.pool.putconn(self.con)
+                if self._direct:
+                    self.con.close()
+                else:
+                    self.pool.putconn(self.con)
             finally:
                 self.con=None
 
