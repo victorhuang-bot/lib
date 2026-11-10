@@ -1575,7 +1575,7 @@ async def put_delivery_items(did:int,req:Request):
     for typ,name,qty,unit in clean:
         c.execute('INSERT INTO delivery_items(delivery_id,item_type,item_name,quantity,unit,created_by,updated_at) VALUES(?,?,?,?,?,?,?)',(did,typ,name,qty,unit,u['id'],now()))
     audit(c,'USER',u['id'],u['role'],'SET_DELIVERY_ITEMS','DELIVERY',did,after={'items':[{'item_type':a,'item_name':b,'quantity':q,'unit':unit} for a,b,q,unit in clean]})
-    c.commit(); c.close(); return {'ok':True,'items':[{'item_type':a,'item_name':b,'quantity':q} for a,b,q in clean]}
+    c.commit(); c.close(); return {'ok':True,'items':[{'item_type':a,'item_name':b,'quantity':q,'unit':unit} for a,b,q,unit in clean]}
 
 
 @app.post('/api/branch-session/desktop-login')
