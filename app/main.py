@@ -1142,7 +1142,7 @@ def dashboard(req:Request):
     c.close(); return {'date':today(),'total':total,'completed':completed,'waiting_branch':counts.get('WAITING_BRANCH',0),'late_pending':counts.get('LATE_BRANCH_PENDING',0),'waiting_driver':counts.get('WAITING_DRIVER',0),'waiting_driver_confirm':counts.get('WAITING_DRIVER_CONFIRM',0)+counts.get('WAITING_DRIVER_RECONFIRM',0),'waiting_correction':counts.get('WAITING_BRANCH_CORRECTION',0),'routes':[dict(x) for x in routes]}
 @app.get('/api/dashboard/deliveries')
 def dashboard_deliveries(req:Request, status:str|None=None, route:str|None=None, search:str|None=None):
-    require_user(req,['ADMIN','SECRETARY','SECRETARIAT']); c=db(); q='''SELECT x.*,b.code branch_code,b.name branch_name,r.code route_code,d.name driver_name FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id JOIN drivers d ON d.id=dr.driver_id WHERE x.service_date=?'''; args=[today()]
+    require_user(req,['ADMIN','SECRETARY','SECRETARIAT']); c=db(); q='''SELECT x.*,b.code branch_code,b.name branch_name,r.code route_code,d.name driver_name FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id LEFT JOIN drivers d ON d.id=dr.driver_id WHERE x.service_date=?'''; args=[today()]
     if status:q+=' AND x.status=?';args.append(status)
     if route:q+=' AND r.code=?';args.append(route)
     if search:q+=' AND b.name LIKE ?';args.append('%'+search+'%')
