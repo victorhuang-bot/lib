@@ -811,14 +811,23 @@ async function editItems(id,name,branchId=null,serviceDate=null){
       <h3>其他</h3>
       <div id="otherItems">${others.map(x=>`<div class="row" style="margin:6px 0"><input class="otherName" placeholder="其他項目名稱" value="${x.item_name||''}"><input class="otherQty" type="number" min="0" value="${x.quantity||0}" style="width:120px"><input class="otherUnit" placeholder="單位" maxlength="20" value="${x.unit||'件'}" style="width:90px"><button class="btn alt small" onclick="this.parentElement.remove()">刪除</button></div>`).join('')}</div>
       <button class="btn alt small" onclick="addOtherItem()">＋新增其他項目</button>
-      <div class="toolbar"><button class="btn" onclick="saveItems(${id===null?'null':id},${branchId===null?'null':branchId},${serviceDate?JSON.stringify(serviceDate):'null'})">儲存隨車物品</button><button class="btn alt" onclick="closeModal()">取消</button></div>
+      <div class="toolbar"><button type="button" id="saveCarriedItemsButton" class="btn">儲存隨車物品</button><span id="saveCarriedItemsStatus" role="status" aria-live="polite"></span><button class="btn alt" onclick="closeModal()">取消</button></div>
     </div></div>`;
+    document.getElementById('saveCarriedItemsButton').addEventListener('click',event=>{
+      event.preventDefault();
+      saveItems(id,branchId,serviceDate);
+    });
   }catch(e){alert(e.message)}
 }
 function addOtherItem(){
   document.querySelector('#otherItems').insertAdjacentHTML('beforeend',`<div class="row" style="margin:6px 0"><input class="otherName" placeholder="其他項目名稱"><input class="otherQty" type="number" min="0" value="1" style="width:120px"><input class="otherUnit" placeholder="單位" maxlength="20" value="件" style="width:90px"><button class="btn alt small" onclick="this.parentElement.remove()">刪除</button></div>`)
 }
 async function saveItems(id,branchId=null,serviceDate=null){
+  const button=document.getElementById('saveCarriedItemsButton');
+  const status=document.getElementById('saveCarriedItemsStatus');
+  if(button?.disabled)return;
+  if(button){button.disabled=true;button.textContent='儲存中…';}
+  if(status)status.textContent='正在送出儲存請求';
   try{
     const items=[];
     CARRIED_ITEM_TYPES.forEach(([type],i)=>{
@@ -845,7 +854,12 @@ async function saveItems(id,branchId=null,serviceDate=null){
     if(summaryEl){summaryEl.innerHTML=formatCarriedItemSummary(items);summaryEl.classList.toggle('muted',!items.length)}
     closeModal();
     alert('隨車物品已儲存');
-  }catch(e){alert(e.message)}
+  }catch(e){
+    if(status)status.textContent='儲存失敗：'+(e.message||'未知錯誤');
+    alert('隨車物品儲存失敗：'+(e.message||'請稍後重試'));
+  }finally{
+    if(button?.isConnected){button.disabled=false;button.textContent='儲存隨車物品';}
+  }
 }
 
 
