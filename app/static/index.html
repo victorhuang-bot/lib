@@ -285,7 +285,7 @@ function formatCarriedItemSummary(rows){
   if(!rows||!rows.length)return '隨車物品：無';
   return '<b>隨車物品：</b> '+rows.map(x=>{
     const name=x.item_type==='OTHER'?(x.item_name||'其他'):(CARRIED_ITEM_LABELS[x.item_type]||x.item_type);
-    return `${name} × ${x.quantity}`;
+    return `${name} × ${x.quantity} ${x.unit||'件'}`;
   }).join('　');
 }
 async function setDoc(id,branchName){try{const el=document.querySelector('#doc'+id);if(!el||el.value==='')throw new Error('請輸入公文－總館送出數量');const qty=Number(el.value);if(qty<0||!Number.isInteger(qty))throw new Error('公文－總館送出數量請輸入 0 以上整數');if(!confirm(`${branchName}\n確認公文－總館送出數量為 ${qty}？`))return;let r=await api('/api/secretary/deliveries/'+id+'/document',{method:'PATCH',body:JSON.stringify({qty})});alert(`${branchName}\n公文－總館送出數量 ${r.qty} 已儲存。\n該路線完成總館簽核前仍可修改。`);await loadAll()}catch(e){alert(e.message);await loadAll()}}
@@ -785,13 +785,13 @@ async function editItems(id,name,branchId=null,serviceDate=null){
     const others=[];
     for(const x of rows){
       if(x.item_type==='OTHER') others.push(x);
-      else by[x.item_type]=x.quantity||0;
+      else by[x.item_type]=x;
     }
     const presetHtml=CARRIED_ITEM_TYPES.map(([type,label],i)=>`
-      <label class="carried-item-row" style="display:grid;grid-template-columns:auto 1fr 120px;gap:10px;align-items:center">
-        <input id="itOn_${i}" type="checkbox" ${by[type]?'checked':''}>
+      <label class="carried-item-row" style="display:grid;grid-template-columns:auto 1fr 100px 100px;gap:10px;align-items:center">
+        <input id="itOn_${i}" type="checkbox" ${by[type]?.quantity?'checked':''}>
         <span>${label}</span>
-        <input id="itQty_${i}" type="number" min="0" value="${by[type]||0}">
+        <input id="itQty_${i}" type="number" min="0" value="${by[type]?.quantity||0}"><input id="itUnit_${i}" placeholder="單位" maxlength="20" value="${by[type]?.unit||'件'}">
       </label>`).join('');
     const legacyRows=rows.filter(x=>['PROMOTION','STATIONERY'].includes(x.item_type));
     const legacyHtml=legacyRows.length?`<div class="notice" style="margin-top:10px"><b>既有歷史類別：</b> ${legacyRows.map(x=>`${CARRIED_ITEM_LABELS[x.item_type]} ${x.quantity}`).join('、')}<br><span class="muted">儲存新資料時可改用上方新分類。</span></div>`:'';
@@ -801,14 +801,14 @@ async function editItems(id,name,branchId=null,serviceDate=null){
       <div class="formgrid" style="grid-template-columns:1fr">${presetHtml}</div>
       ${legacyHtml}
       <h3>其他</h3>
-      <div id="otherItems">${others.map(x=>`<div class="row" style="margin:6px 0"><input class="otherName" placeholder="其他項目名稱" value="${x.item_name||''}"><input class="otherQty" type="number" min="0" value="${x.quantity||0}" style="width:120px"><button class="btn alt small" onclick="this.parentElement.remove()">刪除</button></div>`).join('')}</div>
+      <div id="otherItems">${others.map(x=>`<div class="row" style="margin:6px 0"><input class="otherName" placeholder="其他項目名稱" value="${x.item_name||''}"><input class="otherQty" type="number" min="0" value="${x.quantity||0}" style="width:120px"><input class="otherUnit" placeholder="單位" maxlength="20" value="${x.unit||'件'}" style="width:90px"><button class="btn alt small" onclick="this.parentElement.remove()">刪除</button></div>`).join('')}</div>
       <button class="btn alt small" onclick="addOtherItem()">＋新增其他項目</button>
       <div class="toolbar"><button class="btn" onclick="saveItems(${id===null?'null':id},${branchId===null?'null':branchId},${serviceDate?JSON.stringify(serviceDate):'null'})">儲存隨車物品</button><button class="btn alt" onclick="closeModal()">取消</button></div>
     </div></div>`;
   }catch(e){alert(e.message)}
 }
 function addOtherItem(){
-  document.querySelector('#otherItems').insertAdjacentHTML('beforeend',`<div class="row" style="margin:6px 0"><input class="otherName" placeholder="其他項目名稱"><input class="otherQty" type="number" min="0" value="1" style="width:120px"><button class="btn alt small" onclick="this.parentElement.remove()">刪除</button></div>`)
+  document.querySelector('#otherItems').insertAdjacentHTML('beforeend',`<div class="row" style="margin:6px 0"><input class="otherName" placeholder="其他項目名稱"><input class="otherQty" type="number" min="0" value="1" style="width:120px"><input class="otherUnit" placeholder="單位" maxlength="20" value="件" style="width:90px"><button class="btn alt small" onclick="this.parentElement.remove()">刪除</button></div>`)
 }
 async function saveItems(id,branchId=null,serviceDate=null){
   try{
@@ -819,14 +819,14 @@ async function saveItems(id,branchId=null,serviceDate=null){
       if(on?.checked){
         const n=Number(q?.value||0);
         if(n<0||!Number.isInteger(n))throw new Error('數量請輸入 0 以上整數');
-        if(n>0)items.push({item_type:type,quantity:n});
+        if(n>0)items.push({item_type:type,quantity:n,unit:document.querySelector('#itUnit_'+i)?.value.trim()||'件'});
       }
     });
-    const ns=[...document.querySelectorAll('.otherName')],qs=[...document.querySelectorAll('.otherQty')];
+    const ns=[...document.querySelectorAll('.otherName')],qs=[...document.querySelectorAll('.otherQty')],us=[...document.querySelectorAll('.otherUnit')];
     ns.forEach((el,i)=>{
       const name=el.value.trim(),q=Number(qs[i].value||0);
       if(q<0||!Number.isInteger(q))throw new Error('其他項目數量請輸入 0 以上整數');
-      if(name&&q>0)items.push({item_type:'OTHER',item_name:name,quantity:q});
+      if(name&&q>0)items.push({item_type:'OTHER',item_name:name,quantity:q,unit:us[i]?.value.trim()||'件'});
     });
     if(branchId!==null&&serviceDate!==null){
       await api('/api/secretary/documents/prefill-items',{method:'PUT',body:JSON.stringify({service_date:serviceDate,branch_id:branchId,items})});
