@@ -136,7 +136,7 @@ def save_range(app, user, payload):
         reason = reason or '颱風停送'
     if et not in ('CLOSED_ALL', 'STOP', 'ADD'):
         raise HTTPException(400, '類型錯誤')
-    dates = app.date_span(str(payload.get('start_date') or '').strip(), str(payload.get('end_date') or '').strip())
+    dates = app.date_span(str(payload.get('start_date') or '').strip(), str(payload.get('end_date') or '').strip(), max_days=365 if et == 'STOP' else 63)
     if dates[0] < app.today():
         raise HTTPException(409, '不可變更過去日期的配送排程')
     if manual and manual <= dates[-1]:
