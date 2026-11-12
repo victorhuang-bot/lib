@@ -623,19 +623,31 @@ def migrate_official_routes_and_branches(c):
         row=c.execute('SELECT id FROM routes WHERE id=?',(rid,)).fetchone()
         if row: c.execute('UPDATE routes SET code=?,name=?,active=1 WHERE id=?',(str(rid),f'路線{rid}',rid))
         else: c.execute('INSERT INTO routes(id,code,name,active) VALUES(?,?,?,1)',(rid,str(rid),f'路線{rid}'))
+    # Preserve existing branch identity, QR/PIN, deliveries and audit history on code rename.
+    legacy=c.execute("SELECT id FROM branches WHERE code='K13S'").fetchone()
+    canonical=c.execute("SELECT id FROM branches WHERE code='K13'").fetchone()
+    if legacy and not canonical:
+        c.execute("UPDATE branches SET code='K13',name='士林' WHERE id=?",(legacy['id'],))
+        audit(c,'SYSTEM',None,'SYSTEM','RENAME_OFFICIAL_BRANCH_CODE','BRANCH',legacy['id'],
+              before={'code':'K13S','name':'士林替'},after={'code':'K13','name':'士林'})
+    elif legacy and canonical:
+        # Do not merge/delete records automatically: preserve both historical identities.
+        c.execute("UPDATE branches SET active=0 WHERE id=?",(legacy['id'],))
+    # 東園預設停館：保留館別及歷史紀錄，不排入新配送。
     for rid,stops in OFFICIAL_ROSTER.items():
         for order,(code,name) in enumerate(stops,1):
             row=c.execute('SELECT id FROM branches WHERE code=?',(code,)).fetchone()
             if row:
-                c.execute('UPDATE branches SET name=?,route_id=?,stop_order=?,active=1 WHERE id=?',(name,rid,order,row['id']))
+                c.execute('UPDATE branches SET name=?,route_id=?,stop_order=?,active=? WHERE id=?',(name,rid,order,0 if code=='G12' else 1,row['id']))
             else:
                 if not branch_pin: raise RuntimeError('Missing required production environment variable: DEMO_BRANCH_PIN')
                 raw=secrets.token_urlsafe(24)
-                cur=c.execute('INSERT INTO branches(code,name,route_id,stop_order,active,pin_hash,access_token_hash,qr_created_at) VALUES(?,?,?,?,1,?,?,?)',
-                              (code,name,rid,order,hash_secret(branch_pin),thash(raw),now()))
+                cur=c.execute('INSERT INTO branches(code,name,route_id,stop_order,active,pin_hash,access_token_hash,qr_created_at) VALUES(?,?,?,?,?,?,?,?)',
+                              (code,name,rid,order,0 if code=='G12' else 1,hash_secret(branch_pin),thash(raw),now()))
                 bid=cur.lastrowid
                 c.execute('INSERT INTO audit_logs(actor_type,role,action,entity_type,entity_id,after_json,created_at) VALUES(?,?,?,?,?,?,?)',
                           ('SYSTEM','SYSTEM','SEED_OFFICIAL_BRANCH_TOKEN','BRANCH',str(bid),json.dumps({'token':raw},ensure_ascii=False),now()))
+    c.execute("UPDATE branches SET active=0 WHERE code IN ('G12','K13S')")
     # Old B001-B080 demo branches are disabled, never deleted.
     c.execute("UPDATE branches SET active=0 WHERE code LIKE 'B___' AND length(code)=4")
     c.execute("INSERT INTO app_settings(key,value) VALUES('OFFICIAL_ROSTER_V183_PG',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(now(),))
