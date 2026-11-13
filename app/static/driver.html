@@ -12,7 +12,7 @@
 }
  .driver-count-rows{display:grid;gap:8px;margin:12px 0}.driver-count-line{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border:1px solid #dce3eb;border-radius:10px}.driver-count-line span{font-weight:600}.driver-count-line strong{font-size:20px;font-variant-numeric:tabular-nums;text-align:right}.driver-outbound-qty{display:block;width:100%;min-width:120px;max-width:100%;height:52px;box-sizing:border-box;font-size:20px;font-variant-numeric:tabular-nums;padding:12px 14px;margin:8px 0 12px}</style></head><body><main class="mobile"><div class="card"><h1>今日配送</h1><div id="unlock"><p>請使用司機專屬 QR Code 或網址登入。已啟用的舊裝置仍可使用 PIN。</p><input id="pin" maxlength="4" inputmode="numeric" style="width:100%;font-size:28px;text-align:center"><button class="btn big" style="margin-top:10px" onclick="unlockDriver()">進入今日路線</button></div>
 <div id="routeSwitcher" class="hidden" style="margin:12px 0"></div>
-<div id="list" class="hidden"></div><div id="routeSigns" class="hidden"></div><div id="msg"></div></div></main><script src="/static/common.js"></script><script>
+<div id="list" class="hidden"></div><div id="tomorrowPrefill" class="hidden"></div><div id="routeSigns" class="hidden"></div><div id="msg"></div></div></main><script src="/static/common.js"></script><script>
 function fmtDateTime(v){
   if(v===null||v===undefined||v==='') return '—';
   const s=String(v).trim();
@@ -103,6 +103,7 @@ async function load(){
     list.innerHTML='';
     routeSigns.innerHTML='';
     routeSigns.classList.add('hidden');
+    await loadTomorrowPrefill();
     return;
   }
   if(!selectedRoute || !available.includes(String(selectedRoute))) selectedRoute=available[0];
@@ -110,6 +111,37 @@ async function load(){
   routeSwitcher.insertAdjacentHTML('beforeend','<button class="btn alt big" style="margin-top:8px" onclick="showClaimPicker()">選擇其他路線／分館接手</button>');
   renderSelectedRoute();
   await loadRouteSigns();
+  await loadTomorrowPrefill();
+}
+
+async function loadTomorrowPrefill(){
+  const panel=document.getElementById('tomorrowPrefill');
+  try{
+    const data=await dapi('/api/driver/tomorrow-prefill');
+    const rows=data.rows||[];
+    panel.classList.remove('hidden');
+    const escapeText=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    panel.innerHTML='<div class="card"><h2>明日圖書箱數預填｜'+escapeText(data.service_date)+'</h2>'+
+      '<p class="muted">僅可提前填寫「圖書－倉庫送出」箱數，隔日自動帶入當日配送；明日不可提前簽收。</p>'+
+      (rows.length?rows.map(d=>'<div style="border-top:1px solid #dce3eb;padding:12px 0">'+
+        '<b>'+escapeText(d.route_code)+'線｜'+escapeText(d.branch_name)+'</b>'+
+        '<label for="tomorrowQty'+d.id+'">圖書－倉庫送出（箱）</label>'+
+        '<input class="driver-outbound-qty" id="tomorrowQty'+d.id+'" type="number" min="0" max="1000000" step="1" inputmode="numeric" value="'+(d.outbound_final??'')+'">'+
+        '<button class="btn" onclick="saveTomorrowQty('+d.id+')">'+(d.outbound_final==null?'儲存明日數量':'更新明日數量')+'</button></div>').join(''):'<p>目前沒有指派給你的明日配送站點。</p>')+'</div>';
+  }catch(e){
+    panel.classList.remove('hidden');
+    panel.innerHTML='<div class="notice">明日預填暫時無法載入：'+String(e.message).replace(/[&<>]/g,'')+'</div>';
+  }
+}
+async function saveTomorrowQty(id){
+  try{
+    const el=document.getElementById('tomorrowQty'+id);
+    const raw=el?.value.trim()||'';
+    if(!/^\\d+$/.test(raw)||Number(raw)>1000000)throw new Error('請輸入 0 至 1000000 的整數箱數');
+    await dapi('/api/driver/deliveries/'+id+'/tomorrow-prefill',{method:'PATCH',body:JSON.stringify({qty:Number(raw)})});
+    await loadTomorrowPrefill();
+    alert('明日箱數已儲存，隔天將自動帶入當日配送');
+  }catch(e){alert(e.message)}
 }
 
 function renderRouteSwitcher(routes){
