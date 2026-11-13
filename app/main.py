@@ -176,7 +176,9 @@ def report_time(v):
     except Exception:
         return str(v)
 
-def today(): return date.today().isoformat()
+def today():
+    # Delivery and signing dates roll over at 00:00 Taiwan time, not 08:00.
+    return datetime.now(TAIPEI_TZ).date().isoformat()
 class _PgCursor:
     def __init__(self, cur):
         self.cur=cur
@@ -978,7 +980,7 @@ async def publish(event):
 def dashboard_monthly_route_cumulative(req:Request, month:str=''):
     require_user(req,['ADMIN','SECRETARY'])
     try:
-        first=date.fromisoformat((month or date.today().strftime('%Y-%m'))+'-01')
+        first=date.fromisoformat((month or today()[:7])+'-01')
     except:
         raise HTTPException(400,'月份格式錯誤')
     nxt=date(first.year+1,1,1) if first.month==12 else date(first.year,first.month+1,1)
