@@ -1404,6 +1404,7 @@ async def confirm(did:int,req:Request):
     if is_report_locked(c): c.close(); raise HTTPException(409,'今日日報已鎖定')
     x=c.execute('''SELECT x.*,COALESCE(dda.driver_id,dr.driver_id) driver_id FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id WHERE x.id=?''',(did,)).fetchone()
     if not x or x['driver_id']!=s['driver_id']:c.close();raise HTTPException(403)
+    if x['service_date']!=today(): c.close(); raise HTTPException(409,'僅可完成今日配送簽收')
     if x['status'] not in ('WAITING_DRIVER_CONFIRM','WAITING_DRIVER_RECONFIRM'):c.close();raise HTTPException(409,'目前狀態不可完成本站')
     c.execute("UPDATE deliveries SET status='STOP_COMPLETED',driver_confirmed_at=?,row_version=row_version+1 WHERE id=?",(now(),did));audit(c,'DRIVER',s['driver_id'],'DRIVER','CONFIRM_STOP','DELIVERY',did);c.commit();c.close();await publish({'type':'delivery.updated','id':did});return {'ok':True}
 @app.post('/api/driver/deliveries/{did}/defer-branch-sign')
@@ -1412,6 +1413,7 @@ async def defer_branch_sign(did:int,req:Request):
     if is_report_locked(c): c.close(); raise HTTPException(409,'今日日報已鎖定')
     x=c.execute('''SELECT x.*,COALESCE(dda.driver_id,dr.driver_id) driver_id FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id WHERE x.id=?''',(did,)).fetchone()
     if not x or x['driver_id']!=s['driver_id']: c.close(); raise HTTPException(403)
+    if x['service_date']!=today(): c.close(); raise HTTPException(409,'僅可完成今日配送簽收')
     if x['status']!='WAITING_BRANCH': c.close(); raise HTTPException(409,'只有尚未分館簽收的站點可改為隔日補簽')
     if x['branch_signed_at'] or x['branch_signature']: c.close(); raise HTTPException(409,'此站已有分館簽名，不能改為隔日補簽')
     c.execute("UPDATE deliveries SET status='LATE_BRANCH_PENDING',driver_confirmed_at=COALESCE(driver_confirmed_at,?),row_version=row_version+1 WHERE id=?",(now(),did))
