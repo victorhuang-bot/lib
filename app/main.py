@@ -1299,12 +1299,70 @@ def driver_auth(req):
 @app.get('/api/driver/today')
 def driver_today(req:Request):
     s=driver_auth(req); c=db(); rows=[dict(x) for x in c.execute('''SELECT x.*,b.name branch_name,b.code branch_code,r.code route_code FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id WHERE x.service_date=? AND COALESCE(dda.driver_id,dr.driver_id)=? AND b.active=1 AND x.status<>'VOID' ORDER BY r.code,b.stop_order''',(today(),s['driver_id'])).fetchall()];c.close();return rows
+@app.get('/api/driver/tomorrow-prefill')
+def driver_tomorrow_prefill(req:Request):
+    session=driver_auth(req)
+    day=next_service_date()
+    c=db()
+    try:
+        rebuild_service_date(c,day)
+        rows=[dict(x) for x in c.execute("""SELECT x.id,x.service_date,x.status,x.outbound_final,
+                 b.name branch_name,b.code branch_code,r.code route_code
+                 FROM deliveries x JOIN branches b ON b.id=x.branch_id
+                 JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id
+                 LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id
+                 WHERE x.service_date=? AND COALESCE(dda.driver_id,dr.driver_id)=?
+                 AND b.active=1 AND x.status<>'VOID'
+                 ORDER BY r.code,b.stop_order""",(day,session['driver_id'])).fetchall()]
+        return {'service_date':day,'rows':rows}
+    finally:
+        c.close()
+
+@app.patch('/api/driver/deliveries/{did}/tomorrow-prefill')
+async def driver_save_tomorrow_prefill(did:int,req:Request):
+    session=driver_auth(req)
+    payload=await req.json()
+    raw=payload.get('qty')
+    if isinstance(raw,bool) or raw is None or not str(raw).isdigit():
+        raise HTTPException(400,'請輸入非負整數箱數')
+    qty=int(raw)
+    if qty>1000000: raise HTTPException(400,'箱數超出合理範圍')
+    day=next_service_date()
+    c=db()
+    try:
+        lock_schedule_writes(c)
+        x=c.execute("""SELECT x.*,COALESCE(dda.driver_id,dr.driver_id) driver_id
+            FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id
+            LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id
+            WHERE x.id=?""",(did,)).fetchone()
+        if not x or x['driver_id']!=session['driver_id']:
+            raise HTTPException(403,'沒有此站操作權限')
+        if x['service_date']!=day:
+            raise HTTPException(409,'僅可預填明日配送數量')
+        if x['status'] not in ('WAITING_SECRETARY','WAITING_DRIVER','WAITING_BRANCH') or x['branch_signed_at'] or x['driver_confirmed_at']:
+            raise HTTPException(409,'此配送已開始簽收或取消，不可預填')
+        if is_report_locked(c,day):
+            raise HTTPException(409,'明日日報已鎖定')
+        c.execute("""UPDATE deliveries SET outbound_original=COALESCE(outbound_original,?),
+            outbound_final=?,row_version=row_version+1 WHERE id=?""",(qty,qty,did))
+        audit(c,'DRIVER',session['driver_id'],'DRIVER','PREFILL_TOMORROW_OUTBOUND','DELIVERY',did,
+              before={'qty':x['outbound_final']},after={'qty':qty,'service_date':day})
+        c.commit()
+    except Exception:
+        c.rollback()
+        raise
+    finally:
+        c.close()
+    await publish({'type':'delivery.updated','id':did})
+    return {'ok':True,'qty':qty,'service_date':day}
+
 @app.patch('/api/driver/deliveries/{did}/outbound')
 async def outbound(did:int,req:Request):
     s=driver_auth(req);p=await req.json();qty=int(p.get('qty',0));c=db(); lock_schedule_writes(c);
     if is_report_locked(c): c.close(); raise HTTPException(409,'今日日報已鎖定')
     x=c.execute('''SELECT x.*,COALESCE(dda.driver_id,dr.driver_id) driver_id FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id WHERE x.id=?''',(did,)).fetchone()
     if not x or x['driver_id']!=s['driver_id']:c.close();raise HTTPException(403)
+    if x['service_date']!=today():c.close();raise HTTPException(409,'僅可修改今日配送站點')
     if x['status'] not in ('WAITING_DRIVER','WAITING_SECRETARY','WAITING_BRANCH'):c.close();raise HTTPException(409,'分館簽收後不可再修改送出數量')
     status='WAITING_BRANCH'; c.execute('UPDATE deliveries SET outbound_original=?,outbound_final=?,status=?,row_version=row_version+1 WHERE id=?',(qty,qty,status,did));audit(c,'DRIVER',s['driver_id'],'DRIVER','SET_OR_EDIT_OUTBOUND','DELIVERY',did,before={'qty':x['outbound_final']},after={'qty':qty});c.commit();c.close();await publish({'type':'delivery.updated','id':did});return {'ok':True}
 @app.patch('/api/driver/deliveries/{did}/inbound')
