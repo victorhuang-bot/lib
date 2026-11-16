@@ -1,3 +1,7 @@
+# MovingMatch V20 開發分支
+
+空箱盤點、補箱申請、多來源調度及交接整合，預設關閉。實作、安全啟用、測試與回復方案見 [V20 交付文件](docs/V20-implementation.md)，資料表核對見 [V20 Schema Review](docs/V20-schema-review.md)。
+
 # V19 Gmail API Edition
 
 Email 寄送已改為 Google Gmail API + OAuth 2.0 + HTTPS 443；配送與簽收功能沿用 V18.3.16 PostgreSQL。

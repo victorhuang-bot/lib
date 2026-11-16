@@ -1,0 +1,13 @@
+{
+  "checks": [
+    "Office 1440px: layout, multi-source form, date suggestions",
+    "Branch 1440px: layout, inventory sum, pending handoff",
+    "Office 768px: layout, multi-source form, date suggestions",
+    "Branch 768px: layout, inventory sum, pending handoff",
+    "Office 390px: layout, multi-source form, date suggestions",
+    "Standalone handoff: existing roster, signature, stock counted once, no fake delivery",
+    "Branch 390px: layout, inventory sum, pending handoff"
+  ],
+  "console_errors": [],
+  "production_connections": 0
+}

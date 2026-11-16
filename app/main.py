@@ -41,7 +41,7 @@ if _PRODUCTION_RUNTIME and not DATABASE_URL:
 if _PRODUCTION_RUNTIME and (psycopg is None or ConnectionPool is None):
     raise RuntimeError('Production PostgreSQL driver/pool is required; SQLite fallback is forbidden')
 USE_POSTGRES = bool(DATABASE_URL)
-APP_VERSION='V19.5-dev'
+APP_VERSION='V20-dev'
 
 QUANTITY_LABELS = {
     '公文送出':'公文－總館送出', '公文收回':'公文－分館送出',
@@ -385,12 +385,13 @@ def email_log_finish(c, lid, result):
 def init_db():
     """Explicit, schema-only initialization. Never called during module import."""
     from app.schema import initialize_schema
+    from app.empty_boxes import migrate as migrate_empty_boxes
     c=db()
     try:
         initialize_schema(c, USE_POSTGRES, (
             migrate_branch_signers, migrate_corrections_for_repeat_requests,
             migrate_email_logs_gmail_api, migrate_route_secretary_signatures,
-            migrate_document_return_final, migrate_v1929, migrate_carried_item_units,
+            migrate_document_return_final, migrate_v1929, migrate_carried_item_units, migrate_empty_boxes,
         ))
     finally:
         c.close()
@@ -911,6 +912,9 @@ def validate_startup_schema():
     c=db()
     try:
         validate_schema(c)
+        if empty_boxes_enabled():
+            from app.empty_boxes import validate_schema as validate_empty_boxes
+            validate_empty_boxes(c)
         # One-time, idempotent account provisioning for existing production databases.
         # Preserve all existing users and any password the secretariat has changed.
         if not c.execute("SELECT 1 FROM users WHERE username=?", ('secretariat',)).fetchone():
@@ -941,7 +945,7 @@ def require_user(req, roles=None):
             '/api/dashboard/', '/api/pending-', '/api/secretary/',
             '/api/schedule-exceptions', '/api/deliveries/',
             '/api/history/', '/api/reports/', '/api/email/',
-            '/api/route-handoffs', '/api/events',
+            '/api/route-handoffs', '/api/events', '/api/empty-boxes',
         )
         read_only_directories=(
             '/api/branches', '/api/drivers', '/api/routes',
@@ -1298,7 +1302,11 @@ def driver_auth(req):
     return dict(r)
 @app.get('/api/driver/today')
 def driver_today(req:Request):
-    s=driver_auth(req); c=db(); rows=[dict(x) for x in c.execute('''SELECT x.*,b.name branch_name,b.code branch_code,r.code route_code FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id WHERE x.service_date=? AND COALESCE(dda.driver_id,dr.driver_id)=? AND b.active=1 AND x.status<>'VOID' ORDER BY r.code,b.stop_order''',(today(),s['driver_id'])).fetchall()];c.close();return rows
+    s=driver_auth(req); c=db(); rows=[dict(x) for x in c.execute('''SELECT x.*,b.name branch_name,b.code branch_code,r.code route_code FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id WHERE x.service_date=? AND COALESCE(dda.driver_id,dr.driver_id)=? AND b.active=1 AND x.status<>'VOID' ORDER BY r.code,b.stop_order''',(today(),s['driver_id'])).fetchall()]
+    for row in rows:
+        extra=empty_boxes.driver_note(c,row['branch_id'],row['service_date'])
+        row['note_display']='；'.join(v for v in (row['note_final'],extra) if v)
+    c.close();return rows
 @app.get('/api/driver/tomorrow-prefill')
 def driver_tomorrow_prefill(req:Request):
     session=driver_auth(req)
@@ -2027,6 +2035,14 @@ async def branch_sign(req:Request):
                  next_status,x['id'])
             )
 
+        handoffs=p.get('empty_box_handoffs',[])
+        if not isinstance(handoffs,list) or len(handoffs)>100:
+            raise HTTPException(400,'空箱交接格式錯誤')
+        if handoffs and not empty_boxes_enabled():
+            raise HTTPException(503,'V20 尚未啟用')
+        for handoff in handoffs:
+            empty_boxes.handoff(c,sess,handoff,identity=(signer,signature),delivery=x)
+
         audit(
             c,'BRANCH',sess['branch_id'],'BRANCH',action,'DELIVERY',x['id'],
             before={'document':x['document_final'],'document_return':x['document_return_final'],'outbound':x['outbound_final'],'inbound':x['inbound_final']},
@@ -2533,7 +2549,9 @@ def branch_detail(req:Request,bid:int):
 
 @app.patch('/api/branches/{bid}')
 async def update_branch(req:Request,bid:int):
-    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); c=db(); old=c.execute('SELECT * FROM branches WHERE id=?',(bid,)).fetchone()
+    u=require_user(req,['ADMIN','SECRETARY']); p=await req.json(); c=db()
+    if empty_boxes_enabled(): lock_schedule_writes(c)
+    old=c.execute('SELECT * FROM branches WHERE id=?',(bid,)).fetchone()
     if not old: c.close(); raise HTTPException(404)
     fields=['code','name','route_id','stop_order','address','phone','contact_name','contact_info','delivery_weekdays','delivery_frequency']; vals={k:p[k] for k in fields if k in p}
     if vals: c.execute('UPDATE branches SET '+','.join(k+'=?' for k in vals)+' WHERE id=?',(*vals.values(),bid))
@@ -2541,10 +2559,14 @@ async def update_branch(req:Request,bid:int):
 
 @app.post('/api/branches/{bid}/deactivate')
 async def deactivate_branch(req:Request,bid:int):
-    u=require_user(req,['ADMIN','SECRETARY']); c=db(); c.execute('UPDATE branches SET active=0 WHERE id=?',(bid,)); audit(c,'USER',u['id'],u['role'],'DEACTIVATE_BRANCH','BRANCH',bid); c.commit(); c.close(); return {'ok':True}
+    u=require_user(req,['ADMIN','SECRETARY']); c=db()
+    if empty_boxes_enabled(): lock_schedule_writes(c)
+    c.execute('UPDATE branches SET active=0 WHERE id=?',(bid,)); audit(c,'USER',u['id'],u['role'],'DEACTIVATE_BRANCH','BRANCH',bid); c.commit(); c.close(); return {'ok':True}
 @app.post('/api/branches/{bid}/activate')
 async def activate_branch(req:Request,bid:int):
-    u=require_user(req,['ADMIN','SECRETARY']); c=db(); c.execute('UPDATE branches SET active=1 WHERE id=?',(bid,)); audit(c,'USER',u['id'],u['role'],'ACTIVATE_BRANCH','BRANCH',bid); c.commit(); c.close(); return {'ok':True}
+    u=require_user(req,['ADMIN','SECRETARY']); c=db()
+    if empty_boxes_enabled(): lock_schedule_writes(c)
+    c.execute('UPDATE branches SET active=1 WHERE id=?',(bid,)); audit(c,'USER',u['id'],u['role'],'ACTIVATE_BRANCH','BRANCH',bid); c.commit(); c.close(); return {'ok':True}
 
 @app.delete('/api/branches/{bid}')
 async def delete_branch(req:Request,bid:int):
@@ -3088,3 +3110,8 @@ async def segment_sign(rid:int,req:Request):
     c.close();await publish({'type':'route.updated','id':rid})
     return {'ok':True,'all_signed':agg['all_signed'],'signed_count':agg['signed_count'],'driver_count':agg['driver_count']}
 
+
+
+# Install V20 endpoints only; no migration or database access at import/startup.
+from app.empty_boxes import install as install_empty_boxes, enabled as empty_boxes_enabled
+empty_boxes = install_empty_boxes(sys.modules[__name__])

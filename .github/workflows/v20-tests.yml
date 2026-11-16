@@ -1,0 +1,25 @@
+name: MovingMatch V20 tests
+on:
+  pull_request:
+  push:
+    branches: [feature/v20-empty-box-dispatch]
+permissions:
+  contents: read
+jobs:
+  isolated-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install -r requirements-dev.txt
+      - name: SQLite acceptance and existing regressions
+        run: python -B -m unittest discover -s tests -q
+      - name: Install local PostgreSQL binaries
+        run: sudo apt-get update && sudo apt-get install -y postgresql-16
+      - name: V20 on new temporary PostgreSQL cluster
+        run: python -B tests/v20_postgres_runner.py --pg-bin /usr/lib/postgresql/16/bin
+      - name: Unchanged V19.5 regression cases on new temporary PostgreSQL cluster
+        run: python -B tests/v195_postgres_runner.py --pg-bin /usr/lib/postgresql/16/bin

@@ -35,7 +35,7 @@
 @media(min-width:800px){#branchHistory .history-mobile{display:none}#branchHistory .history-desktop{display:block;overflow-x:auto}}
 .signer-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}.signer-row input{flex:1;min-width:120px;max-width:100%}#branchSigners{margin-top:18px}
 .signing-identity select{display:block;width:100%;max-width:100%;min-width:0;min-height:44px;font-size:16px;box-sizing:border-box}.signing-identity button{min-height:44px;margin:4px 0;max-width:100%}.signing-identity p{overflow-wrap:anywhere}
-</style></head><body>
+</style><link rel="stylesheet" href="/static/empty-boxes.css?v=20"></head><body>
 <div id="desktopLogin" class="desktop-login-card">
   <h2>分館桌機登入</h2>
   <p class="muted">手機可繼續掃固定 QR；桌機可輸入分館代碼與 4 位 PIN，登入後進入同一套簽收流程。</p>
@@ -44,7 +44,7 @@
     <label>4 位 PIN<input id="desktopBranchPin" type="password" inputmode="numeric" maxlength="4"></label>
     <button class="btn" onclick="desktopLogin()">登入</button>
   </div>
-</div><main class="mobile"><div class="card"><h1>分館簽收驗證</h1><div id="verify"><p class="muted">請輸入 4 位分館驗證碼</p><input id="pin" inputmode="numeric" maxlength="4" placeholder="○ ○ ○ ○" style="width:100%;font-size:26px;text-align:center"><button class="btn big" style="margin-top:10px" onclick="verifyBranch()">確認</button></div><div id="work" class="hidden"></div><section id="branchSigners" class="hidden" aria-label="常用簽收人員"><h2>常用簽收人員</h2><p class="muted">僅管理本站名單，姓名修改或停用不會更改歷史簽收紀錄。手寫簽名仍須由實際簽收人完成。</p><form onsubmit="addBranchSigner(event)"><label for="newBranchSigner">新增姓名</label><input id="newBranchSigner" maxlength="80" required autocomplete="off"><button class="btn" type="submit">新增</button></form><p><label><input id="showInactiveSigners" type="checkbox" onchange="loadBranchSigners()"> 同時查看已停用人員</label> <button class="btn alt" type="button" onclick="loadBranchSigners()">重新載入名單</button></p><div id="branchSignerMessage" role="status" aria-live="polite"></div><div id="branchSignerList"></div></section><section id="branchHistory" class="hidden" aria-label="本站配送歷史紀錄"><h2>本站配送紀錄</h2><div class="history-tools"><label>月份 <select id="branchHistoryMonth" onchange="loadBranchHistory()"></select></label><label><input type="checkbox" id="branchHistoryPending" onchange="loadBranchHistory()"> 只看待補簽</label></div><div id="branchHistoryBody" aria-live="polite"></div></section><div id="msg"></div></div></main><script src="/static/common.js"></script><script src="/static/branch-signers.js"></script><script src="/static/branch-signing-identity.js"></script><script src="/static/branch-history-signatures.js"></script><script>
+</div><main class="mobile"><div class="card"><h1>分館簽收驗證</h1><div id="verify"><p class="muted">請輸入 4 位分館驗證碼</p><input id="pin" inputmode="numeric" maxlength="4" placeholder="○ ○ ○ ○" style="width:100%;font-size:26px;text-align:center"><button class="btn big" style="margin-top:10px" onclick="verifyBranch()">確認</button></div><div id="work" class="hidden"></div><section id="branchSigners" class="hidden" aria-label="常用簽收人員"><h2>常用簽收人員</h2><p class="muted">僅管理本站名單，姓名修改或停用不會更改歷史簽收紀錄。手寫簽名仍須由實際簽收人完成。</p><form onsubmit="addBranchSigner(event)"><label for="newBranchSigner">新增姓名</label><input id="newBranchSigner" maxlength="80" required autocomplete="off"><button class="btn" type="submit">新增</button></form><p><label><input id="showInactiveSigners" type="checkbox" onchange="loadBranchSigners()"> 同時查看已停用人員</label> <button class="btn alt" type="button" onclick="loadBranchSigners()">重新載入名單</button></p><div id="branchSignerMessage" role="status" aria-live="polite"></div><div id="branchSignerList"></div></section><section id="branchHistory" class="hidden" aria-label="本站配送歷史紀錄"><h2>本站配送紀錄</h2><div class="history-tools"><label>月份 <select id="branchHistoryMonth" onchange="loadBranchHistory()"></select></label><label><input type="checkbox" id="branchHistoryPending" onchange="loadBranchHistory()"> 只看待補簽</label></div><div id="branchHistoryBody" aria-live="polite"></div></section><div id="msg"></div></div></main><script src="/static/empty-boxes.js?v=20"></script><script src="/static/common.js"></script><script src="/static/branch-signers.js"></script><script src="/static/branch-signing-identity.js"></script><script src="/static/branch-history-signatures.js"></script><script>
 function fmtDateTime(v){
   if(v===null||v===undefined||v==='') return '—';
   const s=String(v).trim();
@@ -82,6 +82,7 @@ async function desktopLogin(){
 }
 async function verifyBranch(){try{let x=await api('/api/branch-session/verify',{method:'POST',body:JSON.stringify({token:branchToken,pin:document.querySelector('#pin').value})});session=x.session;document.querySelector('#verify').classList.add('hidden');work.classList.remove('hidden');await load()}catch(e){msg.innerHTML='<div class="error">'+e.message+'</div>'}}
 async function load(){data=await bapi('/api/branch-session/today');await setupBranchHistory();await renderTaskChooser();await loadBranchSigners();if(data.status==='WAITING_BRANCH'||data.status==='LATE_BRANCH_PENDING')renderSign();else if(data.status==='WAITING_BRANCH_CORRECTION')renderCorrection();else if(data.status==='NO_DELIVERY')work.textContent='目前沒有待簽收配送，仍可管理本站常用簽收人員及查詢歷史。';else work.innerHTML=`<h2>${data.branch_name}</h2><p><b>配送日期：${data.service_date}</b></p><div class="ok"><b>簽收已送出完成</b><br>目前狀態：${statusText(data.status)}</div><p>簽收人：${data.correction_signer_name||data.signer_name||'—'}</p><p>實際簽收時間：${fmtDateTime(data.receipt_at||data.corrected_at||data.branch_signed_at)}</p><p class="muted">系統已保存本次簽名，請勿重複送出。</p>`}
+const originalBranchLoad=load;load=async function(){await originalBranchLoad();await EB.branch()};
 function branchHistoryEscape(v){return String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}
 function branchHistoryStatus(x){
   if(x.late_pending)return '待分館補簽';
@@ -154,7 +155,7 @@ async function sign(){
   const person=selectedBranchSigningPerson();
   if(!person){alert('請選擇簽收人員');return}
   if(!signature){alert('請完成簽名');return}
-  const payload={document:+doc.value,document_return:+docReturn.value,outbound:+out.value,inbound:+inn.value,note:note.value,...person,signature,receipt_at:receiptAt.value};
+  const payload={document:+doc.value,document_return:+docReturn.value,outbound:+out.value,inbound:+inn.value,note:note.value,...person,signature,receipt_at:receiptAt.value,empty_box_handoffs:EB.linkedPayload()};
   if(btn){btn.disabled=true;btn.textContent='送出中…'}
   try{
     const r=await bapi('/api/branch-session/sign',{method:'POST',body:JSON.stringify(payload)});
