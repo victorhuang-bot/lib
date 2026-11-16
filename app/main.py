@@ -917,7 +917,8 @@ def validate_startup_schema():
             validate_empty_boxes(c)
         # One-time, idempotent account provisioning for existing production databases.
         # Preserve all existing users and any password the secretariat has changed.
-        if not c.execute("SELECT 1 FROM users WHERE username=?", ('secretariat',)).fetchone():
+        if (os.getenv('MOVINGMATCH_V20_UAT') != '1'
+                and not c.execute("SELECT 1 FROM users WHERE username=?", ('secretariat',)).fetchone()):
             initial_password = initial_secret('SECRETARIAT_INITIAL_PASSWORD', secrets.token_urlsafe(24))
             c.execute(
                 'INSERT INTO users(username,password_hash,role,email,is_active) VALUES(?,?,?,?,1)',

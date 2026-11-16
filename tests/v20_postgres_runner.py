@@ -41,6 +41,59 @@ class PostgreSQLEmptyBoxTests(cases.EmptyBoxCases,unittest.TestCase):
     baseline_checks=0
     version=None
 
+    def test_uat_initialization_is_atomic_additive_and_preserves_results(self):
+        from app import uat_init
+        from app.uat_serve import verify
+        from types import SimpleNamespace
+        from psycopg import sql
+        name='uat_'+uuid.uuid4().hex
+        base=make_conninfo(host=str(self.socket_dir),port=55495,user='v20test',dbname='postgres')
+        with psycopg.connect(base,autocommit=True) as admin:
+            admin.execute(sql.SQL('CREATE DATABASE {}').format(sql.Identifier(name)))
+        uri=make_conninfo(host=str(self.socket_dir),port=55495,user='v20test',dbname=name)
+        with psycopg.connect(uri,row_factory=main.dict_row) as raw, \
+             patch.object(uat_init,'DATABASE',name), patch.object(uat_init,'ROLE','v20test'):
+            # This connection is the newly created socket-only local test DB.
+            # Only the TLS attribute is doubled; remote guard is never bypassed by CLI.
+            conn=SimpleNamespace(execute=raw.execute,rollback=raw.rollback,
+                                 pgconn=SimpleNamespace(ssl_in_use=True))
+            with patch('app.v20_schema_checks.assert_postgres_schema',side_effect=RuntimeError('synthetic validation failure')):
+                with self.assertRaises(RuntimeError):uat_init.initialize(conn,{})
+            raw.rollback()
+            self.assertEqual(raw.execute("SELECT tablename FROM pg_tables WHERE schemaname='public'").fetchall(),[])
+            credentials={}
+            report=uat_init.initialize(conn,credentials)
+            self.assertEqual(len(report['baseline_tables']),26)
+            self.assertEqual(len(report['v20_tables']),9)
+            self.assertEqual(len(credentials),8)
+            self.assertEqual(len(set(credentials.values())),8)
+            self.assertTrue(all(len(p)>=32 for p in credentials.values()))
+            verify(conn)
+            raw.commit()
+            branch=raw.execute("SELECT id FROM branches WHERE code='UAT-B1'").fetchone()['id']
+            raw.execute("INSERT INTO empty_box_requests(id,branch_id,quantity,status,created_at,actor,note) VALUES('uat-result',%s,10,'OPEN','2030-01-01','合成驗收人','保留結果')",(branch,))
+            raw.execute("UPDATE branches SET name='合成人工修改' WHERE id=%s",(branch,))
+            raw.commit()
+            tables=report['baseline_tables']+report['v20_tables']
+            def snapshot():
+                return {t:sorted((repr(r) for r in raw.execute(sql.SQL('SELECT * FROM {}').format(sql.Identifier(t))).fetchall())) for t in tables}
+            before=snapshot()
+            for _ in range(2):
+                extra={}
+                uat_init.initialize(conn,extra)
+                self.assertEqual(extra,{})
+                self.assertEqual(snapshot(),before)
+                raw.commit()
+            raw.execute('DELETE FROM app_settings WHERE key=%s',(uat_init.MARKER,))
+            with self.assertRaises(ValueError):uat_init.initialize(conn,{})
+            raw.rollback()
+            verify(conn)
+            # Schema validation rejects an incorrect FK rather than accepting just names.
+            raw.execute('ALTER TABLE empty_box_movements DROP CONSTRAINT empty_box_movements_branch_id_fkey')
+            with self.assertRaises(AssertionError):verify(conn)
+            raw.rollback()
+            self.assertEqual(snapshot(),before)
+
     def setUp(self):
         name='v20_'+uuid.uuid4().hex
         base=make_conninfo(host=str(self.socket_dir),port=55495,user='v20test',dbname='postgres')
