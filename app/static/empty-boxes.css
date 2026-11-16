@@ -1,0 +1,10 @@
+/* V20 extends existing operations forms; tables retain their own scroll frame. */
+.eb-panel{margin:20px 0;padding:16px;background:#fff;border:1px solid #e1e6eb;border-radius:8px;color:#20262d;min-width:0}
+.eb-panel h2{font-size:24px;margin:0 0 16px}.eb-panel h3{font-size:18px;margin:18px 0 10px}
+.eb-panel label{display:flex;flex-direction:column;gap:5px;font-size:14px;min-width:0}
+.eb-panel input,.eb-panel select,.eb-panel button{min-height:44px;max-width:100%;box-sizing:border-box;font-size:16px}
+.eb-panel button{cursor:pointer}.eb-panel button:focus-visible,.eb-panel input:focus-visible,.eb-panel select:focus-visible{outline:3px solid #21795b;outline-offset:2px}
+.eb-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;align-items:end;margin:12px 0}
+.eb-scroll{overflow:auto;max-width:100%}.eb-panel table{width:100%;min-width:560px;border-collapse:collapse}.eb-panel td,.eb-panel th{padding:10px 8px;border-bottom:1px solid #e9ecef;text-align:left;vertical-align:top;font-size:14px}.eb-panel .eb-num{text-align:right;font-variant-numeric:tabular-nums}
+.eb-task{padding:12px 0;border-bottom:1px solid #e9ecef}.eb-task p{margin:6px 0}.eb-status{color:#9d3c24}.eb-summary{display:flex;gap:22px;flex-wrap:wrap}.eb-summary a{color:inherit}.eb-panel canvas{width:100%;max-width:600px;height:160px;border:1px solid #7b858f;touch-action:none}.eb-panel details{margin:12px 0}.eb-panel summary{cursor:pointer;min-height:44px}.eb-message{white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:640px){.eb-panel{padding:12px}.eb-fields{grid-template-columns:1fr 1fr}.eb-fields label{font-size:14px}.eb-panel h2{font-size:22px}.eb-panel .eb-source{grid-template-columns:1fr}.eb-summary{gap:12px}.eb-panel input{width:100%;min-width:0}}

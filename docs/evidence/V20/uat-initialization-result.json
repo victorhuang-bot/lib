@@ -1,0 +1,27 @@
+{
+  "project_id": "blue-paper-82274906",
+  "branch_id": "br-withered-cloud-b3jqn8nc",
+  "database": "movingmatch_v20_uat",
+  "baseline_tables": 26,
+  "v20_tables": 9,
+  "schema_verified": true,
+  "synthetic_branches": 4,
+  "synthetic_routes": 2,
+  "synthetic_drivers": 1,
+  "office_accounts": 3,
+  "independent_generated_secrets": 8,
+  "remote_repeat_all_35_tables_unchanged": true,
+  "passwords_rotated": false,
+  "production_connections": 0,
+  "official_roster_imported": false,
+  "regression": {
+    "tests_run": 196,
+    "passed": 196,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "remote_repeat_after_acceptance_all_35_tables_unchanged": true,
+  "existing_signatures_and_ledger_preserved": true,
+  "uat_and_production_login_field_checks": "passed"
+}

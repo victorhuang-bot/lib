@@ -1,0 +1,31 @@
+{
+  "engine": "PostgreSQL",
+  "version": "17.6",
+  "tests_run": 13,
+  "passed": 13,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "zero_business_baselines": 13,
+  "target": "new_temporary_local_unix_socket_cluster",
+  "production_connections": 0,
+  "existing_test_database_connections": 0,
+  "persistent_database_created": false,
+  "cases": [
+    "test_branch_stop_suggestions_and_malformed_payload",
+    "test_completed_request_overage_budget_and_replay_conflict",
+    "test_difference_reason_and_no_fake_delivery",
+    "test_feature_disabled_fails_closed",
+    "test_late_signature_atomic_delivery_link_and_retry",
+    "test_migration_repeated_preserves_existing_records_constraints",
+    "test_multiple_sources_partial_fulfillment_early_arrival_and_idempotency",
+    "test_normal_delivery_shared_signature_and_driver_unchanged_counts",
+    "test_overallocation_concurrency_and_reservation_release",
+    "test_roles_cross_branch_and_reminders",
+    "test_schedule_route_changes_closures_and_replan",
+    "test_stocktake_history_scope_and_strict_validation",
+    "test_uat_initialization_is_atomic_additive_and_preserves_results"
+  ],
+  "temporary_cluster_stopped": true,
+  "temporary_cluster_removed": true
+}

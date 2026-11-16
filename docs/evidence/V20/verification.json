@@ -1,0 +1,50 @@
+{
+  "baseline_commit": "d10743682405ec363290c85afe51f8430d2413d6",
+  "branch": "feature/v20-empty-box-dispatch",
+  "sqlite": {
+    "passed": 191,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "postgresql_v20": {
+    "version": "16.4",
+    "passed": 12,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "zero_business_baselines": 12,
+    "temporary_cluster_stopped": true,
+    "temporary_cluster_removed": true
+  },
+  "postgresql_v195": {
+    "version": "16.4",
+    "passed": 16,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "zero_business_baselines": 16,
+    "temporary_cluster_stopped": true,
+    "temporary_cluster_removed": true
+  },
+  "schema_contract": {
+    "baseline_tables": 26,
+    "added_v20_tables": 9,
+    "checks": "names, columns, types, nullability, defaults, PK; V20 FK, business uniqueness, CHECK, indexes",
+    "existing_test_cases_changed": false
+  },
+  "browser": {
+    "widths": [
+      1440,
+      768,
+      390
+    ],
+    "console_errors": 0,
+    "horizontal_overflow": false,
+    "own_temporary_preview_stopped": true
+  },
+  "production_database_connections": 0,
+  "production_deployments": 0,
+  "github_remote_ci": "not_run_branch_not_pushed",
+  "github_auth": "gh_not_installed_no_credential_read"
+}
