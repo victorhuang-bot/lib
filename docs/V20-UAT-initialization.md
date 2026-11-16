@@ -62,3 +62,19 @@ python -B tests/v20_postgres_runner.py --pg-bin /path/to/postgres/bin
 PostgreSQL runner 只建立全新本機 Unix socket 叢集，拒絕使用遠端連線。
 涵蓋盤點、補箱申請、多來源調度、提前送達、稍後補簽、庫存流水、電子簽收，
 以及 UAT 首次初始化、重跑保留測試結果與密碼、錯誤外鍵拒絕及未標記資料庫拒絕。
+
+遠端 HTTPS 驗收：安全注入相同 UAT 專用連線環境變數後執行：
+
+```sh
+python -B tests/v20_remote_uat_acceptance.py --credentials-file /private/secure/new-uat-logins.json
+```
+
+此腳本只連固定的 UAT 網址與固定 Neon 目標。透過真實 HTTP API 驗證三種
+管理角色登入、分館盤點、補箱申請、多來源收取、提前收貨、電子簽收及重送。
+稍後補簽使用新建的虛構歷史配送／調度 fixture，再透過既有選擇任務與簽收 API
+完成；未刪除或替換既有配送。以 SQL 核對庫存守恆、日期與簽名連結。
+所有新增紀錄均保留，失敗也不自動清除，避免破壞人工驗收結果。
+請在正常配送工作日執行；若測試資料已有待處理調度，先檢視其庫存保留量。
+
+獨立服務的 `/health` 提供 `uat: true`，登入欄位才開放 128 字元的測試密碼；
+一般環境仍維持 4 位 PIN 欄位。這不會產生 QR，也不改寫任何密碼。

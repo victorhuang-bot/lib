@@ -1,0 +1,19 @@
+{
+  "target": "https://movingmatch-v20-uat.onrender.com",
+  "service_id": "srv-dbtoc5t6e07s73anb6g0",
+  "workspace_id": "tea-dab81qjtqb8s73f3fvi0",
+  "run_id": "df8e925adfb54def8aef0c23eaa5fba2",
+  "cases_passed": [
+    "office_role_logins",
+    "branch_stocktake",
+    "replenishment_request",
+    "multiple_sources",
+    "early_arrival",
+    "late_signature",
+    "inventory_ledger",
+    "electronic_receipt",
+    "handoff_replay"
+  ],
+  "existing_results_deleted": false,
+  "synthetic_only": true
+}

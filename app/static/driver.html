@@ -269,4 +269,4 @@ function setupRouteCanvas(id){const c=document.getElementById('rs'+id);if(!c||c.
 function clearRouteSig(id){const c=document.getElementById('rs'+id);c.getContext('2d').clearRect(0,0,c.width,c.height);c.dataset.dirty=''}
 async function signRoute(id){const c=document.getElementById('rs'+id);if(!c||c.dataset.dirty!=='1'){alert('請先完成路線簽名');return}if(!confirm('確認本人負責的站點均已完成運送並簽名？'))return;try{await dapi('/api/driver/routes/'+id+'/segment-sign',{method:'POST',body:JSON.stringify({signature:c.toDataURL('image/png')})});alert('本人區段簽名完成，系統會彙整同線其他司機簽名。');load()}catch(e){alert(e.message)}}
 resumeDriverSession();
-</script></body></html>
+</script><script src="/static/uat-login.js"></script></body></html>

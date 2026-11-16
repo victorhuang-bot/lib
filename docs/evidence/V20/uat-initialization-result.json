@@ -15,10 +15,13 @@
   "production_connections": 0,
   "official_roster_imported": false,
   "regression": {
-    "tests_run": 195,
-    "passed": 195,
+    "tests_run": 196,
+    "passed": 196,
     "failures": 0,
     "errors": 0,
     "skipped": 0
-  }
+  },
+  "remote_repeat_after_acceptance_all_35_tables_unchanged": true,
+  "existing_signatures_and_ledger_preserved": true,
+  "uat_and_production_login_field_checks": "passed"
 }

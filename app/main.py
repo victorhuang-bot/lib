@@ -1027,7 +1027,10 @@ def dashboard_monthly_route_cumulative(req:Request, month:str=''):
 
 
 @app.get('/health')
-def health(): return {'ok':True,'environment':APP_ENV}
+def health():
+    result={'ok':True,'environment':APP_ENV}
+    if os.getenv('MOVINGMATCH_V20_UAT')=='1':result['uat']=True
+    return result
 
 @app.middleware('http')
 async def no_cache_versioned_assets(request:Request, call_next):
