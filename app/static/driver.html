@@ -134,14 +134,34 @@ async function loadTomorrowPrefill(){
   }
 }
 async function saveTomorrowQty(id){
+  const el=document.getElementById('tomorrowQty'+id);
+  const button=el?.parentElement?.querySelector('button');
+  const raw=el?.value.trim()||'';
+  if(!/^\d+$/.test(raw)||Number(raw)>1000000){
+    alert('請輸入 0 至 1000000 的整數箱數');
+    return;
+  }
+  const qty=Number(raw);
+  if(button)button.disabled=true;
   try{
-    const el=document.getElementById('tomorrowQty'+id);
-    const raw=el?.value.trim()||'';
-    if(!/^\\d+$/.test(raw)||Number(raw)>1000000)throw new Error('請輸入 0 至 1000000 的整數箱數');
-    await dapi('/api/driver/deliveries/'+id+'/tomorrow-prefill',{method:'PATCH',body:JSON.stringify({qty:Number(raw)})});
+    const saved=await dapi('/api/driver/deliveries/'+id+'/tomorrow-prefill',{
+      method:'PATCH',body:JSON.stringify({qty})
+    });
+    if(saved?.ok!==true||Number(saved.qty)!==qty||!saved.service_date){
+      throw new Error('伺服器未確認儲存成功，請勿視為已完成');
+    }
+    const verified=await dapi('/api/driver/tomorrow-prefill');
+    const row=(verified.rows||[]).find(d=>Number(d.id)===Number(id));
+    if(verified.service_date!==saved.service_date||!row||Number(row.outbound_final)!==qty){
+      throw new Error('儲存後重新查詢的箱數不一致，請聯絡管理員確認，勿重複輸入');
+    }
     await loadTomorrowPrefill();
-    alert('明日箱數已儲存，隔天將自動帶入當日配送');
-  }catch(e){alert(e.message)}
+    alert('明日箱數已儲存並重新查詢確認，隔天將自動帶入當日配送');
+  }catch(e){
+    alert('明日預填尚未完成確認：'+(e.message||'請稍後再試'));
+  }finally{
+    if(button&&button.isConnected)button.disabled=false;
+  }
 }
 
 function renderRouteSwitcher(routes){
