@@ -214,7 +214,7 @@ function renderCorrection(){let c=data.correction;work.innerHTML=`<h2>${data.bra
 function clearSig(){let c=document.querySelector('#sig');c.getContext('2d').clearRect(0,0,c.width,c.height);updateBranchSigningReady()}
 async function sign(){
   const chosenTime=receiptAt.value;
-  if(!/^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d$/.test(chosenTime)){
+  if(!/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d$/.test(chosenTime)){
     alert('請確認實際簽收日期與時間，使用 24 小時制');return;
   }
   if(!confirm('配送日期：'+data.service_date+'\\n實際簽收時間（24小時制）：'+chosenTime.replace('T',' ')+'\\n'+(data.status==='LATE_BRANCH_PENDING'?'確認補填數量並完成簽名？送出後即不可再修改。':'請核對四項配送數量、簽收人員及手寫簽名。確認完成本次簽收？')))return;
