@@ -76,7 +76,8 @@ function captureBranchDraft(){
 }
 function restoreBranchDraft(){
   const draft=branchDraft;
-  if(!draft||!data||draft.deliveryId!==data.id||draft.status!==data.status)return;
+  if(!draft||!data)return;
+  if(draft.deliveryId!==data.id||draft.status!==data.status){branchDraft=null;return;}
   for(const [id,value] of Object.entries(draft.fields)){
     const el=document.getElementById(id);
     if(el)el.value=value;
