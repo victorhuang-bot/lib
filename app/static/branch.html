@@ -60,7 +60,66 @@ function fmtDateTime(v){
 }
 
 const branchToken='__BRANCH_TOKEN__';let session=null,data=null,getSig=null;
-async function bapi(url,opt={}){opt.headers={...(opt.headers||{}),'Authorization':'Bearer '+session,'Content-Type':'application/json'};let r=await fetch(url,opt);let text=await r.text(),j=null;try{j=text?JSON.parse(text):{}}catch(_){j={detail:text||('HTTP '+r.status)}}if(!r.ok)throw new Error(j.detail||('HTTP '+r.status));return j}
+let branchDraft=null,sessionExpired=false;
+function captureBranchDraft(){
+  if(!data?.id)return;
+  const fields={};
+  for(const id of ['docReturn','inn','note','receiptAt','document_return','inbound','reason']){
+    const el=document.getElementById(id);
+    if(el)fields[id]=el.value;
+  }
+  const canvas=document.getElementById('sig');
+  const signer=document.querySelector('.signing-identity select');
+  branchDraft={deliveryId:data.id,status:data.status,fields,
+    signature:canvas?canvas.toDataURL('image/png'):null,
+    signerValue:signer?.value??null};
+}
+function restoreBranchDraft(){
+  const draft=branchDraft;
+  if(!draft||!data)return;
+  if(draft.deliveryId!==data.id||draft.status!==data.status){branchDraft=null;return;}
+  for(const [id,value] of Object.entries(draft.fields)){
+    const el=document.getElementById(id);
+    if(el)el.value=value;
+  }
+  const signer=document.querySelector('.signing-identity select');
+  if(signer&&draft.signerValue!==null)signer.value=draft.signerValue;
+  const canvas=document.getElementById('sig');
+  if(canvas&&draft.signature){
+    const img=new Image();
+    img.onload=()=>{canvas.getContext('2d').drawImage(img,0,0);updateBranchSigningReady()};
+    img.src=draft.signature;
+  }
+  branchDraft=null;
+  if(typeof updateBranchSigningReady==='function')updateBranchSigningReady();
+}
+function requireBranchLogin(){
+  if(sessionExpired)return;
+  captureBranchDraft();
+  sessionExpired=true;
+  session=null;
+  sessionStorage.removeItem('branch_session');
+  document.getElementById('desktopLogin').classList.remove('hidden');
+  document.getElementById('verify').classList.remove('hidden');
+  document.getElementById('work').classList.add('hidden');
+  const message=document.getElementById('msg');
+  message.textContent='登入已逾時，請重新輸入分館驗證碼。已填寫內容會在重新登入同一筆配送後恢復；請確認後再送出。';
+  message.className='notice';
+}
+async function bapi(url,opt={}){
+  if(!session)throw new Error('請先重新登入分館');
+  opt.headers={...(opt.headers||{}),'Authorization':'Bearer '+session,'Content-Type':'application/json'};
+  let r;
+  try{r=await fetch(url,opt)}catch(_){throw new Error('網路連線中斷，資料尚未確認送出，請保留此畫面並稍後重試')}
+  const text=await r.text();let j=null;
+  try{j=text?JSON.parse(text):{}}catch(_){j={detail:'服務暫時無法回應，請稍後再試'}}
+  if(r.status===401&&j.detail==='BRANCH_SESSION_EXPIRED'){
+    requireBranchLogin();
+    throw new Error('登入已逾時，請重新驗證後確認資料再送出');
+  }
+  if(!r.ok)throw new Error(typeof j.detail==='string'?j.detail:('請求失敗（HTTP '+r.status+'）'));
+  return j;
+}
 
 async function desktopLogin(){
   try{
@@ -73,6 +132,7 @@ async function desktopLogin(){
       body:JSON.stringify({branch_code,pin})
     }).then(async r=>{const t=await r.text();let j;try{j=t?JSON.parse(t):{}}catch(_){j={detail:t||('HTTP '+r.status)}}if(!r.ok)throw new Error(j.detail||'登入失敗');return j});
     session=x.session;
+    sessionExpired=false;
     sessionStorage.setItem('branch_session',session);
     document.querySelector('#desktopLogin').classList.add('hidden');
     document.querySelector('#verify').classList.add('hidden');
@@ -80,8 +140,17 @@ async function desktopLogin(){
     await load();
   }catch(e){alert(e.message)}
 }
-async function verifyBranch(){try{let x=await api('/api/branch-session/verify',{method:'POST',body:JSON.stringify({token:branchToken,pin:document.querySelector('#pin').value})});session=x.session;document.querySelector('#verify').classList.add('hidden');work.classList.remove('hidden');await load()}catch(e){msg.innerHTML='<div class="error">'+e.message+'</div>'}}
-async function load(){data=await bapi('/api/branch-session/today');await setupBranchHistory();await renderTaskChooser();await loadBranchSigners();if(data.status==='WAITING_BRANCH'||data.status==='LATE_BRANCH_PENDING')renderSign();else if(data.status==='WAITING_BRANCH_CORRECTION')renderCorrection();else if(data.status==='NO_DELIVERY')work.textContent='目前沒有待簽收配送，仍可管理本站常用簽收人員及查詢歷史。';else work.innerHTML=`<h2>${data.branch_name}</h2><p><b>配送日期：${data.service_date}</b></p><div class="ok"><b>簽收已送出完成</b><br>目前狀態：${statusText(data.status)}</div><p>簽收人：${data.correction_signer_name||data.signer_name||'—'}</p><p>實際簽收時間：${fmtDateTime(data.receipt_at||data.corrected_at||data.branch_signed_at)}</p><p class="muted">系統已保存本次簽名，請勿重複送出。</p>`}
+async function verifyBranch(){try{
+  const response=await fetch('/api/branch-session/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:branchToken,pin:document.querySelector('#pin').value})});
+  const x=await response.json().catch(()=>({detail:'登入服務暫時無法回應'}));
+  if(!response.ok)throw new Error(x.detail||'分館驗證失敗');
+  session=x.session;sessionExpired=false;
+  document.querySelector('#desktopLogin').classList.add('hidden');
+  document.querySelector('#verify').classList.add('hidden');
+  work.classList.remove('hidden');
+  await load();
+}catch(e){msg.textContent=e.message}}
+async function load(){data=await bapi('/api/branch-session/today');await setupBranchHistory();await renderTaskChooser();await loadBranchSigners();if(data.status==='WAITING_BRANCH'||data.status==='LATE_BRANCH_PENDING')renderSign();else if(data.status==='WAITING_BRANCH_CORRECTION')renderCorrection();else if(data.status==='NO_DELIVERY')work.textContent='目前沒有待簽收配送，仍可管理本站常用簽收人員及查詢歷史。';else work.innerHTML=`<h2>${data.branch_name}</h2><p><b>配送日期：${data.service_date}</b></p><div class="ok"><b>簽收已送出完成</b><br>目前狀態：${statusText(data.status)}</div><p>簽收人：${data.correction_signer_name||data.signer_name||'—'}</p><p>實際簽收時間：${fmtDateTime(data.receipt_at||data.corrected_at||data.branch_signed_at)}</p><p class="muted">系統已保存本次簽名，請勿重複送出。</p>`;restoreBranchDraft()}
 function branchHistoryEscape(v){return String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}
 function branchHistoryStatus(x){
   if(x.late_pending)return '待分館補簽';
@@ -147,7 +216,11 @@ function renderSign(){const late=data.status==='LATE_BRANCH_PENDING';work.innerH
 function renderCorrection(){let c=data.correction;work.innerHTML=`<h2>${data.branch_name}</h2><p><b>配送日期：${data.service_date}</b></p><div class="notice"><b>司機要求更正</b><br>${c?.driver_note||'請重新確認數量；只需填寫需要修改的欄位'}</div><div class="ok" style="margin-top:10px">數量欄位為選填。留白代表沿用目前數量，不會被改成 0。</div><div class="ok"><b>公文－總館送出：</b>${data.document_final??'尚未填寫'}<br><b>圖書－倉庫送出：</b>${data.outbound_final??0}<br><b>總館其他隨車物品：</b>${carriedItemsText()}</div><p>公文－分館送出（目前：${data.document_return_final??0}）</p><input id="document_return" type="number" min="0" placeholder="若不修改請留白" style="width:100%"><p>圖書－分館送出（目前：${data.inbound_final??0}）</p><input id="inbound" type="number" min="0" placeholder="若不修改請留白" style="width:100%"><p>更正原因＊</p><textarea id="reason" style="width:100%"></textarea>${branchSigningIdentityMarkup()}<p>請重新簽名</p>${canvasBlock()}<button id="branchCorrectBtn" disabled class="btn big" style="margin-top:12px" onclick="correct()">送出更正並重新簽名</button>`;initBranchSigningIdentity()}
 function clearSig(){let c=document.querySelector('#sig');c.getContext('2d').clearRect(0,0,c.width,c.height);updateBranchSigningReady()}
 async function sign(){
-  if(!confirm('配送日期：'+data.service_date+'\\n'+(data.status==='LATE_BRANCH_PENDING'?'確認補填數量並完成簽名？送出後即不可再修改。':'請核對四項配送數量、簽收人員及手寫簽名。確認完成本次簽收？')))return;
+  const chosenTime=receiptAt.value;
+  if(!/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d$/.test(chosenTime)){
+    alert('請確認實際簽收日期與時間，使用 24 小時制');return;
+  }
+  if(!confirm('配送日期：'+data.service_date+'\\n實際簽收時間（24小時制）：'+chosenTime.replace('T',' ')+'\\n'+(data.status==='LATE_BRANCH_PENDING'?'確認補填數量並完成簽名？送出後即不可再修改。':'請核對四項配送數量、簽收人員及手寫簽名。確認完成本次簽收？')))return;
   const btn=document.querySelector('#branchSignBtn');
   if(btn?.disabled)return;
   const signature=getSig();
@@ -159,6 +232,9 @@ async function sign(){
   try{
     const r=await bapi('/api/branch-session/sign',{method:'POST',body:JSON.stringify(payload)});
     await load();
+    if(!r.already_signed&&data.receipt_at&&fmtDateTime(data.receipt_at)!==chosenTime.replace('T',' ')){
+      alert('簽收已送出，但重新查詢的實際簽收時間與輸入不同。請通知管理員核對，勿重複簽收。');
+    }
   }catch(e){
     // 若第一筆已成功、但畫面刷新或網路回應異常造成再次送出，重新讀取狀態。
     if(String(e.message||'').includes('已填寫或已簽名')){
