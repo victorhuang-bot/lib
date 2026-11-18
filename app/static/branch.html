@@ -140,7 +140,9 @@ async function desktopLogin(){
   }catch(e){alert(e.message)}
 }
 async function verifyBranch(){try{
-  let x=await api('/api/branch-session/verify',{method:'POST',body:JSON.stringify({token:branchToken,pin:document.querySelector('#pin').value})});
+  const response=await fetch('/api/branch-session/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:branchToken,pin:document.querySelector('#pin').value})});
+  const x=await response.json().catch(()=>({detail:'登入服務暫時無法回應'}));
+  if(!response.ok)throw new Error(x.detail||'分館驗證失敗');
   session=x.session;sessionExpired=false;
   document.querySelector('#desktopLogin').classList.add('hidden');
   document.querySelector('#verify').classList.add('hidden');
