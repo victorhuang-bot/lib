@@ -65,7 +65,7 @@ let branchDraft=null,sessionExpired=false;
 function captureBranchDraft(){
   if(!data?.id)return;
   const fields={};
-  for(const id of ['doc','documentReason','docReturn','inn','note','receiptAt','document_return','inbound','reason']){
+  for(const id of ['doc','documentReason','correctedDoc','docReturn','inn','note','receiptAt','document_return','inbound','reason']){
     const el=document.getElementById(id);
     if(el)fields[id]=el.value;
   }
@@ -79,6 +79,10 @@ function restoreBranchDraft(){
   const draft=branchDraft;
   if(!draft||!data)return;
   if(draft.deliveryId!==data.id||draft.status!==data.status){branchDraft=null;return;}
+  if('correctedDoc' in draft.fields){
+    if(!data.can_correct_document){branchDraft=null;return;}
+    renderDocumentCorrection();
+  }
   for(const [id,value] of Object.entries(draft.fields)){
     const el=document.getElementById(id);
     if(el){el.value=value;if(id==='doc')el.dispatchEvent(new Event('input'));}
