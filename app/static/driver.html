@@ -120,7 +120,6 @@ async function loadTomorrowPrefill(){
     const data=await dapi('/api/driver/tomorrow-prefill');
     const rows=data.rows||[];
     panel.classList.remove('hidden');
-    const escapeText=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     panel.innerHTML='<div class="card"><h2>明日圖書箱數預填｜'+escapeText(data.service_date)+'</h2>'+
       '<p class="muted">僅可提前填寫「圖書－倉庫送出」箱數，隔日自動帶入當日配送；明日不可提前簽收。</p>'+
       (rows.length?rows.map(d=>'<div style="border-top:1px solid #dce3eb;padding:12px 0">'+
@@ -223,9 +222,16 @@ function driverCountRows(d){return '<div class="driver-count-rows">'+driverCount
 function outboundEditor(d){if(!['WAITING_DRIVER','WAITING_SECRETARY','WAITING_BRANCH'].includes(d.status))return '';let saved=d.outbound_final;return `<p><b>其他隨車物品：</b>${itemText(d.id)}</p>${driverCountRows(d)}<label for="o${d.id}"><b>填寫圖書－倉庫送出箱數</b></label><input id="o${d.id}" type="number" min="0" step="1" inputmode="numeric" class="driver-outbound-qty" value="${saved??''}" placeholder="圖書－倉庫送出箱數"><button class="btn big" onclick="setOut(${d.id})">${saved==null?'儲存送出數量':'更新送出數量'}</button>`}
 function lateInboundEditor(d){return `<div class="ok" style="margin-top:10px">本站運送完成・待分館補簽。司機可先記錄圖書－分館送出箱數，分館稍後核對並簽名。</div>${driverCountRows(d)}<label for="i${d.id}"><b>圖書－分館送出箱數（司機已填數量）</b></label><input id="i${d.id}" type="number" min="0" step="1" inputmode="numeric" value="${d.inbound_final??''}" placeholder="請輸入圖書－分館送出箱數" style="width:100%"><button class="btn big" onclick="saveLateInbound(${d.id})">儲存圖書－分館送出箱數</button>`;}
 async function saveLateInbound(id){try{const el=document.querySelector('#i'+id);if(!el||!/^\d+$/.test(el.value.trim()))throw new Error('請輸入非負整數箱數');await dapi('/api/driver/deliveries/'+id+'/inbound',{method:'PATCH',body:JSON.stringify({qty:Number(el.value)})});await load();alert('圖書－分館送出箱數已儲存，等待分館補簽確認')}catch(e){alert(e.message)}}
-function review(d){return `<hr>${driverCountRows(d)}<span hidden data-inbound="${d.id}" data-value="${d.inbound_final??''}"></span><p>備註：${d.note_final||'無'}</p><p>簽收人：${d.correction_signer_name||d.signer_name}</p>${d.correction_reason?`<div class="notice">最近更正原因：${d.correction_reason}</div>`:''}<button class="btn big" onclick="confirmStop(${d.id})">確認無誤・完成本站</button><button class="btn warn big" style="margin-top:8px" onclick="corr(${d.id})">資料有誤・請分館更正</button>`}
+const escapeText=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+function review(d){
+  const proposal=d.document_correction;
+  if(proposal)return `<hr>${driverCountRows(d)}
+    <div class="notice"><b>公文－總館送出更正待確認</b><br>配送日期：${escapeText(d.service_date)}｜
+    ${d.document_final??'未填寫'} → ${proposal.document} 件<br>更正人：${escapeText(proposal.signer)}<br>原因：${escapeText(proposal.reason)}</div>
+    <button class="btn big" onclick="confirmStop(${d.id},${proposal.id})">確認更正・完成本站</button>`;
+  return `<hr>${driverCountRows(d)}<span hidden data-inbound="${d.id}" data-value="${d.inbound_final??''}"></span><p>備註：${escapeText(d.note_final||'無')}</p><p>簽收人：${d.correction_signer_name||d.signer_name}</p>${d.correction_reason?`<div class="notice">最近更正原因：${d.correction_reason}</div>`:''}<button class="btn big" onclick="confirmStop(${d.id})">確認無誤・完成本站</button><button class="btn warn big" style="margin-top:8px" onclick="corr(${d.id})">資料有誤・請分館更正</button>`}
 async function setOut(id){try{let el=document.querySelector('#o'+id);if(el.value==='')throw new Error('請輸入送出數量');await dapi('/api/driver/deliveries/'+id+'/outbound',{method:'PATCH',body:JSON.stringify({qty:+el.value})});load()}catch(e){alert(e.message)}}
-async function confirmStop(id){try{await dapi('/api/driver/deliveries/'+id+'/confirm',{method:'POST'});load()}catch(e){alert(e.message)}}
+async function confirmStop(id,proposalId){try{await dapi('/api/driver/deliveries/'+id+'/confirm',{method:'POST',...(proposalId?{body:JSON.stringify({document_correction_id:proposalId})}:{})});load()}catch(e){alert(e.message)}}
 async function corr(id){let current=document.querySelector('[data-inbound="'+id+'"]')?.dataset.value||'';let note=prompt('請輸入需要分館重新確認的原因（目前圖書－分館送出：'+(current||'—')+'）','請重新確認圖書－分館送出數量');if(note===null)return;try{await dapi('/api/driver/deliveries/'+id+'/request-correction',{method:'POST',body:JSON.stringify({note})});load()}catch(e){alert(e.message)}}
 async function deferBranchSign(id){if(!confirm('確認本站今日運送已完成，分館改為之後補填數量與簽名？\n司機完成路線簽名後，不需要再回來確認此站。'))return;try{await dapi('/api/driver/deliveries/'+id+'/defer-branch-sign',{method:'POST'});await load()}catch(e){alert(e.message)}}
 

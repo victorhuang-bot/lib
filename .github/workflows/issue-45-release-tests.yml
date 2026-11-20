@@ -1,0 +1,26 @@
+name: Issue 45 release tests
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'tests/**'
+      - 'requirements*.txt'
+      - '.github/workflows/issue-45-release-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -r requirements-dev.txt
+      - name: SQLite regressions
+        run: python -B -m unittest discover -s tests -p 'test_*.py' -v
+      - name: PostgreSQL regressions and Issue 45 acceptance
+        run: python -B tests/v195_postgres_runner.py --pg-bin /usr/lib/postgresql/16/bin
