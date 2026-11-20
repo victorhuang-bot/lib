@@ -2173,8 +2173,13 @@ async def branch_sign(req:Request):
         if x['status'] not in ('WAITING_BRANCH','LATE_BRANCH_PENDING'):
             raise HTTPException(409,'此筆目前不是可簽收狀態')
 
+        document=p.get('document')
+        if document is None:
+            document=x['document_final']
+        if document is None:
+            raise HTTPException(400,'請填寫公文－總館送出實收數量（無公文請填 0）')
+        document=branch_document_quantity(document)
         try:
-            document=x['document_final'] if p.get('document') is None else branch_document_quantity(p['document'])
             document_return=int(p.get('document_return',x['document_return_final'] if x['document_return_final'] is not None else 0) or 0)
             outbound=int(p.get('outbound',x['outbound_final'] if x['outbound_final'] is not None else 0) or 0)
             inbound=int(p.get('inbound',x['inbound_final'] if x['inbound_final'] is not None else 0) or 0)
@@ -3119,12 +3124,46 @@ def official_pdf(payload,d):
     cv.setFont(zh,9); cv.drawString(225,y-28,f"總館最終簽名 {rep.get('secretary_signed_at') or ''}")
     cv.save(); return bio.getvalue()
 
+def download_daily_report(req, service_date, official, file_format):
+    require_user(req,['ADMIN','SECRETARY'])
+    day=service_date or today()
+    try:
+        day=date.fromisoformat(day).isoformat()
+    except ValueError:
+        raise HTTPException(400,'日期格式錯誤')
+    c=db()
+    try:
+        if official:
+            # Capture the lock status and quantities together with respect to amendments.
+            lock_schedule_writes(c)
+            assert_official_locked(c,day)
+            payload=official_daily_payload(c,day)
+        else:
+            rows=report_rows(c,day,day)
+    finally:
+        c.close()
+    title=f'{day} 圖書物流配送日報'
+    if file_format=='xlsx':
+        content=official_xlsx(payload,day) if official else xlsx_bytes(rows,title)
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    else:
+        content=official_pdf(payload,day) if official else pdf_bytes(rows,title)
+        media_type='application/pdf'
+    suffix='official_daily' if official else 'daily'
+    return Response(content,media_type=media_type,headers={
+        'Content-Disposition':f'attachment; filename="{day}_{suffix}.{file_format}"'})
+
+
 @app.get('/api/reports/daily.xlsx')
-def daily_xlsx(req:Request,service_date:str|None=None):
-    require_user(req,['ADMIN','SECRETARY']); d=service_date or today(); c=db(); rows=report_rows(c,d,d); c.close(); return Response(xlsx_bytes(rows,f'{d} 圖書物流配送日報'),media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':f'attachment; filename="{d}_daily.xlsx"'})
+def daily_xlsx(req:Request,service_date:str|None=None,official:bool=False):
+    return download_daily_report(req,service_date,official,'xlsx')
+
+
 @app.get('/api/reports/daily.pdf')
-def daily_pdf(req:Request,service_date:str|None=None):
-    require_user(req,['ADMIN','SECRETARY']); d=service_date or today(); c=db(); rows=report_rows(c,d,d); c.close(); return Response(pdf_bytes(rows,f'{d} 圖書物流配送日報'),media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="{d}_daily.pdf"'})
+def daily_pdf(req:Request,service_date:str|None=None,official:bool=False):
+    return download_daily_report(req,service_date,official,'pdf')
+
+
 def month_range(m):
     start=m+'-01'; y=int(m[:4]); mo=int(m[5:7]); nxt=f'{y+1}-01-01' if mo==12 else f'{y}-{mo+1:02d}-01'; end=(datetime.fromisoformat(nxt)-timedelta(days=1)).date().isoformat(); return start,end
 @app.get('/api/reports/monthly.xlsx')

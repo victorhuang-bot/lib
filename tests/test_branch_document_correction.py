@@ -1,6 +1,7 @@
 """Issue #45. Reuse the API cases with isolated SQLite and PostgreSQL fixtures."""
 import base64
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date, timedelta
 import io
 import json
 import unittest
@@ -26,8 +27,8 @@ class DocumentCorrectionCases:
     def auth(token):
         return {'Authorization': 'Bearer ' + token}
 
-    def prepare_stop(self):
-        day = main.today()
+    def prepare_stop(self, day=None):
+        day = day or main.today()
         with self.connection() as c:
             c.execute('INSERT INTO drivers(id,name,active) VALUES(2,?,1) ON CONFLICT(id) DO NOTHING', ('司機乙',))
             c.execute('INSERT INTO daily_routes(service_date,route_id,driver_id) VALUES(?,1,1) '
@@ -148,6 +149,115 @@ class DocumentCorrectionCases:
                     for r in history['office_audit'] if r['action']=='OFFICE_DOCUMENT_REVIEW_INVALIDATED'}
         self.assertEqual(archived - {None}, {signature(7), signature(8)})
         self.assertEqual(history['delivery']['report_status'], 'LOCKED')
+
+    def test_legacy_unfilled_document_requires_explicit_count(self):
+        did, _, person = self.prepare_stop()
+        sign = '/api/branch-session/sign'
+        with self.connection() as c:
+            c.execute('UPDATE deliveries SET document_original=NULL,document_final=NULL WHERE id=?', (did,))
+        for status in ('WAITING_BRANCH', 'LATE_BRANCH_PENDING'):
+            with self.connection() as c:
+                c.execute('UPDATE deliveries SET status=? WHERE id=?', (status, did))
+            before = self.row(did)
+            payload = self.payload(did, person)
+            del payload['document']
+            for request in (payload, {**payload, 'document': None}):
+                result = self.post(sign, request)
+                self.assertEqual(result.status_code, 400, result.text)
+                self.assertIn('實收數量', result.json()['detail'])
+                self.assertEqual(self.row(did), before)
+
+        missing_reason = self.post(sign, {**payload, 'document': 0, 'reason': ''})
+        self.assertEqual(missing_reason.status_code, 400, missing_reason.text)
+        self.ok(self.post(sign, {**payload, 'document': 0}))
+        proposal = self.driver_proposal(did)
+        self.assertEqual(proposal['document'], 0)
+        self.ok(self.confirm(did, proposal['id']))
+        final = self.row(did)
+        self.assertEqual((final['status'], final['document_original'], final['document_final']),
+                         ('STOP_COMPLETED', None, 0))
+
+    def test_previous_month_locked_legacy_receipt_amends_and_relocks(self):
+        day = (date.fromisoformat(main.today()).replace(day=1) - timedelta(days=1)).isoformat()
+        did, route, person = self.prepare_stop(day)
+        stamp = day+'T08:00:00+08:00'
+        old_branch, old_route, old_final = signature(4), signature(7), signature(8)
+        with self.connection() as c:
+            c.execute("""UPDATE deliveries SET status='STOP_COMPLETED',document_final=4,signer_name=?,
+                         branch_signature=?,branch_signed_at=?,driver_confirmed_at=?,receipt_at=? WHERE id=?""",
+                      ('舊版簽收人', old_branch, stamp, stamp, stamp, did))
+            c.execute("""UPDATE daily_routes SET status='DRIVER_SIGNED',driver_signature=?,driver_signed_at=?,
+                         secretary_signature=?,secretary_signed_at=? WHERE id=?""",
+                      (signature(6), stamp, old_route, stamp, route))
+            c.execute("""INSERT INTO daily_reports(service_date,status,secretary_signature,secretary_signed_at,locked_at)
+                         VALUES(?,'LOCKED',?,?,?)""", (day, old_final, stamp, stamp))
+            c.execute('UPDATE branch_sessions SET delivery_id=NULL WHERE branch_id=1')
+
+        detail_url = f'/api/history/receipts/{did}'
+        legacy = self.ok(self.client.get(detail_url, headers=self.admin))
+        self.assertEqual(legacy['audit'], [])
+        self.assertEqual(legacy['office_audit'], [])
+        self.assertEqual(legacy['delivery']['document_final'], 4)
+        past = self.ok(self.client.get('/api/branch-session/history?month='+day[:7], headers=self.headers))
+        self.assertEqual(next(r for r in past['records'] if r['id']==did)['document_final'], 4)
+        signatures = self.ok(self.client.get(f'/api/branch-session/history/{did}/signatures', headers=self.headers))
+        self.assertEqual(signatures['branch_signature'], old_branch)
+
+        def download(ext, official=True):
+            url=f'/api/reports/daily.{ext}?service_date={day}&official={str(official).lower()}'
+            return self.client.get(url, headers=self.admin)
+
+        def official_count(expected):
+            book_response = download('xlsx')
+            self.assertEqual(book_response.status_code, 200, book_response.text if not book_response.is_success else '')
+            with io.BytesIO(book_response.content) as stream:
+                workbook = load_workbook(stream, read_only=True)
+                rows = list(workbook.active.values)
+                workbook.close()
+            self.assertEqual(next(row[3] for row in rows if row[0]=='全部總計'), expected)
+            pdf = download('pdf')
+            self.assertEqual(pdf.status_code, 200)
+            self.assertTrue(pdf.content.startswith(b'%PDF'))
+
+        official_count(4)
+        self.ok(self.post('/api/branch-session/select-task', {'delivery_id': did}))
+        self.ok(self.post('/api/branch-session/correct-document', self.payload(did, person, document=3, offset=5)))
+        status_url = '/api/secretary/sign-status?service_date='+day
+        status = self.ok(self.client.get(status_url, headers=self.admin))
+        self.assertEqual(status['report']['status'], 'AMENDING')
+        self.assertEqual(self.row(did)['status'], 'WAITING_DRIVER_RECONFIRM')
+        for ext in ('xlsx', 'pdf'):
+            self.assertEqual(download(ext).status_code, 409)
+            self.assertEqual(download(ext, official=False).status_code, 200)
+
+        proposal = self.driver_proposal(did)
+        self.assertEqual(proposal['document'], 3)
+        self.ok(self.confirm(did, proposal['id']))
+        self.assertEqual(self.row(did)['document_final'], 3)
+        self.assertEqual(download('xlsx').status_code, 409)
+        final_payload = {'signature': signature(10), 'review_revision': status['review_revision'], 'service_date': day}
+        self.assertEqual(self.post('/api/secretary/final-sign', final_payload, 'SECRETARY').status_code, 409)
+        revision = next(r['review_revision'] for r in status['routes'] if r['id']==route)
+        self.ok(self.post(f'/api/routes/{route}/secretary-sign',
+                          {'signature': signature(9), 'review_revision': revision}, 'SECRETARY'))
+        self.assertEqual(download('pdf').status_code, 409)
+        self.ok(self.post('/api/secretary/final-sign', final_payload, 'SECRETARY'))
+        official_count(3)
+
+        detail = self.ok(self.client.get(detail_url, headers=self.auth('SECRETARIAT')))
+        self.assertEqual(detail['delivery']['report_status'], 'LOCKED')
+        self.assertEqual(detail['delivery']['branch_signature'], old_branch)
+        self.assertEqual(detail['delivery']['correction_signature'], signature(5))
+        self.assertEqual(detail['delivery']['secretary_signature'], signature(9))
+        self.assertEqual(detail['delivery']['final_secretary_signature'], signature(10))
+        archived = {r['entity_type']: json.loads(r['before_json'])
+                    for r in detail['office_audit'] if r['action']=='OFFICE_DOCUMENT_REVIEW_INVALIDATED'}
+        self.assertEqual(archived['DAILY_ROUTE']['secretary_signature'], old_route)
+        self.assertEqual(archived['DAY']['secretary_signature'], old_final)
+        self.assertEqual(archived['DAY']['locked_at'], stamp)
+        self.assertEqual(archived['DAILY_ROUTE']['secretary_signed_at'], stamp)
+        submitted = next(r for r in detail['audit'] if r['action']=='BRANCH_DOCUMENT_PROPOSED')
+        self.assertEqual(json.loads(submitted['before_json'])['driver_confirmed_at'], stamp)
 
     def test_mixed_route_codes_keep_report_and_dashboard_order(self):
         did, first_route, _ = self.prepare_stop()
