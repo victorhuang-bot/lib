@@ -27,6 +27,7 @@ for key in list(os.environ):
         os.environ.pop(key,None)
 os.environ['APP_ENV']='test'
 import test_v20_empty_boxes as cases
+from test_branch_document_correction import DocumentCorrectionCases
 from fastapi.testclient import TestClient
 from app import main
 import psycopg
@@ -151,6 +152,13 @@ class PostgreSQLEmptyBoxTests(cases.EmptyBoxCases,unittest.TestCase):
         finally:c.close()
 
 
+class PostgreSQLDocumentCorrectionTests(DocumentCorrectionCases, unittest.TestCase):
+    setUp = PostgreSQLEmptyBoxTests.setUp
+    connection = PostgreSQLEmptyBoxTests.connection
+    baseline_checks = 0
+    version = None
+
+
 def run():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--pg-bin',required=True,type=Path)
@@ -164,15 +172,20 @@ def run():
         try:
             subprocess.run([str(binary/'pg_ctl'),'-D',str(data),'-l',str(root/'postgres.log'),
                             '-o',f"-h '' -k {sock} -p 55495",'-w','start'],check=True,stdout=subprocess.DEVNULL)
-            started=True;PostgreSQLEmptyBoxTests.socket_dir=sock;PostgreSQLEmptyBoxTests.cluster_data=data
-            suite=unittest.defaultTestLoader.loadTestsFromTestCase(PostgreSQLEmptyBoxTests)
+            started=True
+            case_types=(PostgreSQLEmptyBoxTests,PostgreSQLDocumentCorrectionTests)
+            suite=unittest.TestSuite()
+            for case_type in case_types:
+                case_type.socket_dir=sock
+                case_type.cluster_data=data
+                suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(case_type))
             result=unittest.TextTestRunner(verbosity=2).run(suite)
             report={'engine':'PostgreSQL','version':PostgreSQLEmptyBoxTests.version,
                     'tests_run':result.testsRun,'passed':result.testsRun-len(result.failures)-len(result.errors)-len(result.skipped),'failures':len(result.failures),'errors':len(result.errors),'skipped':len(result.skipped),
-                    'zero_business_baselines':PostgreSQLEmptyBoxTests.baseline_checks,
+                    'zero_business_baselines':sum(case.baseline_checks for case in case_types),
                     'target':'new_temporary_local_unix_socket_cluster','production_connections':0,
                     'existing_test_database_connections':0,'persistent_database_created':False,
-                    'cases':[name for name in unittest.defaultTestLoader.getTestCaseNames(PostgreSQLEmptyBoxTests)]}
+                    'cases':[name for case in case_types for name in unittest.defaultTestLoader.getTestCaseNames(case)]}
         finally:
             if started or (data/'postmaster.pid').exists():
                 subprocess.run([str(binary/'pg_ctl'),'-D',str(data),'-m','fast','-w','stop'],check=True,stdout=subprocess.DEVNULL)

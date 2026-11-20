@@ -19,7 +19,7 @@ class EmptyBoxCases:
             c.execute('INSERT INTO daily_routes(service_date,route_id,driver_id) VALUES(?,1,1) ON CONFLICT(service_date,route_id) DO NOTHING',(service_date,))
             route=c.execute('SELECT id FROM daily_routes WHERE service_date=? AND route_id=1',(service_date,)).fetchone()['id']
             status='LATE_BRANCH_PENDING' if mode=='late' else 'WAITING_BRANCH'
-            did=c.execute("INSERT INTO deliveries(service_date,daily_route_id,branch_id,status,note_final) VALUES(?,?,?,?,'原始備註')",(service_date,route,bid,status)).lastrowid
+            did=c.execute("INSERT INTO deliveries(service_date,daily_route_id,branch_id,status,note_final,document_original,document_final) VALUES(?,?,?,?,'原始備註',0,0)",(service_date,route,bid,status)).lastrowid
             c.execute('UPDATE branch_sessions SET delivery_id=? WHERE branch_id=?',(did,bid))
         return did
     row=signing.SigningIdentityTests.row

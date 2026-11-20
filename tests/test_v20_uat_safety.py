@@ -15,6 +15,33 @@ class UATTargetTests(unittest.TestCase):
         with patch.dict(os.environ, {'MOVINGMATCH_V20_UAT':'0'}):
             self.assertNotIn('uat', main.health())
 
+    def test_attestation_and_request_guard_require_pinned_service_and_verified_revision(self):
+        from fastapi.testclient import TestClient
+        import test_v194
+        from app import main
+        from app.uat_serve import RENDER_UAT_SERVICE, UAT_COMMIT_ENV
+        expected = 'a' * 40
+        headers = {'X-MovingMatch-UAT-Commit': expected}
+        with patch.dict(os.environ, {
+            'MOVINGMATCH_V20_UAT': '1', 'RENDER_SERVICE_ID': RENDER_UAT_SERVICE,
+            'RENDER_GIT_COMMIT': expected,
+        }):
+            client = TestClient(main.app)
+            self.addCleanup(client.close)
+            with patch.dict(os.environ, {UAT_COMMIT_ENV: ''}):
+                self.assertNotIn('uat_target', client.get('/health').json())
+                self.assertEqual(client.get('/health', headers=headers).status_code, 412)
+            with patch.dict(os.environ, {UAT_COMMIT_ENV: expected}):
+                response = client.get('/health', headers=headers)
+                self.assertEqual(response.json()['uat_target']['commit'], expected)
+                self.assertEqual(response.json()['uat_target']['database'], DATABASE)
+                self.assertEqual(response.headers['Cache-Control'], 'no-store')
+                rejected = client.post('/api/auth/login', headers={
+                    'X-MovingMatch-UAT-Commit': 'b' * 40})
+                self.assertEqual(rejected.status_code, 412)
+                with patch.dict(os.environ, {'RENDER_SERVICE_ID': 'other'}):
+                    self.assertEqual(client.get('/health', headers=headers).status_code, 412)
+
     def test_uat_startup_does_not_provision_standard_account(self):
         import test_v194 as fixture
         from app import main

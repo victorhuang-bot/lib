@@ -99,7 +99,7 @@ def run(credentials_file):
         driver=c.execute("SELECT id FROM drivers WHERE name='虛構測試司機 UAT-1'").fetchone()['id']
         c.execute('INSERT INTO daily_routes(service_date,route_id,driver_id) VALUES(%s,%s,%s) ON CONFLICT(service_date,route_id) DO NOTHING',(historical,route,driver))
         daily=c.execute('SELECT id FROM daily_routes WHERE service_date=%s AND route_id=%s',(historical,route)).fetchone()['id']
-        delivery=c.execute("INSERT INTO deliveries(service_date,daily_route_id,branch_id,status) VALUES(%s,%s,%s,'LATE_BRANCH_PENDING') RETURNING id",(historical,daily,ids[4])).fetchone()['id']
+        delivery=c.execute("INSERT INTO deliveries(service_date,daily_route_id,branch_id,status,document_original,document_final) VALUES(%s,%s,%s,'LATE_BRANCH_PENDING',0,0) RETURNING id",(historical,daily,ids[4])).fetchone()['id']
     # Re-login normally selects today's delivery; select the new historical task explicitly.
     call('POST','/api/branch-session/select-task',tokens[4],{'delivery_id':delivery})
     call('POST','/api/branch-session/sign',tokens[4],{'signer_id':people[4],'signature':signature,'note':'虛構遠端稍後補簽 '+run_id,'empty_box_handoffs':[{'kind':'PICKUP','task_id':sid,'quantity':2,'actual_date':historical,'reason':''}]})
