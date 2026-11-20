@@ -78,3 +78,41 @@ python -B tests/v20_remote_uat_acceptance.py --credentials-file /private/secure/
 
 獨立服務的 `/health` 提供 `uat: true`，登入欄位才開放 128 字元的測試密碼；
 一般環境仍維持 4 位 PIN 欄位。這不會產生 QR，也不改寫任何密碼。
+
+## Issue #45 公文更正遠端驗收
+
+獨立入口為 `tests/v20_document_remote_uat_acceptance.py`。此檔不由
+unittest 或 GitHub Actions 執行，且遇到 CI 標記時，即使傳入執行旗標也會
+停止。全套 CI 通過後，從乾淨、完整的 Git checkout 執行，使用同一候選
+commit 的完整 SHA。請先在 Render 確認 `movingmatch-v20-uat` 正在執行該
+commit，使用 `python -m app.uat_serve`，並在驗收期間暫停其他 UAT 操作與
+重新部署。腳本只接受固定 HTTPS 網址，逐案例核對該服務的部署 SHA 與
+Neon 身分，API 也核對請求的 SHA。Neon 必須先通過原有 TLS、marker 與
+35 張表的 schema 檢查。腳本不執行初始化或部署。
+
+將 `MOVINGMATCH_V20_UAT_DATABASE_URL` 安全注入執行程序。帳密可用
+`MOVINGMATCH_V20_UAT_ADMIN_PASSWORD` 與
+`MOVINGMATCH_V20_UAT_SECRETARY_PASSWORD` 注入，或使用 repository 外、
+目前使用者擁有、權限 0600 的非符號連結 JSON 檔，鍵為 `uat-head-office`
+與 `uat-secretary`。驗收需要專案 dev 依賴與本地安裝的 `pypdf`（讀取
+正式 PDF 的公文合計），不需要 Render API 金鑰。缺身分或版本驗證、憑證、
+PDF 依賴，或上個月沒有三個可用的空白配送日期時停止。
+
+```sh
+python -B tests/v20_document_remote_uat_acceptance.py --run-remote-uat \
+  --expected-commit <已通過-CI-的完整-commit-SHA> \
+  --credentials-file /private/secure/uat-office-logins.json
+```
+
+同一批次只使用新建的 `UAT45-<run_id>` 路線、分館、司機、裝置及配送。
+上月歷史日報與舊簽收證據由專用 fixture 建立；因歷史日報無一般首次鎖定
+入口，5→4 案例在第一次司機確認及路線簽核後建立該次合成日報的舊簽名，
+再以真實 API 驗證 4→3、更正後總館重簽及報表。舊版空值案例拒絕留白、
+null 與非整數，再確認明填 0。腳本以合成資料核對跨館、舊簽名、原因、
+版本衝突、並行與重送。成功或失敗均保留虛構資料及稽核軌跡，不刪除任何
+專用業務資料，也不重設資料庫。驗收前後核對既有配送、簽名、路線及相關
+稽核資料的快照；登入只新增驗收工作階段與登入稽核。
+
+輸出只有案例名稱、PASS／FAIL／NOT RUN、摘要，以及可對照稽核標記的
+遮罩 run_id。PR 只記錄該摘要與 CI／部署證據。錯誤細節、傳輸內容、憑證、
+連線字串及下載報表不輸出。

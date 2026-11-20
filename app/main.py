@@ -1030,12 +1030,24 @@ def dashboard_monthly_route_cumulative(req:Request, month:str=''):
 @app.get('/health')
 def health():
     result={'ok':True,'environment':APP_ENV}
-    if os.getenv('MOVINGMATCH_V20_UAT')=='1':result['uat']=True
+    if os.getenv('MOVINGMATCH_V20_UAT')=='1':
+        from app.uat_serve import RENDER_UAT_SERVICE, UAT_COMMIT_ENV
+        result['uat']=True
+        commit=os.getenv(UAT_COMMIT_ENV,'')
+        if os.getenv('RENDER_SERVICE_ID')==RENDER_UAT_SERVICE and re.fullmatch(r'[0-9a-f]{40}',commit):
+            from app.uat_init import PROJECT_ID, BRANCH_ID, DATABASE
+            result['uat_target']={'commit':commit,'service':RENDER_UAT_SERVICE,
+                                  'project':PROJECT_ID,'branch':BRANCH_ID,'database':DATABASE}
     return result
 
 @app.middleware('http')
 async def no_cache_versioned_assets(request:Request, call_next):
+    expected=request.headers.get('X-MovingMatch-UAT-Commit')
+    if expected is not None and health().get('uat_target',{}).get('commit')!=expected:
+        return JSONResponse({'detail':'UAT deployment identity mismatch'},status_code=412)
     response=await call_next(request)
+    if request.url.path=='/health':
+        response.headers['Cache-Control']='no-store'
     if request.url.path=='/' or request.url.path.startswith('/static/') or request.url.path.startswith('/api/secretary/documents/prefill-v4'):
         response.headers['Cache-Control']='no-store, no-cache, must-revalidate, max-age=0'
         response.headers['X-App-Version']=APP_VERSION

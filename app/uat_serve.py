@@ -1,5 +1,6 @@
 """Fail-closed entrypoint exclusively for the independent V20 UAT service."""
 import os
+import re
 import unittest
 
 
@@ -16,6 +17,10 @@ def verify(raw):
     return assert_postgres_schema(unittest.TestCase(), c)
 
 
+RENDER_UAT_SERVICE = 'srv-dbtoc5t6e07s73anb6g0'
+UAT_COMMIT_ENV = 'MOVINGMATCH_V20_VERIFIED_UAT_COMMIT'
+
+
 def main():
     try:
         from app.uat_init import guarded_conninfo
@@ -25,6 +30,10 @@ def main():
         with psycopg.connect(conninfo, row_factory=dict_row) as raw:
             raw.execute('SET TRANSACTION READ ONLY')
             verify(raw)
+        os.environ.pop(UAT_COMMIT_ENV, None)
+        commit = os.getenv('RENDER_GIT_COMMIT', '')
+        if os.getenv('RENDER_SERVICE_ID') == RENDER_UAT_SERVICE and re.fullmatch(r'[0-9a-f]{40}', commit):
+            os.environ[UAT_COMMIT_ENV] = commit
         os.environ['DATABASE_URL'] = conninfo
         os.environ['APP_ENV'] = 'production'
         os.environ['MOVINGMATCH_V20_UAT'] = '1'
