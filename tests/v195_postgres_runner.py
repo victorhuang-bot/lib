@@ -27,6 +27,7 @@ for key in list(os.environ):
         os.environ.pop(key,None)
 os.environ['APP_ENV']='test'
 import test_v195_manual_postponement as cases
+from test_branch_document_correction import DocumentCorrectionCases
 from fastapi.testclient import TestClient
 from app import main
 import psycopg
@@ -34,7 +35,7 @@ from psycopg.conninfo import make_conninfo
 from psycopg_pool import ConnectionPool
 
 
-class PostgreSQLManualTests(cases.ManualPostponementCases,unittest.TestCase):
+class PostgreSQLFixture(unittest.TestCase):
     socket_dir=None
     baseline_checks=0
     version=None
@@ -86,6 +87,24 @@ class PostgreSQLManualTests(cases.ManualPostponementCases,unittest.TestCase):
         finally:c.close()
 
 
+class PostgreSQLManualTests(cases.ManualPostponementCases, PostgreSQLFixture):
+    pass
+
+
+class PostgreSQLDocumentCorrectionTests(DocumentCorrectionCases, PostgreSQLFixture):
+    def setUp(self):
+        super().setUp()
+        self.headers={'Authorization':'Bearer branch-one'}
+        self.other={'Authorization':'Bearer branch-two'}
+        with self.connection() as c:
+            for branch_id, token in ((1, 'branch-one'), (2, 'branch-two')):
+                c.execute("INSERT INTO branch_sessions(token_hash,branch_id,expires_at) VALUES(?,?,?)",
+                          (main.thash(token), branch_id, main.future_iso(hours=1)))
+            for table in ('users', 'drivers', 'routes', 'branches'):
+                c.execute("SELECT setval(pg_get_serial_sequence(?, 'id'), (SELECT MAX(id) FROM "+table+"))",
+                          (table,))
+
+
 def run():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--pg-bin',required=True,type=Path)
@@ -99,15 +118,16 @@ def run():
         try:
             subprocess.run([str(binary/'pg_ctl'),'-D',str(data),'-l',str(root/'postgres.log'),
                             '-o',f"-h '' -k {sock} -p 55495",'-w','start'],check=True,stdout=subprocess.DEVNULL)
-            started=True;PostgreSQLManualTests.socket_dir=sock
-            suite=unittest.defaultTestLoader.loadTestsFromTestCase(PostgreSQLManualTests)
+            started=True;PostgreSQLFixture.socket_dir=sock
+            test_classes=(PostgreSQLManualTests, PostgreSQLDocumentCorrectionTests)
+            suite=unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromTestCase(cls) for cls in test_classes)
             result=unittest.TextTestRunner(verbosity=2).run(suite)
             report={'engine':'PostgreSQL','version':PostgreSQLManualTests.version,
                     'tests_run':result.testsRun,'failures':len(result.failures),'errors':len(result.errors),
-                    'zero_business_baselines':PostgreSQLManualTests.baseline_checks,
+                    'zero_business_baselines':sum(cls.baseline_checks for cls in test_classes),
                     'target':'new_temporary_local_unix_socket_cluster','production_connections':0,
                     'existing_test_database_connections':0,'persistent_database_created':False,
-                    'cases':[name for name in unittest.defaultTestLoader.getTestCaseNames(PostgreSQLManualTests)]}
+                    'cases':[name for cls in test_classes for name in unittest.defaultTestLoader.getTestCaseNames(cls)]}
         finally:
             if started or (data/'postmaster.pid').exists():
                 subprocess.run([str(binary/'pg_ctl'),'-D',str(data),'-m','fast','-w','stop'],check=True,stdout=subprocess.DEVNULL)
