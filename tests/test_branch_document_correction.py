@@ -5,6 +5,7 @@ import io
 import json
 import unittest
 
+from openpyxl import load_workbook
 from PIL import Image, ImageDraw
 from fastapi import HTTPException
 
@@ -147,6 +148,52 @@ class DocumentCorrectionCases:
                     for r in history['office_audit'] if r['action']=='OFFICE_DOCUMENT_REVIEW_INVALIDATED'}
         self.assertEqual(archived - {None}, {signature(7), signature(8)})
         self.assertEqual(history['delivery']['report_status'], 'LOCKED')
+
+    def test_mixed_route_codes_keep_report_and_dashboard_order(self):
+        did, first_route, _ = self.prepare_stop()
+        day = main.today()
+        quantities = {'1': 5, '2': 6, '10': 7, '2A': 8, 'SECOND': 9}
+        expected = list(quantities)
+        with self.connection() as c:
+            c.execute('UPDATE routes SET active=0 WHERE code NOT IN (?,?,?,?,?)', tuple(expected))
+            c.execute('DELETE FROM daily_routes WHERE service_date=? AND id<>?', (day, first_route))
+            c.execute("UPDATE deliveries SET status='STOP_COMPLETED' WHERE id=?", (did,))
+            for code in ('SECOND', '10', '2A', '2'):
+                c.execute('INSERT INTO routes(code,name,active) VALUES(?,?,1) '
+                          'ON CONFLICT(code) DO UPDATE SET active=1', (code, code))
+                rid = c.execute('SELECT id FROM routes WHERE code=?', (code,)).fetchone()['id']
+                route = c.execute('INSERT INTO daily_routes(service_date,route_id,driver_id) VALUES(?,?,1)',
+                                  (day, rid)).lastrowid
+                branch = c.execute("INSERT INTO branches(code,name,route_id,active) VALUES(?,?,?,1)",
+                                   ('REPORT_'+code, '報表 '+code, rid)).lastrowid
+                c.execute("""INSERT INTO deliveries(service_date,daily_route_id,branch_id,status,document_final)
+                             VALUES(?,?,?,'STOP_COMPLETED',?)""", (day, route, branch, quantities[code]))
+            c.execute("INSERT INTO daily_reports(service_date,status) VALUES(?,'LOCKED')", (day,))
+
+        month = self.ok(self.client.get('/api/reports/monthly-route-summary?month='+day[:7], headers=self.admin))
+        self.assertEqual(month['routes'], expected)
+        self.assertEqual(list(month['days'][0]['routes']), expected)
+        self.assertEqual({code: row['document'] for code, row in month['totals'].items()}, quantities)
+        self.assertEqual(month['grand_total']['document'], 35)
+        self.assertEqual(month['document_corrections_pending'], 0)
+
+        daily = self.client.get('/api/reports/daily.xlsx?service_date='+day, headers=self.admin)
+        self.assertEqual(daily.status_code, 200, daily.text if daily.status_code != 200 else '')
+        with io.BytesIO(daily.content) as stream:
+            workbook = load_workbook(stream, read_only=True)
+            rows = list(workbook.active.values)
+            workbook.close()
+        route_column = rows[1].index('路線')
+        document_column = rows[1].index('公文－總館送出')
+        self.assertEqual([(row[route_column], row[document_column]) for row in rows[2:]], list(quantities.items()))
+
+        dashboard = self.ok(self.client.get('/api/dashboard/today', headers=self.admin))
+        self.assertEqual([r['code'] for r in dashboard['routes']], expected)
+        self.assertEqual((dashboard['total'], dashboard['completed']), (5, 5))
+        deliveries = self.ok(self.client.get('/api/dashboard/deliveries', headers=self.admin))
+        self.assertEqual([(r['route_code'], r['document_final']) for r in deliveries], list(quantities.items()))
+        sign_status = self.ok(self.client.get('/api/secretary/sign-status?service_date='+day, headers=self.admin))
+        self.assertEqual([r['code'] for r in sign_status['routes']], expected)
 
     def test_document_parallel_replay_and_branch_scope(self):
         did, _, person = self.prepare_stop()
