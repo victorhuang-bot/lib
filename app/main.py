@@ -785,7 +785,7 @@ def reset_test_day_once(c):
 def is_report_locked(c, service_date=None):
     d=service_date or today()
     r=c.execute("SELECT status FROM daily_reports WHERE service_date=?",(d,)).fetchone()
-    return bool(r and r['status']=='LOCKED')
+    return bool(r and r['status'] in ('LOCKED','AMENDING'))
 
 def manual_document_workday(c, service_date, branch_id=None):
     """Existing calendar: Mon-Fri, global closures (including configured holidays)
@@ -992,14 +992,15 @@ def dashboard_monthly_route_cumulative(req:Request, month:str=''):
     c=db()
     try:
         rows=c.execute(
-            """SELECT dr.service_date, dr.route_id,
-                      COALESCE(SUM(COALESCE(d.document_final,d.document_original,0)),0) document_qty,
-                      COALESCE(SUM(COALESCE(d.document_return_final,0)),0) document_return_qty,
-                      COALESCE(SUM(COALESCE(d.outbound_final,d.outbound_original,0)),0) outbound_qty,
-                      COALESCE(SUM(COALESCE(d.inbound_final,0)),0) inbound_qty
+            f"""SELECT dr.service_date, dr.route_id,
+                      COALESCE(SUM(CASE WHEN {PENDING_DOCUMENT_SQL} THEN NULL ELSE COALESCE(x.document_final,x.document_original,0) END),0) document_qty,
+                      SUM(CASE WHEN {PENDING_DOCUMENT_SQL} THEN 1 ELSE 0 END) document_corrections_pending,
+                      COALESCE(SUM(COALESCE(x.document_return_final,0)),0) document_return_qty,
+                      COALESCE(SUM(COALESCE(x.outbound_final,x.outbound_original,0)),0) outbound_qty,
+                      COALESCE(SUM(COALESCE(x.inbound_final,0)),0) inbound_qty
                FROM daily_routes dr
-               JOIN deliveries d ON d.daily_route_id=dr.id
-               WHERE dr.service_date>=? AND dr.service_date<? AND d.status<>'VOID'
+               JOIN deliveries x ON x.daily_route_id=dr.id
+               WHERE dr.service_date>=? AND dr.service_date<? AND x.status<>'VOID'
                GROUP BY dr.service_date,dr.route_id
                ORDER BY dr.service_date,dr.route_id""",
             (first.isoformat(),nxt.isoformat())
@@ -1008,7 +1009,7 @@ def dashboard_monthly_route_cumulative(req:Request, month:str=''):
         route_totals={str(i):{'document':0,'document_return':0,'outbound':0,'inbound':0} for i in range(1,7)}
         grand={'document':0,'document_return':0,'outbound':0,'inbound':0}
         for r in rows:
-            item={'route_id':int(r['route_id']),
+            item={'route_id':int(r['route_id']),'document_corrections_pending':int(r['document_corrections_pending']),
                   'document':int(r['document_qty'] or 0),
                   'document_return':int(r['document_return_qty'] or 0),
                   'outbound':int(r['outbound_qty'] or 0),
@@ -1152,7 +1153,7 @@ def dashboard(req:Request):
     c.close(); return {'date':today(),'total':total,'completed':completed,'waiting_branch':counts.get('WAITING_BRANCH',0),'late_pending':counts.get('LATE_BRANCH_PENDING',0),'waiting_driver':counts.get('WAITING_DRIVER',0),'waiting_driver_confirm':counts.get('WAITING_DRIVER_CONFIRM',0)+counts.get('WAITING_DRIVER_RECONFIRM',0),'waiting_correction':counts.get('WAITING_BRANCH_CORRECTION',0),'routes':[dict(x) for x in routes]}
 @app.get('/api/dashboard/deliveries')
 def dashboard_deliveries(req:Request, status:str|None=None, route:str|None=None, search:str|None=None):
-    require_user(req,['ADMIN','SECRETARY','SECRETARIAT']); c=db(); q='''SELECT x.*,b.code branch_code,b.name branch_name,r.code route_code,d.name driver_name FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id LEFT JOIN drivers d ON d.id=dr.driver_id WHERE x.service_date=?'''; args=[today()]
+    require_user(req,['ADMIN','SECRETARY','SECRETARIAT']); c=db(); q=f'''SELECT x.*,CASE WHEN {PENDING_DOCUMENT_SQL} THEN 1 ELSE 0 END document_corrections_pending,b.code branch_code,b.name branch_name,r.code route_code,d.name driver_name FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id LEFT JOIN drivers d ON d.id=dr.driver_id WHERE x.service_date=?'''; args=[today()]
     if status:q+=' AND x.status=?';args.append(status)
     if route:q+=' AND r.code=?';args.append(route)
     if search:q+=' AND b.name LIKE ?';args.append('%'+search+'%')
@@ -1304,10 +1305,102 @@ def driver_auth(req):
     c=db();r=c.execute('SELECT * FROM driver_sessions WHERE token_hash=? AND expires_at>?',(thash(raw),now())).fetchone();c.close();
     if not r:raise HTTPException(401,'DRIVER_UNAUTHENTICATED')
     return dict(r)
+DOCUMENT_CORRECTION_EVENT = """SELECT al.action FROM audit_logs al
+    WHERE al.entity_type='DELIVERY' AND al.entity_id=CAST(x.id AS TEXT)
+      AND al.action IN ('BRANCH_DOCUMENT_PROPOSED','DRIVER_DOCUMENT_CONFIRMED')
+    ORDER BY al.id DESC LIMIT 1"""
+
+
+PENDING_DOCUMENT_SQL = ("x.status IN ('WAITING_DRIVER_CONFIRM','WAITING_DRIVER_RECONFIRM') "
+                        f"AND ({DOCUMENT_CORRECTION_EVENT})='BRANCH_DOCUMENT_PROPOSED'")
+REPORT_DOCUMENT_SQL = f"CASE WHEN {PENDING_DOCUMENT_SQL} THEN NULL ELSE x.document_final END"
+
+
+BRANCH_DOCUMENT_EVENTS = """SELECT 1 FROM audit_logs al
+    WHERE al.entity_type='DELIVERY' AND al.entity_id=CAST(x.id AS TEXT)
+      AND al.action='BRANCH_DOCUMENT_PROPOSED'"""
+
+
+def has_branch_document_signature(c, delivery_id):
+    return c.execute("SELECT 1 FROM deliveries WHERE id=? AND (branch_signed_at IS NOT NULL OR branch_signature IS NOT NULL)",
+                     (delivery_id,)).fetchone() is not None
+
+
+def pending_document_correction(c, delivery):
+    if delivery['status'] not in ('WAITING_DRIVER_CONFIRM','WAITING_DRIVER_RECONFIRM'):
+        return None
+    event=c.execute("""SELECT id,action,after_json,reason,created_at FROM audit_logs
+        WHERE entity_type='DELIVERY' AND entity_id=?
+          AND action IN ('BRANCH_DOCUMENT_PROPOSED','DRIVER_DOCUMENT_CONFIRMED')
+        ORDER BY id DESC LIMIT 1""",(str(delivery['id']),)).fetchone()
+    if event and event['action']=='BRANCH_DOCUMENT_PROPOSED':
+        return dict(event) | json.loads(event['after_json'])
+    return None
+
+
+def can_correct_branch_document(c, delivery):
+    return (delivery['status'] in ('WAITING_DRIVER_CONFIRM','WAITING_DRIVER_RECONFIRM','STOP_COMPLETED')
+            and bool(delivery['branch_signed_at'] or delivery['branch_signature'])
+            and current_branch_history_date(delivery['service_date'])
+            and not pending_document_correction(c,delivery))
+
+
+def branch_document_quantity(value):
+    if type(value) is not int or not 0 <= value <= 2147483647:
+        raise HTTPException(400,'公文數量必須是非負整數')
+    return value
+
+
+def branch_document_reason(payload):
+    reason=payload.get('reason')
+    if not isinstance(reason,str) or not reason.strip():
+        raise HTTPException(400,'公文數量更正原因必填')
+    return reason.strip()
+
+
+def office_document_revisions(c, entity_type, entity_id):
+    return c.execute("""SELECT id,before_json FROM audit_logs WHERE entity_type=? AND entity_id=?
+        AND action='OFFICE_DOCUMENT_REVIEW_INVALIDATED' ORDER BY id DESC""",
+        (entity_type,str(entity_id))).fetchall()
+
+
+def reopen_document_office_review(c, session, delivery):
+    route_id=delivery['daily_route_id']
+    route=c.execute("""SELECT secretary_signature,secretary_signed_at FROM daily_routes WHERE id=?""",
+                    (route_id,)).fetchone()
+    service_date=delivery['service_date']
+    report=c.execute("""SELECT secretary_signature,secretary_signed_at,status,locked_at
+                        FROM daily_reports WHERE service_date=?""",(service_date,)).fetchone()
+    after={'delivery_id':delivery['id'],'service_date':service_date}
+    audit(c,'BRANCH',session['branch_id'],'BRANCH','OFFICE_DOCUMENT_REVIEW_INVALIDATED','DAILY_ROUTE',
+          route_id,before=dict(route),after=after)
+    if route['secretary_signature'] or route['secretary_signed_at']:
+        c.execute("UPDATE daily_routes SET secretary_signature=NULL,secretary_signed_at=NULL WHERE id=?",(route_id,))
+    audit(c,'BRANCH',session['branch_id'],'BRANCH','OFFICE_DOCUMENT_REVIEW_INVALIDATED','DAY',
+          service_date,before=dict(report) if report else {},after=after)
+    if report and report['status'] in ('LOCKED','AMENDING'):
+        c.execute("""UPDATE daily_reports SET status='AMENDING',secretary_signature=NULL,
+                     secretary_signed_at=NULL,locked_at=NULL WHERE service_date=?""",(service_date,))
+
+
+def validate_office_document_review(c, entity_type, entity_id, payload):
+    revisions=office_document_revisions(c,entity_type,entity_id)
+    if not revisions:
+        return
+    if payload.get('review_revision')!=revisions[0]['id']:
+        raise HTTPException(409,'公文更正版本已變更，請重新載入並複核')
+    if any(json.loads(r['before_json']).get('secretary_signature')==payload['signature'] for r in revisions):
+        raise HTTPException(400,'請為本次複核重新手寫簽名')
+    validate_branch_signature(payload['signature'])
+
+
 @app.get('/api/driver/today')
 def driver_today(req:Request):
-    s=driver_auth(req); c=db(); rows=[dict(x) for x in c.execute('''SELECT x.*,b.name branch_name,b.code branch_code,r.code route_code FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id WHERE x.service_date=? AND COALESCE(dda.driver_id,dr.driver_id)=? AND b.active=1 AND x.status<>'VOID' ORDER BY r.code,b.stop_order''',(today(),s['driver_id'])).fetchall()]
+    s=driver_auth(req); c=db(); rows=[dict(x) for x in c.execute(f'''SELECT x.*,b.name branch_name,b.code branch_code,r.code route_code FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id WHERE ((x.service_date=? AND b.active=1) OR ({PENDING_DOCUMENT_SQL})) AND COALESCE(dda.driver_id,dr.driver_id)=? AND x.status<>'VOID' ORDER BY r.code,b.stop_order''',(today(),s['driver_id'])).fetchall()]
     for row in rows:
+        proposal=pending_document_correction(c,row)
+        if proposal:
+            row['document_correction']={key:proposal[key] for key in ('id','document','reason','signer')}
         extra=empty_boxes.driver_note(c,row['branch_id'],row['service_date'])
         row['note_display']='；'.join(v for v in (row['note_final'],extra) if v)
     c.close();return rows
@@ -1412,16 +1505,60 @@ async def driver_save_inbound(did:int,req:Request):
 
 @app.post('/api/driver/deliveries/{did}/confirm')
 async def confirm(did:int,req:Request):
-    s=driver_auth(req);c=db();
-    if is_report_locked(c): c.close(); raise HTTPException(409,'今日日報已鎖定')
-    x=c.execute('''SELECT x.*,COALESCE(dda.driver_id,dr.driver_id) driver_id FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id WHERE x.id=?''',(did,)).fetchone()
-    if not x or x['driver_id']!=s['driver_id']:c.close();raise HTTPException(403)
-    if x['service_date']!=today(): c.close(); raise HTTPException(409,'僅可完成今日配送簽收')
-    if x['status'] not in ('WAITING_DRIVER_CONFIRM','WAITING_DRIVER_RECONFIRM'):c.close();raise HTTPException(409,'目前狀態不可完成本站')
-    c.execute("UPDATE deliveries SET status='STOP_COMPLETED',driver_confirmed_at=?,row_version=row_version+1 WHERE id=?",(now(),did));audit(c,'DRIVER',s['driver_id'],'DRIVER','CONFIRM_STOP','DELIVERY',did);c.commit();c.close();await publish({'type':'delivery.updated','id':did});return {'ok':True}
+    s=driver_auth(req)
+    body=await req.body()
+    try:
+        p=await req.json() if body else {}
+    except ValueError:
+        raise HTTPException(400,'確認資料格式錯誤')
+    if not isinstance(p,dict):
+        raise HTTPException(400,'確認資料格式錯誤')
+    c=db()
+    try:
+        lock_schedule_writes(c)
+        x=c.execute('''SELECT x.*,COALESCE(dda.driver_id,dr.driver_id) driver_id FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id WHERE x.id=?''',(did,)).fetchone()
+        if not x or x['driver_id']!=s['driver_id']:
+            raise HTTPException(403)
+        proposal=pending_document_correction(c,x)
+        if not proposal and is_report_locked(c,x['service_date']):
+            raise HTTPException(409,'該日日報已鎖定')
+        if not proposal and p.get('document_correction_id') is not None:
+            raise HTTPException(409,'此公文更正已處理，請重新整理')
+        if not proposal and x['service_date']!=today():
+            raise HTTPException(409,'僅可完成今日配送簽收或待確認的公文更正')
+        if x['status'] not in ('WAITING_DRIVER_CONFIRM','WAITING_DRIVER_RECONFIRM'):
+            raise HTTPException(409,'目前狀態不可完成本站')
+        if proposal:
+            if p.get('document_correction_id')!=proposal['id']:
+                raise HTTPException(409,'公文更正待確認，請重新整理並核對更正數量')
+            if proposal.get('first_signature'):
+                c.execute('UPDATE deliveries SET document_final=? WHERE id=?',(proposal['document'],did))
+            else:
+                c.execute("""UPDATE deliveries SET document_final=?,correction_reason=?,correction_signer_name=?,
+                    correction_signature=?,corrected_at=? WHERE id=?""",
+                    (proposal['document'],proposal['reason'],proposal['signer'],proposal['signature'],proposal['created_at'],did))
+            audit(c,'DRIVER',s['driver_id'],'DRIVER','DRIVER_DOCUMENT_CONFIRMED','DELIVERY',did,
+                  before={'document':x['document_final']},
+                  after={'document':proposal['document'],'proposal_id':proposal['id']})
+        stamp=now()
+        c.execute("UPDATE deliveries SET status='STOP_COMPLETED',driver_confirmed_at=?,row_version=row_version+1 WHERE id=?",(stamp,did))
+        if proposal:
+            # A different driver's segment may have been signed while this stop was pending.
+            signed=route_driver_signatures(c,x['daily_route_id'])
+            if signed['all_signed']:
+                c.execute("""UPDATE daily_routes SET status='DRIVER_SIGNED',driver_signed_at=COALESCE(driver_signed_at,?)
+                    WHERE id=? AND NOT EXISTS(SELECT 1 FROM deliveries WHERE daily_route_id=?
+                    AND status NOT IN ('STOP_COMPLETED','LATE_BRANCH_PENDING','ADMIN_CLOSED','VOID'))""",
+                    (stamp,x['daily_route_id'],x['daily_route_id']))
+        audit(c,'DRIVER',s['driver_id'],'DRIVER','CONFIRM_STOP','DELIVERY',did)
+        c.commit()
+    finally:
+        c.close()
+    await publish({'type':'delivery.updated','id':did})
+    return {'ok':True}
 @app.post('/api/driver/deliveries/{did}/defer-branch-sign')
 async def defer_branch_sign(did:int,req:Request):
-    s=driver_auth(req); c=db()
+    s=driver_auth(req); c=db(); lock_schedule_writes(c)
     if is_report_locked(c): c.close(); raise HTTPException(409,'今日日報已鎖定')
     x=c.execute('''SELECT x.*,COALESCE(dda.driver_id,dr.driver_id) driver_id FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id WHERE x.id=?''',(did,)).fetchone()
     if not x or x['driver_id']!=s['driver_id']: c.close(); raise HTTPException(403)
@@ -1434,12 +1571,13 @@ async def defer_branch_sign(did:int,req:Request):
 
 @app.post('/api/driver/deliveries/{did}/request-correction')
 async def request_correction(did:int,req:Request):
-    s=driver_auth(req); p=await req.json(); c=db();
+    s=driver_auth(req); p=await req.json(); c=db(); lock_schedule_writes(c)
     if is_report_locked(c): c.close(); raise HTTPException(409,'今日日報已鎖定')
     x=c.execute('''SELECT x.*,COALESCE(dda.driver_id,dr.driver_id) driver_id FROM deliveries x JOIN daily_routes dr ON dr.id=x.daily_route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id WHERE x.id=?''',(did,)).fetchone()
     if not x or x['driver_id']!=s['driver_id']:c.close();raise HTTPException(403)
     if x['status'] not in ('WAITING_DRIVER_CONFIRM','WAITING_DRIVER_RECONFIRM'):c.close();raise HTTPException(409,'目前狀態不可要求分館更正')
     if c.execute("SELECT 1 FROM corrections WHERE delivery_id=? AND status='PENDING'",(did,)).fetchone():c.close();raise HTTPException(409,'此筆已有待分館處理的更正要求')
+    if pending_document_correction(c,x):c.close();raise HTTPException(409,'請先確認分館提出的公文更正')
     fields=['document_return','inbound']
     c.execute('INSERT INTO corrections(delivery_id,requested_by_driver_id,requested_at,fields_json,driver_note,status) VALUES(?,?,?,?,?,?)',(did,s['driver_id'],now(),json.dumps(fields),p.get('note',''),'PENDING'));audit(c,'DRIVER',s['driver_id'],'DRIVER','REQUEST_CORRECTION','DELIVERY',did,after={'fields':fields,'note':p.get('note','')});c.execute("UPDATE deliveries SET status='WAITING_BRANCH_CORRECTION',row_version=row_version+1 WHERE id=?",(did,));c.commit();c.close();await publish({'type':'delivery.updated','id':did});return {'ok':True}
 @app.get('/api/driver/items/today')
@@ -1551,6 +1689,7 @@ async def assist_correct_delivery(did:int, req:Request):
     u=require_user(req,['ADMIN','SECRETARY'])
     p=await req.json()
     c=db()
+    lock_schedule_writes(c)
     x=c.execute('SELECT * FROM deliveries WHERE id=?',(did,)).fetchone()
     if not x:
         c.close(); raise HTTPException(404,'找不到配送資料')
@@ -1590,7 +1729,7 @@ async def admin_close_delivery(did:int, req:Request):
     reason=(p.get('reason') or '').strip()
     if not reason:
         raise HTTPException(400,'行政結案原因必填')
-    c=db()
+    c=db(); lock_schedule_writes(c)
     x=c.execute('SELECT * FROM deliveries WHERE id=?',(did,)).fetchone()
     if not x:
         c.close(); raise HTTPException(404,'找不到配送資料')
@@ -1781,6 +1920,11 @@ def _selected_signing_identity(c,session,payload):
     if 'signer' in payload and payload['signer']!=person['name']:
         raise HTTPException(409,'所選人員姓名已變更，請重新載入並選擇')
     signature=payload.get('signature')
+    validate_branch_signature(signature)
+    return person['name'],signature
+
+
+def validate_branch_signature(signature):
     if not isinstance(signature,str) or len(signature)>4000000 or not re.fullmatch(r'data:image/(?:png|jpeg);base64,[A-Za-z0-9+/=]+',signature):
         raise HTTPException(400,'請完成手寫簽名')
     try:
@@ -1796,7 +1940,6 @@ def _selected_signing_identity(c,session,payload):
                 raise ValueError('Blank signature')
     except Exception:
         raise HTTPException(400,'請完成有效的手寫簽名')
-    return person['name'],signature
 
 
 @app.get('/api/branch-session/signers')
@@ -1875,7 +2018,11 @@ def branch_today(req:Request):
             return {'id':None,'branch_name':branch['name'],'status':'NO_DELIVERY','service_date':None}
         corr=c.execute("SELECT * FROM corrections WHERE delivery_id=? ORDER BY CASE WHEN status='PENDING' THEN 0 ELSE 1 END,id DESC LIMIT 1",(x['id'],)).fetchone()
         items=[dict(r) for r in c.execute('SELECT item_type,item_name,quantity FROM delivery_items WHERE delivery_id=? ORDER BY id',(x['id'],)).fetchall()]
-        out=dict(x); out['correction']=dict(corr) if corr else None; out['items']=items; return out
+        out=dict(x); out['correction']=dict(corr) if corr else None; out['items']=items
+        out['can_correct_document']=can_correct_branch_document(c,x)
+        proposal=pending_document_correction(c,x)
+        out['pending_document']=proposal['document'] if proposal else None
+        return out
     finally: c.close()
 @app.get('/api/branch-session/tasks')
 def branch_session_tasks(req:Request):
@@ -1910,7 +2057,7 @@ def branch_session_history(req:Request, month:str|None=None, pending_only:bool=F
         rows=c.execute("""SELECT x.id,x.service_date,x.status,
             x.document_final,x.document_return_final,x.outbound_final,x.inbound_final,
             x.signer_name,x.correction_signer_name,x.branch_signed_at,x.receipt_at,x.corrected_at,
-            x.driver_confirmed_at,x.note_final,r.code route_code,
+            x.driver_confirmed_at,x.note_final,CASE WHEN x.branch_signature IS NULL THEN 0 ELSE 1 END branch_signature,r.code route_code,
             CASE WHEN x.branch_signature IS NOT NULL OR x.correction_signature IS NOT NULL THEN 1 ELSE 0 END has_signatures,
             COALESCE(owner.name,driver.name) driver_name
             FROM deliveries x
@@ -1925,6 +2072,11 @@ def branch_session_history(req:Request, month:str|None=None, pending_only:bool=F
         data=[]
         for row in rows:
             item=dict(row)
+            item['can_correct_document']=can_correct_branch_document(c,row)
+            if pending_document_correction(c,row):
+                item['document_final']=None
+                item['document_corrections_pending']=True
+            item.pop('branch_signature')
             item['late_pending']=(item['status']=='LATE_BRANCH_PENDING'
                                   and not item['branch_signed_at'])
             if not pending_only or item['late_pending']:
@@ -1953,6 +2105,12 @@ def branch_history_signatures(delivery_id:int,req:Request):
         return dict(row)
     finally: c.close()
 
+def current_branch_history_date(service_date):
+    current=date.fromisoformat(today())
+    serial=current.year*12+current.month-1-11
+    return date(serial//12,serial%12+1,1).isoformat() <= service_date <= current.isoformat()
+
+
 @app.post('/api/branch-session/select-task')
 async def branch_session_select_task(req:Request):
     sess=branch_auth(req)
@@ -1960,9 +2118,10 @@ async def branch_session_select_task(req:Request):
     try: did=int(p.get('delivery_id'))
     except (ValueError,TypeError): raise HTTPException(400,'配送紀錄編號錯誤')
     c=db()
-    x=c.execute("SELECT id,service_date,status,branch_signed_at,branch_signature FROM deliveries WHERE id=? AND branch_id=?",(did,sess['branch_id'])).fetchone()
+    x=c.execute("SELECT * FROM deliveries WHERE id=? AND branch_id=?",(did,sess['branch_id'])).fetchone()
     if not x or not (x['service_date']==today() and x['status']!='VOID' or
-        x['service_date']<today() and x['status']=='LATE_BRANCH_PENDING' and not x['branch_signed_at'] and not x['branch_signature']):
+        x['service_date']<today() and x['status']=='LATE_BRANCH_PENDING' and not x['branch_signed_at'] and not x['branch_signature']
+        or can_correct_branch_document(c,x)):
         c.close()
         raise HTTPException(403,'此分館無法選擇該配送紀錄')
     c.execute("UPDATE branch_sessions SET delivery_id=? WHERE token_hash=? AND branch_id=?",(did,sess['token_hash'],sess['branch_id']))
@@ -1973,6 +2132,8 @@ async def branch_session_select_task(req:Request):
 async def branch_sign(req:Request):
     sess=branch_auth(req)
     p=await req.json()
+    if p.get('delivery_id',sess['delivery_id'])!=sess['delivery_id']:
+        raise HTTPException(409,'配送選擇已變更，請重新整理')
     c=db()
 
     try:
@@ -2001,21 +2162,31 @@ async def branch_sign(req:Request):
             raise HTTPException(409,'此筆目前不是可簽收狀態')
 
         try:
-            document=int(p.get('document',x['document_final'] if x['document_final'] is not None else 0) or 0)
+            document=x['document_final'] if p.get('document') is None else branch_document_quantity(p['document'])
             document_return=int(p.get('document_return',x['document_return_final'] if x['document_return_final'] is not None else 0) or 0)
             outbound=int(p.get('outbound',x['outbound_final'] if x['outbound_final'] is not None else 0) or 0)
             inbound=int(p.get('inbound',x['inbound_final'] if x['inbound_final'] is not None else 0) or 0)
         except (TypeError,ValueError):
             raise HTTPException(400,'四個數量欄位格式錯誤')
 
-        if min(document,document_return,outbound,inbound) < 0:
+        if min(document_return,outbound,inbound) < 0:
             raise HTTPException(400,'數量不可小於 0')
 
         note=p.get('note','')
         signer,signature=_selected_signing_identity(c,sess,p)
 
+        document_changed=document!=x['document_final']
+        if 'row_version' in p and p['row_version']!=x['row_version']:
+            raise HTTPException(409,'配送資料已更新，請重新整理後再簽收')
+        if document_changed:
+            reason=branch_document_reason(p)
+            audit(c,'BRANCH',sess['branch_id'],'BRANCH','BRANCH_DOCUMENT_PROPOSED','DELIVERY',x['id'],
+                  before={'document':x['document_final'],'document_original':x['document_original']},
+                  after={'document':document,'signer':signer,'signer_id':p['signer_id'],
+                         'signature':signature,'first_signature':True},reason=reason)
+            reopen_document_office_review(c,sess,x)
         signed_at=now()
-        next_status='STOP_COMPLETED' if late else 'WAITING_DRIVER_CONFIRM'
+        next_status='STOP_COMPLETED' if late and not document_changed else 'WAITING_DRIVER_CONFIRM'
         action='BRANCH_LATE_SIGN' if late else 'BRANCH_SIGN'
 
         if late:
@@ -2023,10 +2194,10 @@ async def branch_sign(req:Request):
                 """UPDATE deliveries
                    SET document_final=?,document_return_final=?,outbound_final=?,inbound_final=?,
                        note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,receipt_at=?,
-                       status=?,driver_confirmed_at=COALESCE(driver_confirmed_at,?),row_version=row_version+1
+                       status=?,driver_confirmed_at=CASE WHEN ? THEN NULL ELSE COALESCE(driver_confirmed_at,?) END,row_version=row_version+1
                    WHERE id=?""",
-                (document,document_return,outbound,inbound,note,signer,signature,signed_at,receipt_at,
-                 next_status,signed_at,x['id'])
+                (x['document_final'],document_return,outbound,inbound,note,signer,signature,signed_at,receipt_at,
+                 next_status,document_changed,signed_at,x['id'])
             )
         else:
             c.execute(
@@ -2035,7 +2206,7 @@ async def branch_sign(req:Request):
                        note_final=?,signer_name=?,branch_signature=?,branch_signed_at=?,receipt_at=?,
                        status=?,row_version=row_version+1
                    WHERE id=?""",
-                (document,document_return,outbound,inbound,note,signer,signature,signed_at,receipt_at,
+                (x['document_final'],document_return,outbound,inbound,note,signer,signature,signed_at,receipt_at,
                  next_status,x['id'])
             )
 
@@ -2065,11 +2236,52 @@ async def branch_sign(req:Request):
         )
         c.commit()
         await publish({'type':'delivery.updated','id':x['id']})
-        return {'ok':True,'late':late,'driver_reconfirm_required':not late}
+        return {'ok':True,'late':late,'driver_reconfirm_required':not late or document_changed}
     except Exception:
         c.rollback()
         raise
     finally: c.close()
+
+@app.post('/api/branch-session/correct-document')
+async def branch_correct_document(req:Request):
+    sess=branch_auth(req)
+    p=await req.json()
+    if p.get('delivery_id')!=sess['delivery_id']:
+        raise HTTPException(409,'配送選擇已變更，請重新整理')
+    document=branch_document_quantity(p.get('document'))
+    reason=branch_document_reason(p)
+    c=db()
+    try:
+        lock_schedule_writes(c)
+        _signer_branch(c,sess)
+        x=c.execute('SELECT * FROM deliveries WHERE id=? AND branch_id=?',
+                    (sess['delivery_id'],sess['branch_id'])).fetchone()
+        if not x or not can_correct_branch_document(c,x):
+            raise HTTPException(409,'此配送目前無法申請公文更正')
+        if p.get('row_version')!=x['row_version']:
+            raise HTTPException(409,'配送資料已更新，請重新整理後再更正')
+        if document==x['document_final']:
+            raise HTTPException(400,'請輸入與目前不同的公文數量')
+        signer,signature=_selected_signing_identity(c,sess,p)
+        previous=c.execute("""SELECT after_json FROM audit_logs WHERE entity_type='DELIVERY'
+            AND entity_id=? AND action='BRANCH_DOCUMENT_PROPOSED'""",(str(x['id']),)).fetchall()
+        if (signature in (x['branch_signature'],x['correction_signature'])
+                or any(json.loads(r['after_json'])['signature']==signature for r in previous)):
+            raise HTTPException(400,'請為這次更正重新手寫簽名')
+        audit(c,'BRANCH',sess['branch_id'],'BRANCH','BRANCH_DOCUMENT_PROPOSED','DELIVERY',x['id'],
+              before={'document':x['document_final'],'document_original':x['document_original'],
+                      'driver_confirmed_at':x['driver_confirmed_at'],'correction_signature':x['correction_signature']},
+              after={'document':document,'signature':signature,'signer':signer,'signer_id':p['signer_id']},
+              reason=reason)
+        reopen_document_office_review(c,sess,x)
+        c.execute("""UPDATE deliveries SET status='WAITING_DRIVER_RECONFIRM',driver_confirmed_at=NULL,
+                     row_version=row_version+1 WHERE id=?""",(x['id'],))
+        c.commit()
+    finally:
+        c.close()
+    await publish({'type':'delivery.updated','id':x['id']})
+    return {'ok':True,'status':'WAITING_DRIVER_RECONFIRM'}
+
 
 @app.post('/api/branch-session/correct')
 async def branch_correct(req:Request):
@@ -2212,6 +2424,8 @@ def _prefill_save_db(user_id,user_role,d,bid,qty):
             raise HTTPException(409,'本路線總館已完成簽核，公文－總館送出數量已鎖定')
         if is_report_locked(c,d):
             raise HTTPException(409,f'{d} 日報已鎖定')
+        if has_branch_document_signature(c,x['id']):
+            raise HTTPException(409,'此站已有分館簽收，請至歷史紀錄查看')
         c.execute(
             '''UPDATE deliveries
                SET document_original=COALESCE(document_original,?),
@@ -2255,7 +2469,7 @@ def _prefill_batch_db(user_id,user_role,d,items):
             x=ensure_prefill_delivery(c,d,bid)
             dr=c.execute('SELECT secretary_signature FROM daily_routes WHERE id=?',(x['daily_route_id'],)).fetchone()
             if dr and dr['secretary_signature']: continue
-            if is_report_locked(c,d): continue
+            if is_report_locked(c,d) or has_branch_document_signature(c,x['id']): continue
             c.execute("UPDATE deliveries SET document_original=COALESCE(document_original,?),document_final=?,status=CASE WHEN status='WAITING_SECRETARY' THEN 'WAITING_DRIVER' ELSE status END,row_version=row_version+1 WHERE id=?",(qty,qty,x['id']))
             changed+=1; total+=qty
         audit(c,'USER',user_id,user_role,'PREFILL_DOCUMENT_BATCH','DELIVERY',d,after={'service_date':d,'changed':changed,'total':total})
@@ -2292,8 +2506,10 @@ async def set_doc(did:int,req:Request):
     dr=c.execute('SELECT secretary_signature FROM daily_routes WHERE id=?',(x['daily_route_id'],)).fetchone()
     if dr and dr['secretary_signature']:
         c.close(); raise HTTPException(409,'本路線總館已完成簽核，公文－總館送出數量已鎖定')
+    if has_branch_document_signature(c,did):
+        c.close(); raise HTTPException(409,'此站已有分館簽收，請至歷史紀錄查看')
     before={'qty':x['document_final']}
-    c.execute("UPDATE deliveries SET document_original=?,document_final=?,status=CASE WHEN status='WAITING_SECRETARY' THEN 'WAITING_DRIVER' ELSE status END,row_version=row_version+1 WHERE id=?",(qty,qty,did))
+    c.execute("UPDATE deliveries SET document_original=COALESCE(document_original,?),document_final=?,status=CASE WHEN status='WAITING_SECRETARY' THEN 'WAITING_DRIVER' ELSE status END,row_version=row_version+1 WHERE id=?",(qty,qty,did))
     audit(c,'USER',u['id'],u['role'],'SET_DOCUMENT','DELIVERY',did,before=before,after={'qty':qty})
     c.commit(); c.close(); await publish({'type':'delivery.updated','id':did}); return {'ok':True,'qty':qty,'locked':False}
 
@@ -2307,9 +2523,10 @@ async def zero_all(req:Request, service_date:str|None=None):
     if d>today():
         rebuild_service_date(c,d,commit=False)
     if is_report_locked(c,d): c.close(); raise HTTPException(409,f'{d} 日報已鎖定')
-    cur=c.execute("""UPDATE deliveries SET document_original=COALESCE(document_original,0),document_final=0,
+    cur=c.execute(f"""UPDATE deliveries AS x SET document_original=COALESCE(document_original,0),document_final=0,
                     status=CASE WHEN status='WAITING_SECRETARY' THEN 'WAITING_DRIVER' ELSE status END,row_version=row_version+1
-                    WHERE service_date=? AND status<>'VOID' AND daily_route_id IN (SELECT id FROM daily_routes WHERE service_date=? AND secretary_signature IS NULL)""",(d,d))
+                    WHERE service_date=? AND status<>'VOID' AND branch_signed_at IS NULL AND branch_signature IS NULL
+                    AND daily_route_id IN (SELECT id FROM daily_routes WHERE service_date=? AND secretary_signature IS NULL)""",(d,d))
     changed=cur.rowcount
     audit(c,'USER',u['id'],u['role'],'ZERO_ALL_DOCUMENTS','DAY',d,after={'changed':changed,'service_date':d})
     c.commit(); c.close()
@@ -2337,10 +2554,12 @@ async def batch_documents(req:Request):
         if x['status']=='VOID': c.close(); raise HTTPException(409,'已取消的配送不可修改')
         dr=c.execute('SELECT secretary_signature FROM daily_routes WHERE id=?',(x['daily_route_id'],)).fetchone()
         if dr and dr['secretary_signature']: c.close(); raise HTTPException(409,f"配送 #{did} 所屬路線已完成總館簽核，公文－總館送出數量已鎖定")
+        if has_branch_document_signature(c,did):
+            c.close(); raise HTTPException(409,f'配送 #{did} 已有分館簽收，請至歷史紀錄查看')
         prepared.append((x,qty))
     for x,qty in prepared:
         before={'qty':x['document_final']}
-        c.execute("UPDATE deliveries SET document_original=?,document_final=?,status=CASE WHEN status='WAITING_SECRETARY' THEN 'WAITING_DRIVER' ELSE status END,row_version=row_version+1 WHERE id=?",(qty,qty,x['id']))
+        c.execute("UPDATE deliveries SET document_original=COALESCE(document_original,?),document_final=?,status=CASE WHEN status='WAITING_SECRETARY' THEN 'WAITING_DRIVER' ELSE status END,row_version=row_version+1 WHERE id=?",(qty,qty,x['id']))
         audit(c,'USER',u['id'],u['role'],'BATCH_SET_DOCUMENT','DELIVERY',x['id'],before=before,after={'qty':qty})
     c.commit(); c.close()
     if d==today(): await publish({'type':'delivery.updated','batch':True})
@@ -2393,9 +2612,10 @@ def secretary_sign_status(req:Request, service_date:str|None=None, route:str|Non
         route_sql=' AND r.code=?'
         params.append(str(route))
     rows=[dict(x) for x in c.execute(f"""SELECT dr.id,r.code,r.name,d.name driver_name,dr.status,dr.driver_signed_at,dr.driver_signature,dr.secretary_signature,dr.secretary_signed_at,
+        (SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id AND {PENDING_DOCUMENT_SQL}) document_corrections_pending,
         (SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID') total,
         (SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status IN ('STOP_COMPLETED','LATE_BRANCH_PENDING','ADMIN_CLOSED')) completed,
-        (SELECT COALESCE(SUM(x.document_final),0) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID') document_total,
+        (SELECT COALESCE(SUM({REPORT_DOCUMENT_SQL}),0) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID') document_total,
         (SELECT COALESCE(SUM(x.document_return_final),0) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID') document_return_total,
         (SELECT COUNT(*) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID' AND x.branch_signed_at IS NOT NULL) branch_signed,
         (SELECT COALESCE(SUM(x.outbound_final),0) FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID') outbound_total,
@@ -2405,18 +2625,22 @@ def secretary_sign_status(req:Request, service_date:str|None=None, route:str|Non
         FROM daily_routes dr JOIN routes r ON r.id=dr.route_id LEFT JOIN drivers d ON d.id=dr.driver_id
         WHERE dr.service_date=? {route_sql} ORDER BY CAST(r.code AS INTEGER)""",tuple(params)).fetchall()]
     report=c.execute('SELECT * FROM daily_reports WHERE service_date=?',(dte,)).fetchone()
+    for route_row in rows:
+        revisions=office_document_revisions(c,'DAILY_ROUTE',route_row['id'])
+        route_row['review_revision']=revisions[0]['id'] if revisions else None
+    revisions=office_document_revisions(c,'DAY',dte)
     c.close()
     active=[r for r in rows if r['total']>0]
-    return {'service_date':dte,'routes':rows,'all_required_routes_signed':bool(active) and all(r['status']=='DRIVER_SIGNED' for r in active),
-            'all_required_routes_office_signed':bool(active) and all(r['status']=='DRIVER_SIGNED' and r['secretary_signature'] for r in active),
-            'report':dict(report) if report else None}
+    return {'service_date':dte,'routes':rows,'all_required_routes_signed':bool(active) and all(r['status']=='DRIVER_SIGNED' and not r['document_corrections_pending'] for r in active),
+            'all_required_routes_office_signed':bool(active) and all(r['status']=='DRIVER_SIGNED' and r['secretary_signature'] and not r['document_corrections_pending'] for r in active),
+            'report':dict(report) if report else None,'review_revision':revisions[0]['id'] if revisions else None}
 
 @app.get('/api/routes/{rid}/signed-summary')
 def route_signed_summary(rid:int,req:Request):
     require_user(req,['ADMIN','SECRETARY']); c=db()
     dr=c.execute("""SELECT dr.id,dr.service_date,dr.status,dr.driver_signed_at,dr.driver_signature,dr.secretary_signature,dr.secretary_signed_at,dr.secretary_signature,dr.secretary_signed_at,r.code,r.name,d.name driver_name FROM daily_routes dr JOIN routes r ON r.id=dr.route_id LEFT JOIN drivers d ON d.id=dr.driver_id WHERE dr.id=?""",(rid,)).fetchone()
     if not dr: c.close(); raise HTTPException(404)
-    rows=[dict(x) for x in c.execute("""SELECT b.code branch_code,b.name branch_name,x.document_final,x.document_return_final,x.outbound_final,x.inbound_final,x.note_final,x.signer_name,x.correction_signer_name,x.branch_signed_at,x.receipt_at,x.corrected_at,x.branch_signature,x.correction_signature,x.status,x.admin_closed_at,x.admin_close_reason,CASE WHEN x.branch_signed_at IS NOT NULL AND EXISTS(SELECT 1 FROM audit_logs al WHERE al.entity_type='DELIVERY' AND al.entity_id=CAST(x.id AS TEXT) AND al.action='BRANCH_LATE_SIGN') THEN 1 ELSE 0 END late_signed FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.daily_route_id=? AND x.status<>'VOID' ORDER BY b.stop_order""",(rid,)).fetchall()]
+    rows=[dict(x) for x in c.execute(f"""SELECT b.code branch_code,b.name branch_name,{REPORT_DOCUMENT_SQL} document_final,CASE WHEN {PENDING_DOCUMENT_SQL} THEN 1 ELSE 0 END document_corrections_pending,x.document_return_final,x.outbound_final,x.inbound_final,x.note_final,x.signer_name,x.correction_signer_name,x.branch_signed_at,x.receipt_at,x.corrected_at,x.branch_signature,x.correction_signature,x.status,x.admin_closed_at,x.admin_close_reason,CASE WHEN x.branch_signed_at IS NOT NULL AND EXISTS(SELECT 1 FROM audit_logs al WHERE al.entity_type='DELIVERY' AND al.entity_id=CAST(x.id AS TEXT) AND al.action='BRANCH_LATE_SIGN') THEN 1 ELSE 0 END late_signed FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.daily_route_id=? AND x.status<>'VOID' ORDER BY b.stop_order""",(rid,)).fetchall()]
     totals={'document':sum((x['document_final'] or 0) for x in rows),'document_return':sum((x['document_return_final'] or 0) for x in rows),'outbound':sum((x['outbound_final'] or 0) for x in rows),'inbound':sum((x['inbound_final'] or 0) for x in rows)}
     signatures=route_driver_signatures(c,rid)
     c.close(); return {'route':dict(dr),'stops':rows,'totals':totals,'driver_signatures':signatures}
@@ -2431,14 +2655,20 @@ async def secretary_route_sign(rid:int,req:Request):
         lock_schedule_writes(c)
         dr=c.execute("SELECT * FROM daily_routes WHERE id=?",(rid,)).fetchone()
         if not dr: raise HTTPException(404)
-        if is_report_locked(c,dr['service_date']):
-            raise HTTPException(409,'該日日報已鎖定，不可重新簽核')
+        rep=c.execute('SELECT status FROM daily_reports WHERE service_date=?',(dr['service_date'],)).fetchone()
+        if rep and rep['status']=='LOCKED':
+            raise HTTPException(409,'該日日報已鎖定')
+        if rep and rep['status']=='AMENDING' and not office_document_revisions(c,'DAILY_ROUTE',rid):
+            raise HTTPException(409,'此路線無待複核的公文更正')
         if dr['secretary_signature'] is not None or dr['secretary_signed_at'] is not None:
             if dr['secretary_signature']==sig and dr['secretary_signed_at']:
                 c.rollback()
                 return {'ok':True,'already_signed':True,'signed_at':dr['secretary_signed_at']}
             raise HTTPException(409,'路線已有簽核紀錄，不可覆寫；更正須另行授權')
+        if c.execute(f"SELECT 1 FROM deliveries x WHERE x.daily_route_id=? AND {PENDING_DOCUMENT_SQL}",(rid,)).fetchone():
+            raise HTTPException(409,'尚有分館公文更正待司機確認')
         if dr['status']!='DRIVER_SIGNED': raise HTTPException(409,'需先完成司機路線簽名')
+        validate_office_document_review(c,'DAILY_ROUTE',rid,p)
         missing=c.execute("SELECT COUNT(*) n FROM deliveries WHERE daily_route_id=? AND status<>'VOID' AND document_final IS NULL",(rid,)).fetchone()['n']
         if missing: raise HTTPException(409,f'尚有 {missing} 站公文－總館送出數量未填，請由總館完成後再簽核')
         stamp=now()
@@ -2448,7 +2678,7 @@ async def secretary_route_sign(rid:int,req:Request):
               AND NOT EXISTS(SELECT 1 FROM daily_reports WHERE service_date=? AND status='LOCKED')""",
             (sig,stamp,rid,dr['service_date']))
         if changed.rowcount!=1: raise HTTPException(409,'路線或日報狀態已變更，請重新整理')
-        audit(c,'USER',u['id'],u['role'],'SECRETARY_ROUTE_SIGN','DAILY_ROUTE',rid,after={'signed_at':stamp})
+        audit(c,'USER',u['id'],u['role'],'SECRETARY_ROUTE_SIGN','DAILY_ROUTE',rid,after={'signed_at':stamp,'review_revision':p.get('review_revision')})
         c.commit()
     except Exception:
         c.rollback(); raise
@@ -2464,15 +2694,20 @@ async def final_sign(req:Request):
     c=db()
     try:
         lock_schedule_writes(c)
-        day=today()
+        day=p.get('service_date') or today()
         report=c.execute('SELECT * FROM daily_reports WHERE service_date=?',(day,)).fetchone()
+        if day!=today() and (not report or report['status']!='AMENDING'):
+            raise HTTPException(409,'僅可簽核今日或待重新複核的日報')
         if report and (report['status']=='LOCKED' or any(report[k] is not None for k in ('secretary_signature','secretary_signed_at','locked_at'))):
             raise HTTPException(409,'日報已有簽核或鎖定紀錄，不可覆寫')
         active=c.execute("""SELECT dr.id,dr.status FROM daily_routes dr WHERE dr.service_date=? AND EXISTS(SELECT 1 FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID')""",(day,)).fetchall()
         if not active: raise HTTPException(409,'今日沒有配送路線')
+        if c.execute(f"SELECT 1 FROM deliveries x WHERE x.service_date=? AND {PENDING_DOCUMENT_SQL}",(day,)).fetchone():
+            raise HTTPException(409,'尚有分館公文更正待司機確認')
         if any(x['status']!='DRIVER_SIGNED' for x in active): raise HTTPException(409,'尚有配送路線未完成司機簽名')
         unsigned=c.execute("SELECT COUNT(*) n FROM daily_routes dr WHERE dr.service_date=? AND EXISTS(SELECT 1 FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID') AND dr.secretary_signature IS NULL",(day,)).fetchone()['n']
         if unsigned: raise HTTPException(409,f'尚有 {unsigned} 條路線未完成總館簽核')
+        validate_office_document_review(c,'DAY',day,p)
         stamp=now()
         changed=c.execute("""INSERT INTO daily_reports(service_date,secretary_signature,secretary_signed_at,status,locked_at)
             VALUES(?,?,?,'LOCKED',?) ON CONFLICT(service_date) DO UPDATE SET
@@ -2481,7 +2716,7 @@ async def final_sign(req:Request):
             WHERE daily_reports.status<>'LOCKED' AND daily_reports.secretary_signature IS NULL
               AND daily_reports.secretary_signed_at IS NULL AND daily_reports.locked_at IS NULL""",(day,sig,stamp,stamp))
         if changed.rowcount!=1: raise HTTPException(409,'日報狀態已變更，不可覆寫')
-        audit(c,'USER',u['id'],u['role'],'SECRETARY_FINAL_SIGN','DAY',day,after={'locked_at':stamp})
+        audit(c,'USER',u['id'],u['role'],'SECRETARY_FINAL_SIGN','DAY',day,after={'locked_at':stamp,'review_revision':p.get('review_revision')})
         c.commit()
     except Exception:
         c.rollback(); raise
@@ -2501,16 +2736,17 @@ def monthly_route_summary(req:Request, month:str|None=None):
         raise HTTPException(400,'月份格式錯誤')
     start=first.isoformat(); end=nxt.isoformat()
     c=db()
-    rows=[dict(x) for x in c.execute('''SELECT x.service_date,r.code route_code,
-        COALESCE(SUM(x.document_final),0) document_total,
+    rows=[dict(x) for x in c.execute(f'''SELECT x.service_date,r.code route_code,
+        COALESCE(SUM({REPORT_DOCUMENT_SQL}),0) document_total,
         COALESCE(SUM(x.document_return_final),0) document_return_total,
         COALESCE(SUM(x.outbound_final),0) outbound_total,
         COALESCE(SUM(x.inbound_final),0) inbound_total,
-        SUM(CASE WHEN x.status='LATE_BRANCH_PENDING' THEN 1 ELSE 0 END) late_pending
+        SUM(CASE WHEN x.status='LATE_BRANCH_PENDING' THEN 1 ELSE 0 END) late_pending,
+        SUM(CASE WHEN {PENDING_DOCUMENT_SQL} THEN 1 ELSE 0 END) document_corrections_pending
         FROM deliveries x
         JOIN daily_routes dr ON dr.id=x.daily_route_id
         JOIN routes r ON r.id=dr.route_id
-        WHERE x.service_date>=? AND x.service_date<?
+        WHERE x.service_date>=? AND x.service_date<? AND x.status<>'VOID'
         GROUP BY x.service_date,r.code
         ORDER BY x.service_date,CAST(r.code AS INTEGER),r.code''',(start,end)).fetchall()]
     routes=[str(x['code']) for x in c.execute('SELECT code FROM routes WHERE active=1 ORDER BY CAST(code AS INTEGER),code').fetchall()]
@@ -2520,16 +2756,17 @@ def monthly_route_summary(req:Request, month:str|None=None):
     pending=0
     for x in rows:
         d=x['service_date']; r=str(x['route_code'])
-        by_date.setdefault(d,{})[r]={'document':int(x['document_total'] or 0),'document_return':int(x['document_return_total'] or 0),'outbound':int(x['outbound_total'] or 0),'inbound':int(x['inbound_total'] or 0),'late_pending':int(x['late_pending'] or 0)}
+        by_date.setdefault(d,{})[r]={'document_corrections_pending':int(x['document_corrections_pending']),'document':int(x['document_total'] or 0),'document_return':int(x['document_return_total'] or 0),'outbound':int(x['outbound_total'] or 0),'inbound':int(x['inbound_total'] or 0),'late_pending':int(x['late_pending'] or 0)}
         totals.setdefault(r,{'document':0,'document_return':0,'outbound':0,'inbound':0})
         totals[r]['document']+=int(x['document_total'] or 0); totals[r]['document_return']+=int(x['document_return_total'] or 0); totals[r]['outbound']+=int(x['outbound_total'] or 0); totals[r]['inbound']+=int(x['inbound_total'] or 0)
         pending+=int(x['late_pending'] or 0)
     grand={'document':sum(v['document'] for v in totals.values()),'document_return':sum(v['document_return'] for v in totals.values()),'outbound':sum(v['outbound'] for v in totals.values()),'inbound':sum(v['inbound'] for v in totals.values())}
-    return {'month':m,'routes':routes,'days':[{'date':d,'routes':by_date[d]} for d in sorted(by_date)],'totals':totals,'grand_total':grand,'late_pending':pending}
+    return {'month':m,'routes':routes,'days':[{'date':d,'routes':by_date[d]} for d in sorted(by_date)],'totals':totals,'grand_total':grand,'late_pending':pending,
+            'document_corrections_pending':sum(r['document_corrections_pending'] for r in rows)}
 
 @app.get('/api/reports/today.csv')
 def report_csv(req:Request):
-    require_user(req,['ADMIN','SECRETARY']);c=db();rows=c.execute('''SELECT r.code 路線,d.name 司機,b.name 分館,x.document_final 公文送出,x.document_return_final 公文收回,x.outbound_final 圖書送出,x.inbound_final 圖書收回,x.note_final 備註,x.signer_name 簽收人,x.branch_signed_at 簽收時間,x.status 狀態 FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id JOIN drivers d ON d.id=dr.driver_id WHERE x.service_date=? AND x.status<>'VOID' ORDER BY r.code,b.stop_order''',(today(),)).fetchall();c.close();bio=io.StringIO();w=csv.writer(bio);headers=rows[0].keys() if rows else [];w.writerow([QUANTITY_LABELS.get(h,h) for h in headers]);[w.writerow(list(r)) for r in rows];data='\ufeff'+bio.getvalue();return Response(data,media_type='text/csv',headers={'Content-Disposition':f'attachment; filename="{today()}_library_logistics.csv"'})
+    require_user(req,['ADMIN','SECRETARY']);c=db();rows=c.execute(f'''SELECT r.code 路線,d.name 司機,b.name 分館,{REPORT_DOCUMENT_SQL} 公文送出,x.document_return_final 公文收回,x.outbound_final 圖書送出,x.inbound_final 圖書收回,x.note_final 備註,x.signer_name 簽收人,x.branch_signed_at 簽收時間,x.status 狀態 FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id JOIN drivers d ON d.id=dr.driver_id WHERE x.service_date=? AND x.status<>'VOID' ORDER BY r.code,b.stop_order''',(today(),)).fetchall();c.close();bio=io.StringIO();w=csv.writer(bio);headers=rows[0].keys() if rows else [];w.writerow([QUANTITY_LABELS.get(h,h) for h in headers]);[w.writerow(list(r)) for r in rows];data='\ufeff'+bio.getvalue();return Response(data,media_type='text/csv',headers={'Content-Disposition':f'attachment; filename="{today()}_library_logistics.csv"'})
 @app.get('/api/audit')
 def audits(req:Request,limit:int=100):
     require_user(req,['ADMIN','SECRETARY']);c=db();rows=[dict(x) for x in c.execute('SELECT * FROM audit_logs ORDER BY id DESC LIMIT ?',(min(limit,500),)).fetchall()];c.close();return rows
@@ -2712,8 +2949,18 @@ def history_receipt_detail(did:int, req:Request):
         """SELECT actor_type,actor_id,role,action,before_json,after_json,reason,created_at
            FROM audit_logs WHERE entity_type='DELIVERY' AND entity_id=? ORDER BY id ASC""",(str(did),)
     ).fetchall()]
+    office=[dict(row) for row in c.execute('''SELECT action,actor_id,role,entity_type,entity_id,
+        before_json,after_json,created_at FROM audit_logs WHERE
+        ((entity_type='DAILY_ROUTE' AND entity_id=?) OR (entity_type='DAY' AND entity_id=?))
+        AND action IN ('OFFICE_DOCUMENT_REVIEW_INVALIDATED','SECRETARY_ROUTE_SIGN','SECRETARY_FINAL_SIGN')
+        ORDER BY id''',(str(x['daily_route_id']),x['service_date'])).fetchall()]
+    delivery=dict(x)
+    proposal=pending_document_correction(c,x)
+    if proposal:
+        delivery['document_final']=None
+        delivery['document_corrections_pending']=True
     c.close()
-    return {'delivery':dict(x),'items':items,'audit':audits}
+    return {'delivery':delivery,'items':items,'audit':audits,'office_audit':office}
 
 @app.get('/api/history/routes')
 def history_routes(req:Request, service_date:str, route:str|None=None):
@@ -2743,13 +2990,15 @@ def history_routes(req:Request, service_date:str, route:str|None=None):
 
 @app.get('/api/deliveries/all')
 def all_deliveries(req:Request, service_date:str|None=None):
-    require_user(req,['ADMIN','SECRETARY']); d=service_date or today(); c=db(); rows=[dict(x) for x in c.execute('''SELECT x.*,b.code branch_code,b.name branch_name,r.code route_code,d.name driver_name,CASE WHEN co.id IS NULL THEN 0 ELSE 1 END has_correction,co.driver_note correction_driver_note,co.status correction_status FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id JOIN drivers d ON d.id=dr.driver_id LEFT JOIN corrections co ON co.delivery_id=x.id WHERE x.service_date=? ORDER BY r.code,b.stop_order''',(d,)).fetchall()]; c.close(); return rows
+    require_user(req,['ADMIN','SECRETARY']); d=service_date or today(); c=db(); rows=[dict(x) for x in c.execute(f'''SELECT x.*,CASE WHEN {PENDING_DOCUMENT_SQL} THEN 1 ELSE 0 END document_corrections_pending,b.code branch_code,b.name branch_name,r.code route_code,d.name driver_name,CASE WHEN co.id IS NULL THEN 0 ELSE 1 END has_correction,co.driver_note correction_driver_note,co.status correction_status FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id JOIN drivers d ON d.id=dr.driver_id LEFT JOIN corrections co ON co.delivery_id=x.id WHERE x.service_date=? ORDER BY r.code,b.stop_order''',(d,)).fetchall()]; c.close(); return rows
 @app.get('/api/corrections')
 def correction_list(req:Request):
     require_user(req,['ADMIN','SECRETARY']); c=db(); rows=[dict(x) for x in c.execute('''SELECT co.*,b.name branch_name,r.code route_code,d.name driver_name,x.document_final,x.document_return_final,x.outbound_final,x.inbound_final,x.note_final,x.correction_reason,x.correction_signer_name,x.corrected_at FROM corrections co JOIN deliveries x ON x.id=co.delivery_id JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id JOIN drivers d ON d.id=co.requested_by_driver_id ORDER BY co.id DESC''').fetchall()]; c.close(); return rows
 
 def report_rows(c,start_date,end_date):
-    rows=[dict(x) for x in c.execute("""SELECT x.service_date 日期,r.code 路線,COALESCE(ad.name,dv.name,'') 實際配送司機,b.code 分館代碼,b.name 分館,x.document_final 公文送出,x.document_return_final 公文收回,x.outbound_final 圖書送出,x.inbound_final 圖書收回,COALESCE(x.note_final,'') 備註,COALESCE(x.correction_signer_name,x.signer_name,'') 簽收人,COALESCE(x.corrected_at,x.branch_signed_at,'') 簽收時間,CASE WHEN EXISTS(SELECT 1 FROM corrections co2 WHERE co2.delivery_id=x.id) THEN '是' ELSE '否' END 是否更正,COALESCE(x.correction_reason,'') 更正原因,CASE WHEN x.branch_signed_at IS NOT NULL AND EXISTS(SELECT 1 FROM audit_logs al WHERE al.entity_type='DELIVERY' AND al.entity_id=CAST(x.id AS TEXT) AND al.action='BRANCH_LATE_SIGN') THEN '補簽完成' WHEN x.status='LATE_BRANCH_PENDING' THEN '待補簽' WHEN x.branch_signed_at IS NOT NULL THEN '已簽收' ELSE '未簽收' END 分館簽收狀態 FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id LEFT JOIN drivers ad ON ad.id=dda.driver_id LEFT JOIN drivers dv ON dv.id=dr.driver_id WHERE x.service_date BETWEEN ? AND ? AND x.status<>'VOID' ORDER BY x.service_date,r.code,b.stop_order""",(start_date,end_date)).fetchall()]
+    rows=[dict(x) for x in c.execute(f"""SELECT x.service_date 日期,r.code 路線,COALESCE(ad.name,dv.name,'') 實際配送司機,b.code 分館代碼,b.name 分館,{REPORT_DOCUMENT_SQL} 公文送出,x.document_return_final 公文收回,x.outbound_final 圖書送出,x.inbound_final 圖書收回,COALESCE(x.note_final,'') 備註,COALESCE(x.correction_signer_name,x.signer_name,'') 簽收人,COALESCE(x.corrected_at,x.branch_signed_at,'') 簽收時間,CASE WHEN EXISTS(SELECT 1 FROM corrections co2 WHERE co2.delivery_id=x.id) OR EXISTS({BRANCH_DOCUMENT_EVENTS}) THEN '是' ELSE '否' END 是否更正,COALESCE((SELECT al.reason FROM audit_logs al WHERE al.entity_type='DELIVERY'
+        AND al.entity_id=CAST(x.id AS TEXT) AND al.action='BRANCH_DOCUMENT_PROPOSED'
+        ORDER BY al.id DESC LIMIT 1),x.correction_reason,'') 更正原因,CASE WHEN {PENDING_DOCUMENT_SQL} THEN '公文更正待確認' WHEN x.branch_signed_at IS NOT NULL AND EXISTS(SELECT 1 FROM audit_logs al WHERE al.entity_type='DELIVERY' AND al.entity_id=CAST(x.id AS TEXT) AND al.action='BRANCH_LATE_SIGN') THEN '補簽完成' WHEN x.status='LATE_BRANCH_PENDING' THEN '待補簽' WHEN x.branch_signed_at IS NOT NULL THEN '已簽收' ELSE '未簽收' END 分館簽收狀態 FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id LEFT JOIN delivery_driver_assignments dda ON dda.delivery_id=x.id LEFT JOIN drivers ad ON ad.id=dda.driver_id LEFT JOIN drivers dv ON dv.id=dr.driver_id WHERE x.service_date BETWEEN ? AND ? AND x.status<>'VOID' ORDER BY x.service_date,r.code,b.stop_order""",(start_date,end_date)).fetchall()]
     for r in rows: r['簽收時間']=report_time(r.get('簽收時間'))
     return rows
 
@@ -2762,7 +3011,7 @@ def official_daily_payload(c,d):
     rep=c.execute('SELECT * FROM daily_reports WHERE service_date=?',(d,)).fetchone()
     routes=[dict(x) for x in c.execute("""SELECT dr.id,r.code,dv.name driver_name,dr.driver_signature,dr.driver_signed_at FROM daily_routes dr JOIN routes r ON r.id=dr.route_id LEFT JOIN drivers dv ON dv.id=dr.driver_id WHERE dr.service_date=? AND EXISTS(SELECT 1 FROM deliveries x WHERE x.daily_route_id=dr.id AND x.status<>'VOID') ORDER BY r.code""",(d,)).fetchall()]
     for r in routes:
-        r['stops']=[dict(x) for x in c.execute("""SELECT b.code branch_code,b.name branch_name,x.document_final,x.document_return_final,x.outbound_final,x.inbound_final,x.note_final,x.signer_name,x.correction_signer_name,x.branch_signed_at,x.receipt_at,x.corrected_at,x.branch_signature,x.correction_signature,x.status,x.admin_closed_at,x.admin_close_reason,CASE WHEN x.branch_signed_at IS NOT NULL AND EXISTS(SELECT 1 FROM audit_logs al WHERE al.entity_type='DELIVERY' AND al.entity_id=CAST(x.id AS TEXT) AND al.action='BRANCH_LATE_SIGN') THEN 1 ELSE 0 END late_signed FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.daily_route_id=? AND x.status<>'VOID' ORDER BY b.stop_order""",(r['id'],)).fetchall()]
+        r['stops']=[dict(x) for x in c.execute(f"""SELECT b.code branch_code,b.name branch_name,{REPORT_DOCUMENT_SQL} document_final,CASE WHEN {PENDING_DOCUMENT_SQL} THEN 1 ELSE 0 END document_corrections_pending,x.document_return_final,x.outbound_final,x.inbound_final,x.note_final,x.signer_name,x.correction_signer_name,x.branch_signed_at,x.receipt_at,x.corrected_at,x.branch_signature,x.correction_signature,x.status,x.admin_closed_at,x.admin_close_reason,CASE WHEN x.branch_signed_at IS NOT NULL AND EXISTS(SELECT 1 FROM audit_logs al WHERE al.entity_type='DELIVERY' AND al.entity_id=CAST(x.id AS TEXT) AND al.action='BRANCH_LATE_SIGN') THEN 1 ELSE 0 END late_signed FROM deliveries x JOIN branches b ON b.id=x.branch_id WHERE x.daily_route_id=? AND x.status<>'VOID' ORDER BY b.stop_order""",(r['id'],)).fetchall()]
         r['totals']={'document':sum((x['document_final'] or 0) for x in r['stops']),'document_return':sum((x['document_return_final'] or 0) for x in r['stops']),'outbound':sum((x['outbound_final'] or 0) for x in r['stops']),'inbound':sum((x['inbound_final'] or 0) for x in r['stops'])}
     grand={'document':sum(r['totals']['document'] for r in routes),'document_return':sum(r['totals']['document_return'] for r in routes),'outbound':sum(r['totals']['outbound'] for r in routes),'inbound':sum(r['totals']['inbound'] for r in routes)}
     return {'report':dict(rep) if rep else None,'routes':routes,'grand':grand}
@@ -2829,7 +3078,7 @@ def register_pdf_zh_font():
 def pdf_bytes(rows,title):
     bio=io.BytesIO(); zh=register_pdf_zh_font(); cv=canvas.Canvas(bio,pagesize=(842,595)); cv.setFont(zh,16); cv.drawString(30,565,title); y=540; cv.setFont(zh,7.3)
     for r in rows:
-        line=f"{r['日期']}  {r['路線']}線  {r['分館代碼']} {r['分館']}  公文－總館送出:{r['公文送出'] or 0}  公文－分館送出:{r['公文收回'] or 0}  圖書－倉庫送出:{r['圖書送出'] or 0}  圖書－分館送出:{r['圖書收回'] or 0}  簽收:{r['簽收人'] or '—'}  更正:{r['是否更正']}"; cv.drawString(25,y,line[:150]); y-=12
+        line=f"{r['日期']}  {r['路線']}線  {r['分館代碼']} {r['分館']}  公文－總館送出:{r['公文送出'] if r['公文送出'] is not None else ('待確認' if r['分館簽收狀態']=='公文更正待確認' else 0)}  公文－分館送出:{r['公文收回'] or 0}  圖書－倉庫送出:{r['圖書送出'] or 0}  圖書－分館送出:{r['圖書收回'] or 0}  簽收:{r['簽收人'] or '—'}  更正:{r['是否更正']}"; cv.drawString(25,y,line[:150]); y-=12
         extra=f"備註:{r['備註'] or '—'}  簽收時間:{r['簽收時間'] or '—'}  更正原因:{r['更正原因'] or '—'}"; cv.drawString(40,y,extra[:160]); y-=14
         if y<30: cv.showPage(); cv.setFont(zh,7.3); y=565
     cv.save(); return bio.getvalue()

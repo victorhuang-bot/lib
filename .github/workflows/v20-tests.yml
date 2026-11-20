@@ -2,7 +2,7 @@ name: MovingMatch V20 tests
 on:
   pull_request:
   push:
-    branches: [feature/v20-empty-box-dispatch]
+    branches: [feature/v20-empty-box-dispatch, feature/v20-issue-45-document-correction]
 permissions:
   contents: read
 jobs:
