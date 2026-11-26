@@ -138,6 +138,8 @@ class V194Tests(unittest.TestCase):
         self.assertEqual(page.status_code,200)
         self.assertNotIn('desktopBranchCode',page.text)
         self.assertIn('data-branch-token="test-qr"',page.text)
+        self.assertIn("document.querySelector('#verify').classList.add('hidden');",page.text)
+        self.assertNotIn("document.querySelector('  document.querySelector",page.text)
         self.assertEqual(self.client.get('/branch/invalid-token').status_code,404)
         self.assertEqual(self.client.post('/api/branch-session/verify',json={'token':'test-qr','pin':'0000'}).status_code,401)
         for endpoint,payload in [('verify',{'token':'test-qr','pin':'2468'})]:
