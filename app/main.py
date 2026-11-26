@@ -1040,8 +1040,28 @@ def api_version():
 @app.get('/', response_class=HTMLResponse)
 def home():
     return HTMLResponse((STATIC/'index.html').read_text(encoding='utf-8'),headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0'})
+@app.get('/branch', response_class=HTMLResponse)
+@app.get('/branch/desktop', response_class=HTMLResponse)
+def branch_desktop_page():
+    return HTMLResponse((STATIC/'branch.html').read_text(encoding='utf-8')
+                        .replace('__BRANCH_TOKEN__','',1),
+                        headers={'Cache-Control':'no-store'})
+
 @app.get('/branch/{token}', response_class=HTMLResponse)
-def branch_page(token:str): return (STATIC/'branch.html').read_text(encoding='utf-8').replace('__BRANCH_TOKEN__',token)
+def branch_page(token:str):
+    from html import escape
+    c=db()
+    try:
+        b=c.execute('SELECT name FROM branches WHERE access_token_hash=? AND active=1',(thash(token),)).fetchone()
+    finally:
+        c.close()
+    if not b:
+        return HTMLResponse('<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><title>分館簽收</title><p>QR Code 無效或已停用，請聯絡管理員。</p></html>',
+                            status_code=404,headers={'Cache-Control':'no-store'})
+    page=(STATIC/'branch.html').read_text(encoding='utf-8')
+    page=page.replace('__BRANCH_TOKEN__',escape(token,quote=True),1)
+    page=page.replace('__BRANCH_NAME__',escape(b['name'],quote=True),1)
+    return HTMLResponse(page,headers={'Cache-Control':'no-store'})
 @app.get('/activate-driver/{token}', response_class=HTMLResponse)
 def driver_activate_page(token:str): return (STATIC/'activate.html').read_text(encoding='utf-8').replace('__ACTIVATION_TOKEN__',token)
 @app.get('/driver', response_class=HTMLResponse)
