@@ -6,9 +6,12 @@
 #work .qty-grid input[readonly]{background:#f1f5f9;color:#344054;cursor:default}#work .qty-grid input{display:block;width:100%!important;min-width:0;max-width:100%;box-sizing:border-box;margin:0;text-align:right;font-size:20px}
 @media(max-width:380px){#work .qty-grid label{grid-template-columns:minmax(0,1fr) minmax(0,135px);gap:8px}}
 
-/* Branch mobile: keep desktop login off phone screens and prevent horizontal overflow. */
+/* Login mode follows the entry URL, not screen width. */
+#desktopLogin .desktop-login-grid{display:grid;gap:12px}
+#desktopLogin label{display:grid;gap:6px}
+#desktopLogin input{width:100%}
+#desktopLogin .btn{width:100%}
 @media(max-width:700px){
-  #desktopLogin{display:none!important}
   body{max-width:100%;overflow-x:hidden}
   main.mobile,main.mobile>.card,#work,#branchTaskChooser{min-width:0;max-width:100%}
   main.mobile{width:100%;margin:12px auto}
@@ -36,16 +39,15 @@
 @media(min-width:800px){#branchHistory .history-mobile{display:none}#branchHistory .history-desktop{display:block;overflow-x:auto}}
 .signer-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}.signer-row input{flex:1;min-width:120px;max-width:100%}#branchSigners{margin-top:18px}
 .signing-identity select{display:block;width:100%;max-width:100%;min-width:0;min-height:44px;font-size:16px;box-sizing:border-box}.signing-identity button{min-height:44px;margin:4px 0;max-width:100%}.signing-identity p{overflow-wrap:anywhere}
-</style></head><body>
-<div id="desktopLogin" class="desktop-login-card">
-  <h2>分館桌機登入</h2>
-  <p class="muted">手機可繼續掃固定 QR；桌機可輸入分館代碼與 4 位 PIN，登入後進入同一套簽收流程。</p>
+</style></head><body data-branch-token="__BRANCH_TOKEN__">
+<main class="mobile"><div class="card"><h1 id="loginTitle">分館簽收</h1><div id="desktopLogin" class="hidden">
+  <p class="muted">請輸入分館代碼及 4 位 PIN。</p>
   <div class="desktop-login-grid">
     <label>分館代碼<input id="desktopBranchCode" placeholder="例如 A13"></label>
     <label>4 位 PIN<input id="desktopBranchPin" type="password" inputmode="numeric" maxlength="4"></label>
     <button class="btn" onclick="desktopLogin()">登入</button>
   </div>
-</div><main class="mobile"><div class="card"><h1>分館簽收驗證</h1><div id="verify"><p class="muted">請輸入 4 位分館驗證碼</p><input id="pin" inputmode="numeric" maxlength="4" placeholder="○ ○ ○ ○" style="width:100%;font-size:26px;text-align:center"><button class="btn big" style="margin-top:10px" onclick="verifyBranch()">確認</button></div><div id="work" class="hidden"></div><section id="branchSigners" class="hidden" aria-label="常用簽收人員"><h2>常用簽收人員</h2><p class="muted">僅管理本站名單，姓名修改或停用不會更改歷史簽收紀錄。手寫簽名仍須由實際簽收人完成。</p><form onsubmit="addBranchSigner(event)"><label for="newBranchSigner">新增姓名</label><input id="newBranchSigner" maxlength="80" required autocomplete="off"><button class="btn" type="submit">新增</button></form><p><label><input id="showInactiveSigners" type="checkbox" onchange="loadBranchSigners()"> 同時查看已停用人員</label> <button class="btn alt" type="button" onclick="loadBranchSigners()">重新載入名單</button></p><div id="branchSignerMessage" role="status" aria-live="polite"></div><div id="branchSignerList"></div></section><section id="branchHistory" class="hidden" aria-label="本站配送歷史紀錄"><h2>本站配送紀錄</h2><div class="history-tools"><label>月份 <select id="branchHistoryMonth" onchange="loadBranchHistory()"></select></label><label><input type="checkbox" id="branchHistoryPending" onchange="loadBranchHistory()"> 只看待補簽</label></div><div id="branchHistoryBody" aria-live="polite"></div></section><div id="msg"></div></div></main><script src="/static/common.js"></script><script src="/static/branch-signers.js"></script><script src="/static/branch-signing-identity.js"></script><script src="/static/branch-history-signatures.js"></script><script>
+</div><div id="verify" class="hidden"><h2 id="qrBranchName">__BRANCH_NAME__</h2><p class="muted">請輸入 4 位分館驗證碼</p><input id="pin" inputmode="numeric" maxlength="4" placeholder="○ ○ ○ ○" style="width:100%;font-size:26px;text-align:center"><button class="btn big" style="margin-top:10px" onclick="verifyBranch()">確認</button></div><div id="work" class="hidden"></div><section id="branchSigners" class="hidden" aria-label="常用簽收人員"><h2>常用簽收人員</h2><p class="muted">僅管理本站名單，姓名修改或停用不會更改歷史簽收紀錄。手寫簽名仍須由實際簽收人完成。</p><form onsubmit="addBranchSigner(event)"><label for="newBranchSigner">新增姓名</label><input id="newBranchSigner" maxlength="80" required autocomplete="off"><button class="btn" type="submit">新增</button></form><p><label><input id="showInactiveSigners" type="checkbox" onchange="loadBranchSigners()"> 同時查看已停用人員</label> <button class="btn alt" type="button" onclick="loadBranchSigners()">重新載入名單</button></p><div id="branchSignerMessage" role="status" aria-live="polite"></div><div id="branchSignerList"></div></section><section id="branchHistory" class="hidden" aria-label="本站配送歷史紀錄"><h2>本站配送紀錄</h2><div class="history-tools"><label>月份 <select id="branchHistoryMonth" onchange="loadBranchHistory()"></select></label><label><input type="checkbox" id="branchHistoryPending" onchange="loadBranchHistory()"> 只看待補簽</label></div><div id="branchHistoryBody" aria-live="polite"></div></section><div id="msg"></div></div></main><script src="/static/common.js"></script><script src="/static/branch-signers.js"></script><script src="/static/branch-signing-identity.js"></script><script src="/static/branch-history-signatures.js"></script><script>
 function fmtDateTime(v){
   if(v===null||v===undefined||v==='') return '—';
   const s=String(v).trim();
@@ -60,7 +62,19 @@ function fmtDateTime(v){
   return s;
 }
 
-const branchToken='__BRANCH_TOKEN__';let session=null,data=null,getSig=null;
+const branchToken=document.body.dataset.branchToken;
+const qrMode=Boolean(branchToken&&branchToken!=='__BRANCH_TOKEN__');
+let session=null,data=null,getSig=null;
+function showBranchLogin(){
+  document.getElementById('loginTitle').textContent=qrMode?'分館簽收驗證':'分館桌機登入';
+  document.getElementById('desktopLogin').classList.toggle('hidden',qrMode);
+  document.getElementById('verify').classList.toggle('hidden',!qrMode);
+  document.getElementById('work').classList.add('hidden');
+  for(const id of ['branchSigners','branchHistory','branchTaskChooser']){
+    document.getElementById(id)?.classList.add('hidden');
+  }
+}
+showBranchLogin();
 let branchDraft=null,sessionExpired=false;
 function captureBranchDraft(){
   if(!data?.id)return;
@@ -104,9 +118,7 @@ function requireBranchLogin(){
   sessionExpired=true;
   session=null;
   sessionStorage.removeItem('branch_session');
-  document.getElementById('desktopLogin').classList.remove('hidden');
-  document.getElementById('verify').classList.remove('hidden');
-  document.getElementById('work').classList.add('hidden');
+  showBranchLogin();
   const message=document.getElementById('msg');
   message.textContent='登入已逾時，請重新輸入分館驗證碼。已填寫內容會在重新登入同一筆配送後恢復；請確認後再送出。';
   message.className='notice';
@@ -127,6 +139,7 @@ async function bapi(url,opt={}){
 }
 
 async function desktopLogin(){
+  if(qrMode)return;
   try{
     const branch_code=(document.querySelector('#desktopBranchCode').value||'').trim();
     const pin=(document.querySelector('#desktopBranchPin').value||'').trim();
@@ -145,7 +158,7 @@ async function desktopLogin(){
     await load();
   }catch(e){alert(e.message)}
 }
-async function verifyBranch(){try{
+async function verifyBranch(){if(!qrMode)return;try{
   const response=await fetch('/api/branch-session/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:branchToken,pin:document.querySelector('#pin').value})});
   const x=await response.json().catch(()=>({detail:'登入服務暫時無法回應'}));
   if(!response.ok)throw new Error(x.detail||'分館驗證失敗');
@@ -196,6 +209,7 @@ async function renderTaskChooser(){
   const tasks=await bapi('/api/branch-session/tasks');
   let host=document.querySelector('#branchTaskChooser');
   if(!host){host=document.createElement('div');host.id='branchTaskChooser';work.insertAdjacentElement('afterend',host)}
+  host.classList.remove('hidden');
   const selected=tasks.selected?.id;
   const todayTask=tasks.today;
   const history=tasks.historical||[];
