@@ -124,12 +124,23 @@ class V194Tests(unittest.TestCase):
         with self.connection() as c: after=[tuple(r) for r in c.execute('SELECT * FROM deliveries ORDER BY id')]
         self.assertEqual(before,after)
 
-    def test_no_delivery_desktop_and_qr_login_still_allow_roster_management(self):
+    def test_no_delivery_private_url_login_still_allows_roster_management(self):
         with self.connection() as c:
             c.execute("UPDATE branches SET pin_hash=?,access_token_hash=? WHERE id=1",(main.hash_secret('2468'),main.thash('test-qr')))
             c.execute('DELETE FROM deliveries WHERE branch_id=1')
             code=c.execute('SELECT code FROM branches WHERE id=1').fetchone()['code']
-        for endpoint,payload in [('desktop-login',{'branch_code':code,'pin':'2468'}),('verify',{'token':'test-qr','pin':'2468'})]:
+        self.assertEqual(self.client.post('/api/branch-session/desktop-login',json={'branch_code':code,'pin':'2468'}).status_code,410)
+        for path in ['/branch','/branch/desktop']:
+            page=self.client.get(path)
+            self.assertEqual(page.status_code,200)
+            self.assertNotIn('desktopBranchCode',page.text)
+        page=self.client.get('/branch/test-qr')
+        self.assertEqual(page.status_code,200)
+        self.assertNotIn('desktopBranchCode',page.text)
+        self.assertIn('data-branch-token="test-qr"',page.text)
+        self.assertEqual(self.client.get('/branch/invalid-token').status_code,404)
+        self.assertEqual(self.client.post('/api/branch-session/verify',json={'token':'test-qr','pin':'0000'}).status_code,401)
+        for endpoint,payload in [('verify',{'token':'test-qr','pin':'2468'})]:
             login=self.client.post('/api/branch-session/'+endpoint,json=payload)
             self.assertEqual(login.status_code,200,login.text)
             headers={'Authorization':'Bearer '+login.json()['session']}

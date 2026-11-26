@@ -1043,9 +1043,7 @@ def home():
 @app.get('/branch', response_class=HTMLResponse)
 @app.get('/branch/desktop', response_class=HTMLResponse)
 def branch_desktop_page():
-    return HTMLResponse((STATIC/'branch.html').read_text(encoding='utf-8')
-                        .replace('__BRANCH_TOKEN__','',1),
-                        headers={'Cache-Control':'no-store'})
+    return HTMLResponse('<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><title>分館簽收</title><p>請使用所屬分館專屬網址或掃描固定 QR Code。若無網址，請聯絡管理員。</p></html>',headers={'Cache-Control':'no-store'})
 
 @app.get('/branch/{token}', response_class=HTMLResponse)
 def branch_page(token:str):
@@ -1868,31 +1866,7 @@ async def put_delivery_items(did:int,req:Request):
 
 @app.post('/api/branch-session/desktop-login')
 async def branch_desktop_login(req:Request):
-    p=await req.json()
-    code=(p.get('branch_code') or '').strip().upper()
-    pin=(p.get('pin') or '').strip()
-    if not code or not pin:
-        raise HTTPException(400,'請輸入分館代碼與 PIN')
-    c=db()
-    b=c.execute('SELECT * FROM branches WHERE upper(code)=? AND active=1',(code,)).fetchone()
-    if not b:
-        c.close(); raise HTTPException(404,'找不到啟用中的分館')
-    if not verify_secret(pin,b['pin_hash']):
-        c.close(); raise HTTPException(401,'PIN 錯誤')
-
-    # 今日配送優先；歷史補簽由分館登入後自行選擇。
-    x=c.execute("SELECT * FROM deliveries WHERE branch_id=? AND service_date=? AND status<>'VOID' ORDER BY id DESC LIMIT 1",(b['id'],today())).fetchone()
-    if not x:
-        x=c.execute("""SELECT * FROM deliveries WHERE branch_id=? AND status='LATE_BRANCH_PENDING'
-                         AND branch_signed_at IS NULL AND branch_signature IS NULL
-                         ORDER BY service_date DESC,id DESC LIMIT 1""",(b['id'],)).fetchone()
-
-    raw=secrets.token_urlsafe(32)
-    c.execute('DELETE FROM branch_sessions WHERE branch_id=?',(b['id'],))
-    c.execute('INSERT INTO branch_sessions(token_hash,branch_id,delivery_id,expires_at) VALUES(?,?,?,?)',
-              (thash(raw),b['id'],x['id'] if x else None,future_iso(hours=12)))
-    c.commit(); c.close()
-    return {'session':raw,'branch':b['name'],'branch_code':b['code'],'delivery_id':x['id'] if x else None,'service_date':x['service_date'] if x else None}
+    raise HTTPException(410,'請使用所屬分館專屬網址或固定 QR Code')
 
 @app.post('/api/branch-session/verify')
 async def branch_verify(req:Request):
