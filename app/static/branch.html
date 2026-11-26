@@ -132,7 +132,7 @@ async function verifyBranch(){if(!qrMode)return;try{
   const x=await response.json().catch(()=>({detail:'登入服務暫時無法回應'}));
   if(!response.ok)throw new Error(x.detail||'分館驗證失敗');
   session=x.session;sessionExpired=false;
-  document.querySelector('  document.querySelector('#verify').classList.add('hidden');
+  document.querySelector('#verify').classList.add('hidden');
   work.classList.remove('hidden');
   await load();
 }catch(e){msg.textContent=e.message}}
