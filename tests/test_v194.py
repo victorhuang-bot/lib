@@ -175,6 +175,19 @@ class V194Tests(unittest.TestCase):
         self.assertEqual([cell.value for cell in sheet[3]][3:7],[11,22,33,44])
         self.assertEqual(payload['grand'],{'document':11,'document_return':22,'outbound':33,'inbound':44})
 
+    def test_monthly_book_boxes_reimbursement_matches_daily_summary(self):
+        self.report_fixture()
+        url='/api/reports/monthly-boxes.xlsx?month=2025-02'
+        self.assertEqual(self.client.get(url).status_code,401)
+        result=self.client.get(url,headers=self.admin)
+        self.assertEqual(result.status_code,200,result.text[:100] if result.status_code!=200 else '')
+        sheet=load_workbook(io.BytesIO(result.content)).active
+        self.assertEqual(sheet.max_column,3)
+        self.assertEqual([c.value for c in sheet[2]],['日期','圖書－倉庫送出（箱）','圖書－分館送出（箱）'])
+        self.assertEqual([sheet.cell(3,i).value for i in (2,3)],[33,44])
+        self.assertEqual([c.value for c in sheet[sheet.max_row]],['本月累積',33,44])
+        self.assertEqual(self.client.get('/api/reports/monthly-boxes.xlsx?month=2025-99',headers=self.admin).status_code,400)
+
     def test_pdf_and_frontend_labels(self):
         self.report_fixture()
         with patch.object(main.canvas,'Canvas') as canvas:
