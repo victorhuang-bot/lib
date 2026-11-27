@@ -2757,6 +2757,44 @@ def monthly_route_summary(req:Request, month:str|None=None):
     return {'month':m,'routes':routes,'days':[{'date':d,'routes':by_date[d]} for d in sorted(by_date)],'totals':totals,'grand_total':grand,'late_pending':pending,
             'document_corrections_pending':sum(r['document_corrections_pending'] for r in rows)}
 
+@app.get('/api/reports/monthly-boxes.xlsx')
+def monthly_boxes_xlsx(req:Request, month:str|None=None):
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    report=monthly_route_summary(req,month)
+    m=report['month']
+    wb=Workbook()
+    ws=wb.active
+    ws.title='圖書箱數核銷'
+    ws.merge_cells('A1:C1')
+    ws['A1']=f'{m} 圖書巡迴運送箱數核銷報表'
+    ws['A1'].font=Font(size=16,bold=True)
+    ws['A1'].alignment=Alignment(horizontal='center')
+    ws.append(['日期','圖書－倉庫送出（箱）','圖書－分館送出（箱）'])
+    for day in report['days']:
+        values=[day['routes'].get(r,{}) for r in report['routes']]
+        ws.append([date.fromisoformat(day['date']),sum(v.get('outbound',0) for v in values),sum(v.get('inbound',0) for v in values)])
+        ws.cell(ws.max_row,1).number_format='mm/dd'
+    ws.append(['本月累積',sum(ws.cell(i,2).value for i in range(3,ws.max_row+1)),sum(ws.cell(i,3).value for i in range(3,ws.max_row+1))])
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            cell.alignment=Alignment(horizontal='center',vertical='center')
+            cell.border=Border(bottom=Side(style='thin',color='DCE3EB'))
+            if cell.row in (2,ws.max_row):
+                cell.font=Font(bold=True,color='FFFFFF')
+                cell.fill=PatternFill('solid',fgColor='29465B')
+    ws.column_dimensions['A'].width=18
+    ws.column_dimensions['B'].width=30
+    ws.column_dimensions['C'].width=30
+    ws.freeze_panes='B3'
+    ws.print_title_rows='1:2'
+    ws.print_options.horizontalCentered=True
+    ws.sheet_properties.pageSetUpPr.fitToPage=True
+    ws.page_setup.fitToWidth=1
+    ws.page_setup.fitToHeight=1
+    bio=io.BytesIO()
+    wb.save(bio)
+    return Response(bio.getvalue(),media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':f'attachment; filename="{m}_book_boxes.xlsx"'})
+
 @app.get('/api/reports/today.csv')
 def report_csv(req:Request):
     require_user(req,['ADMIN','SECRETARY']);c=db();rows=c.execute(f'''SELECT r.code 路線,d.name 司機,b.name 分館,{REPORT_DOCUMENT_SQL} 公文送出,x.document_return_final 公文收回,x.outbound_final 圖書送出,x.inbound_final 圖書收回,x.note_final 備註,x.signer_name 簽收人,x.branch_signed_at 簽收時間,x.status 狀態 FROM deliveries x JOIN branches b ON b.id=x.branch_id JOIN daily_routes dr ON dr.id=x.daily_route_id JOIN routes r ON r.id=dr.route_id JOIN drivers d ON d.id=dr.driver_id WHERE x.service_date=? AND x.status<>'VOID' ORDER BY {route_code_order()},b.stop_order''',(today(),)).fetchall();c.close();bio=io.StringIO();w=csv.writer(bio);headers=rows[0].keys() if rows else [];w.writerow([QUANTITY_LABELS.get(h,h) for h in headers]);[w.writerow(list(r)) for r in rows];data='\ufeff'+bio.getvalue();return Response(data,media_type='text/csv',headers={'Content-Disposition':f'attachment; filename="{today()}_library_logistics.csv"'})
